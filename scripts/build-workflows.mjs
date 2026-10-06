@@ -240,8 +240,8 @@ const llmRequest = ({ url, credential, headers = [], interval }) => ({
 const CHOICE = "$('Apply choice').first().json";
 const SENT = "$('Apply sent').first().json";
 
-// W3: перерисовать карточку (текст + кнопки) после нажатия. src — нода с chatId / messageId / text
-const editCard = (name, position, rows, src = CHOICE, messageId = 'messageId') =>
+// W3: перерисовать сообщение — текст и кнопки (rows = null — убрать все кнопки)
+const editMessage = (name, position, { chatId, messageId, text, rows }) =>
   node(
     'W3',
     name,
@@ -252,15 +252,35 @@ const editCard = (name, position, rows, src = CHOICE, messageId = 'messageId') =
       resource: 'message',
       operation: 'editMessageText',
       messageType: 'message',
-      chatId: `={{ ${src}.chatId }}`,
-      messageId: `={{ ${src}.${messageId} }}`,
-      text: `={{ ${src}.text }}`,
-      replyMarkup: 'inlineKeyboard',
-      inlineKeyboard: keyboard(rows),
+      chatId,
+      messageId,
+      text,
+      ...(rows ? { replyMarkup: 'inlineKeyboard', inlineKeyboard: keyboard(rows) } : { replyMarkup: 'none' }),
       additionalFields: { parse_mode: 'HTML', disable_web_page_preview: true },
     },
     { credentials: TELEGRAM_CREDENTIAL },
   );
+
+// W3: перерисовать карточку после нажатия. src — нода с chatId / messageId / text
+const editCard = (name, position, rows, src = CHOICE, messageId = 'messageId') =>
+  editMessage(name, position, {
+    chatId: `={{ ${src}.chatId }}`,
+    messageId: `={{ ${src}.${messageId} }}`,
+    text: `={{ ${src}.text }}`,
+    rows,
+  });
+
+// Кнопки под письмом (W5 «Send letter», W3 «Letter: restore»). src — выражение с id, apply_url, url
+const letterButtons = (src) => [
+  [
+    ['📝 Отклик на hh', { url: `={{ ${src}.apply_url }}` }],
+    ['🔗 Вакансия', { url: `={{ ${src}.url }}` }],
+  ],
+  [
+    ['🔄 Переписать', `=l:{{ ${src}.id }}:redo`],
+    ['📨 Отправил', `=l:{{ ${src}.id }}:sent`],
+  ],
+];
 
 // ---------- Workflow ----------
 
@@ -700,8 +720,34 @@ const workflows = {
         columns: setColumns({ status: '={{ $json.status }}', applied_at: '={{ $json.applied_at }}' }),
         options: {},
       }),
-      answerQuery('W3', 'Answer sent', [1760, 300], `={{ ${SENT}.queryId }}`, '📨 Записал: отклик отправлен'),
-      editCard('Card: sent', [1980, 300], [[['↩️ Изменить', `=v:{{ ${SENT}.id }}:edit`]]], SENT, 'cardId'),
+      answerQuery('W3', 'Answer sent', [1760, 300], `={{ ${SENT}.queryId }}`, `={{ ${SENT}.toast }}`),
+      node('W3', 'Sent?', 'if', 2.3, [1980, 300], ifTrue('W3', `={{ ${SENT}.sent }}`)),
+      // «📨 Отправил»: у письма — только «↩️ Отменить», у карточки кнопок нет
+      editMessage('Letter: sent', [2200, 250], {
+        chatId: `={{ ${SENT}.chatId }}`,
+        messageId: `={{ ${SENT}.letterMessageId }}`,
+        text: `={{ ${SENT}.letterText }}`,
+        rows: [[['↩️ Отменить', `=l:{{ ${SENT}.id }}:unsent`]]],
+      }),
+      editMessage('Card: sent', [2420, 250], {
+        chatId: `={{ ${SENT}.chatId }}`,
+        messageId: `={{ ${SENT}.cardId }}`,
+        text: `={{ ${SENT}.cardText }}`,
+        rows: null,
+      }),
+      // «↩️ Отменить»: письму возвращаются все кнопки, карточке — «↩️ Изменить»
+      editMessage('Letter: restore', [2200, 400], {
+        chatId: `={{ ${SENT}.chatId }}`,
+        messageId: `={{ ${SENT}.letterMessageId }}`,
+        text: `={{ ${SENT}.letterText }}`,
+        rows: letterButtons(SENT),
+      }),
+      editMessage('Card: restore', [2420, 400], {
+        chatId: `={{ ${SENT}.chatId }}`,
+        messageId: `={{ ${SENT}.cardId }}`,
+        text: `={{ ${SENT}.cardText }}`,
+        rows: [[['↩️ Изменить', `=v:{{ ${SENT}.id }}:edit`]]],
+      }),
       // Ответ (reply): на письмо — правка письма, на вопрос «почему?» или карточку — причина
       node('W3', 'Reply row', 'dataTable', 1.1, [880, 500], {
         resource: 'row',
@@ -759,7 +805,11 @@ const workflows = {
       ['Sent row', 'Apply sent'],
       ['Apply sent', 'Save sent'],
       ['Save sent', 'Answer sent'],
-      ['Answer sent', 'Card: sent'],
+      ['Answer sent', 'Sent?'],
+      ['Sent?', 'Letter: sent', 0],
+      ['Letter: sent', 'Card: sent'],
+      ['Sent?', 'Letter: restore', 1],
+      ['Letter: restore', 'Card: restore'],
       ['Letter button?', 'Reply row', 1],
       ['Reply row', 'Reply kind'],
       ['Reply kind', 'Revise?'],
@@ -865,16 +915,7 @@ const workflows = {
       telegram('W5', 'Send letter', [2860, 0], {
         markup: {
           replyMarkup: 'inlineKeyboard',
-          inlineKeyboard: keyboard([
-            [
-              ['📝 Отклик на hh', { url: '={{ $json.apply_url }}' }],
-              ['🔗 Вакансия', { url: '={{ $json.url }}' }],
-            ],
-            [
-              ['🔄 Переписать', '=l:{{ $json.id }}:redo'],
-              ['📨 Отправил', '=l:{{ $json.id }}:sent'],
-            ],
-          ]),
+          inlineKeyboard: keyboard(letterButtons('$json')),
         },
         fields: { reply_to_message_id: '={{ $json.replyTo }}' },
         extra: { onError: 'continueRegularOutput' },

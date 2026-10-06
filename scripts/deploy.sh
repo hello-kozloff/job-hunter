@@ -5,7 +5,8 @@
 #   scripts/deploy.sh --publish  то же + публикация W1 и W2 (расписания включены; W2 — если в .env есть ключ нейросети)
 #
 # Импорт снимает публикацию со всех workflow, поэтому:
-#   - W4 (тревоги) публикуется всегда — в n8n 2.42 неопубликованный Error workflow не запускается;
+#   - W4 (тревоги) и W5 (письма) публикуются всегда — в n8n 2.42 неопубликованный Error workflow
+#     и неопубликованный дочерний workflow (Execute Workflow) не запускаются;
 #   - W3 (кнопки Telegram) публикуется всегда, если настроен туннель (NGROK_DOMAIN в .env):
 #     при публикации n8n регистрирует вебхук бота https://<NGROK_DOMAIN>/webhook/…;
 #   - после изменений в W1/W2 деплоить с --publish.
@@ -16,7 +17,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CONTAINER=job-hunter-n8n
-WORKFLOWS_TO_PUBLISH=(jobHunterW4Error)
+# W5 (письма) вызывается из W3 через Execute Workflow: в n8n 2.42 вызвать можно только опубликованный
+WORKFLOWS_TO_PUBLISH=(jobHunterW4Error jobHunterW5Lettr)
 if [[ "${1:-}" == "--publish" ]]; then
   WORKFLOWS_TO_PUBLISH+=(jobHunterW1Colle)
   # W2 без ключа нейросети каждый запуск слал бы тревогу — публикуем, когда ключ есть

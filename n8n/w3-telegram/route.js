@@ -4,7 +4,7 @@
 //   { action: 'choice', id, choice, queryId, chatId, messageId } — нажата кнопка карточки.
 //      callback_data = v:<id строки>:<apply|maybe|skip|edit>; messageId — id карточки.
 //   { action: 'letter', id, op, queryId, chatId, messageId } — кнопка под письмом (W5):
-//      callback_data = l:<id строки>:<redo|sent>.
+//      callback_data = l:<id строки>:<redo|sent|unsent>; messageId — сообщение с письмом.
 //   { action: 'reply', replyTo, messageId, chatId, text } — ответ (reply) на вопрос «почему?», карточку или письмо.
 // Чужие чаты отсекает сам Telegram Trigger (Restrict to Chat IDs = TG_CHAT_ID); здесь — вторая проверка.
 
@@ -15,7 +15,7 @@ const ours = (chatId) => !allowed || String(chatId) === allowed;
 const cb = update.callback_query;
 if (cb) {
   if (!ours(cb.message?.chat?.id)) return [];
-  const letter = String(cb.data ?? '').match(/^l:(\d+):(redo|sent)$/);
+  const letter = String(cb.data ?? '').match(/^l:(\d+):(redo|sent|unsent)$/);
   if (letter) {
     return [
       {

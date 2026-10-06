@@ -40,7 +40,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// W3 · Route — разбор обновления от Telegram Trigger (callback_query и message).\n// Нода: Code, режим «Run Once for All Items».\n// Выход: один item или [] (не наше — игнорируем):\n//   { action: 'choice', id, choice, queryId, chatId, messageId } — нажата кнопка карточки.\n//      callback_data = v:<id строки>:<apply|maybe|skip|edit>; messageId — id карточки.\n//   { action: 'letter', id, op, queryId, chatId, messageId } — кнопка под письмом (W5):\n//      callback_data = l:<id строки>:<redo|sent>.\n//   { action: 'reply', replyTo, messageId, chatId, text } — ответ (reply) на вопрос «почему?», карточку или письмо.\n// Чужие чаты отсекает сам Telegram Trigger (Restrict to Chat IDs = TG_CHAT_ID); здесь — вторая проверка.\n\nconst update = $input.first().json;\nconst allowed = String($env.TG_CHAT_ID ?? '');\nconst ours = (chatId) => !allowed || String(chatId) === allowed;\n\nconst cb = update.callback_query;\nif (cb) {\n  if (!ours(cb.message?.chat?.id)) return [];\n  const letter = String(cb.data ?? '').match(/^l:(\\d+):(redo|sent)$/);\n  if (letter) {\n    return [\n      {\n        json: {\n          action: 'letter',\n          id: Number(letter[1]),\n          op: letter[2],\n          queryId: cb.id,\n          chatId: String(cb.message.chat.id),\n          messageId: cb.message.message_id,\n        },\n      },\n    ];\n  }\n  const match = String(cb.data ?? '').match(/^v:(\\d+):(apply|maybe|skip|edit)$/);\n  if (!match) return [];\n  return [\n    {\n      json: {\n        action: 'choice',\n        id: Number(match[1]),\n        choice: match[2],\n        queryId: cb.id,\n        chatId: String(cb.message.chat.id),\n        messageId: cb.message.message_id,\n      },\n    },\n  ];\n}\n\nconst msg = update.message;\nconst text = String(msg?.text ?? '').trim();\n// Команды бота (/start и т. п.) и сообщения без reply не обрабатываем\nif (msg?.reply_to_message && text && !text.startsWith('/') && ours(msg.chat?.id)) {\n  return [\n    {\n      json: {\n        action: 'reply',\n        replyTo: msg.reply_to_message.message_id,\n        messageId: msg.message_id,\n        chatId: String(msg.chat.id),\n        text: text.slice(0, 500),\n      },\n    },\n  ];\n}\nreturn [];\n"
+        "jsCode": "// W3 · Route — разбор обновления от Telegram Trigger (callback_query и message).\n// Нода: Code, режим «Run Once for All Items».\n// Выход: один item или [] (не наше — игнорируем):\n//   { action: 'choice', id, choice, queryId, chatId, messageId } — нажата кнопка карточки.\n//      callback_data = v:<id строки>:<apply|maybe|skip|edit>; messageId — id карточки.\n//   { action: 'letter', id, op, queryId, chatId, messageId } — кнопка под письмом (W5):\n//      callback_data = l:<id строки>:<redo|sent|unsent>; messageId — сообщение с письмом.\n//   { action: 'reply', replyTo, messageId, chatId, text } — ответ (reply) на вопрос «почему?», карточку или письмо.\n// Чужие чаты отсекает сам Telegram Trigger (Restrict to Chat IDs = TG_CHAT_ID); здесь — вторая проверка.\n\nconst update = $input.first().json;\nconst allowed = String($env.TG_CHAT_ID ?? '');\nconst ours = (chatId) => !allowed || String(chatId) === allowed;\n\nconst cb = update.callback_query;\nif (cb) {\n  if (!ours(cb.message?.chat?.id)) return [];\n  const letter = String(cb.data ?? '').match(/^l:(\\d+):(redo|sent|unsent)$/);\n  if (letter) {\n    return [\n      {\n        json: {\n          action: 'letter',\n          id: Number(letter[1]),\n          op: letter[2],\n          queryId: cb.id,\n          chatId: String(cb.message.chat.id),\n          messageId: cb.message.message_id,\n        },\n      },\n    ];\n  }\n  const match = String(cb.data ?? '').match(/^v:(\\d+):(apply|maybe|skip|edit)$/);\n  if (!match) return [];\n  return [\n    {\n      json: {\n        action: 'choice',\n        id: Number(match[1]),\n        choice: match[2],\n        queryId: cb.id,\n        chatId: String(cb.message.chat.id),\n        messageId: cb.message.message_id,\n      },\n    },\n  ];\n}\n\nconst msg = update.message;\nconst text = String(msg?.text ?? '').trim();\n// Команды бота (/start и т. п.) и сообщения без reply не обрабатываем\nif (msg?.reply_to_message && text && !text.startsWith('/') && ours(msg.chat?.id)) {\n  return [\n    {\n      json: {\n        action: 'reply',\n        replyTo: msg.reply_to_message.message_id,\n        messageId: msg.message_id,\n        chatId: String(msg.chat.id),\n        text: text.slice(0, 500),\n      },\n    },\n  ];\n}\nreturn [];\n"
       }
     },
     {
@@ -633,7 +633,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// W3 · Apply sent — «📨 Отправил» под письмом: отклик отправлен.\n// Нода: Code, режим «Run Once for All Items».\n// Вход: строка вакансии из «Sent row», кнопка — из «Route».\n// Выход: { id, status: applied, applied_at, text, chatId, cardId, queryId } → «Save sent», «Answer sent», «Card: sent».\n\n// Общий код карточки вакансии в Telegram: W2 «Format card» и W3 «Apply choice».\n// В Code-ноду попадает при сборке: строка «// @include n8n/shared/card.js» заменяется этим файлом\n// (scripts/build-workflows.mjs, scripts/run-code-node.mjs).\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst EXPERIENCE = { noExperience: 'без опыта', between1And3: '1–3 г.', between3And6: '3–6 л.', moreThan6: '6+ л.' };\nconst CURRENCY = { RUR: '₽', USD: '$', EUR: '€', KZT: '₸', BYR: 'Br', UZS: 'сум' };\n\n// Решение нейросети (колонка decision)\nconst VERDICT = { apply: '🟢 apply', maybe: '🟡 maybe', skip: '🔴 skip', error: '⚠️ не оценено' };\n// Кнопки пользователя: callback_data = v:<id строки>:<choice>, решение — в колонку my_decision\nconst CHOICE = { apply: '✅ Откликнусь', maybe: '🤔 Возможно', skip: '❌ Мимо' };\nconst STATUS_BY_CHOICE = { apply: 'approved', maybe: 'maybe', skip: 'skipped' };\n\nconst short = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));\n\nfunction salary(r) {\n  if (!r.salary_from && !r.salary_to) return '';\n  const range =\n    r.salary_from && r.salary_to\n      ? `${short(r.salary_from)}–${short(r.salary_to)}`\n      : r.salary_from\n        ? `от ${short(r.salary_from)}`\n        : `до ${short(r.salary_to)}`;\n  return `💰 ${range} ${CURRENCY[r.currency] ?? r.currency ?? ''}${r.salary_gross ? ' до налогов' : ''}`;\n}\n\n// «Москва, Сербия, Грузия, Армения» → «Москва, Сербия +2»\nfunction areas(s) {\n  const list = String(s ?? '').split(', ').filter(Boolean);\n  return list.length > 2 ? `${list.slice(0, 2).join(', ')} +${list.length - 2}` : list.join(', ');\n}\n\n// '2026-10-06T13:22:00+0300' → '06.10'\nfunction published(s) {\n  const m = String(s ?? '').match(/^\\d{4}-(\\d{2})-(\\d{2})/);\n  return m ? `${m[2]}.${m[1]}` : '';\n}\n\n// Момент в UTC (applied_at) → дата по Таиланду (UTC+7): '2026-10-06T21:17:55Z' → '07.10'\nconst thaiDate = (iso) => (Date.parse(iso) ? published(new Date(Date.parse(iso) + 7 * 3600 * 1000).toISOString()) : '');\n\n// Текст карточки (Parse Mode = HTML). Строка «👤 …» появляется после нажатия кнопки,\n// «📨 …» — после «Отправил» под письмом (W3, status = applied)\nfunction cardText(r) {\n  const date = published(r.published_at);\n  const meta = [esc(r.company), salary(r), EXPERIENCE[r.experience] ?? '', esc(areas(r.areas)), date && `📅 ${date}`]\n    .filter(Boolean)\n    .join(' · ');\n  const flags = [\n    r.has_test && '📝 тест',\n    r.letter_required && '✉️ письмо обязательно',\n    r.responses != null && `👥 ${r.responses}`,\n    r.error && `⚠️ ${esc(r.error)}`,\n  ]\n    .filter(Boolean)\n    .join(' · ');\n  const verdict = `🤖 ${VERDICT[r.decision] ?? esc(r.decision)}${r.llm_reason ? ` — ${esc(r.llm_reason)}` : ''}`;\n  const mine = CHOICE[r.my_decision] ? `👤 ${CHOICE[r.my_decision]}` : '';\n  const sent = r.status === 'applied' ? `📨 Отклик отправлен${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}` : '';\n  return [`<a href=\"${r.url}\"><b>${esc(r.title)}</b></a>`, meta, flags, verdict, mine, sent].filter(Boolean).join('\\n');\n}\n\nconst action = $('Route').first().json;\nconst row = $input.first().json;\nconst appliedAt = row.applied_at || new Date().toISOString();\nconst updated = { ...row, status: 'applied', applied_at: appliedAt };\n\nreturn [\n  {\n    json: {\n      id: row.id,\n      status: 'applied',\n      applied_at: appliedAt,\n      text: cardText(updated),\n      chatId: action.chatId,\n      cardId: row.tg_message_id,\n      queryId: action.queryId,\n    },\n  },\n];\n"
+        "jsCode": "// W3 · Apply sent — кнопки под письмом «📨 Отправил» и «↩️ Отменить».\n// Нода: Code, режим «Run Once for All Items».\n// Вход: строка вакансии из «Sent row», кнопка — из «Route» (op = sent | unsent; messageId — сообщение с письмом).\n// Выход: { id, sent, status, applied_at, letterText, cardText, chatId, letterMessageId, cardId, queryId, toast, apply_url, url }\n//   sent   — status = applied; у письма остаётся только «↩️ Отменить», у карточки кнопки убираются;\n//   unsent — status = approved; письму возвращаются все кнопки, карточке — «↩️ Изменить».\n\n// Общий код карточки вакансии в Telegram: W2 «Format card» и W3 «Apply choice».\n// В Code-ноду попадает при сборке: строка «// @include n8n/shared/card.js» заменяется этим файлом\n// (scripts/build-workflows.mjs, scripts/run-code-node.mjs).\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst EXPERIENCE = { noExperience: 'без опыта', between1And3: '1–3 г.', between3And6: '3–6 л.', moreThan6: '6+ л.' };\nconst CURRENCY = { RUR: '₽', USD: '$', EUR: '€', KZT: '₸', BYR: 'Br', UZS: 'сум' };\n\n// Решение нейросети (колонка decision)\nconst VERDICT = { apply: '🟢 apply', maybe: '🟡 maybe', skip: '🔴 skip', error: '⚠️ не оценено' };\n// Кнопки пользователя: callback_data = v:<id строки>:<choice>, решение — в колонку my_decision\nconst CHOICE = { apply: '✅ Откликнусь', maybe: '🤔 Возможно', skip: '❌ Мимо' };\nconst STATUS_BY_CHOICE = { apply: 'approved', maybe: 'maybe', skip: 'skipped' };\n\nconst short = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));\n\nfunction salary(r) {\n  if (!r.salary_from && !r.salary_to) return '';\n  const range =\n    r.salary_from && r.salary_to\n      ? `${short(r.salary_from)}–${short(r.salary_to)}`\n      : r.salary_from\n        ? `от ${short(r.salary_from)}`\n        : `до ${short(r.salary_to)}`;\n  return `💰 ${range} ${CURRENCY[r.currency] ?? r.currency ?? ''}${r.salary_gross ? ' до налогов' : ''}`;\n}\n\n// «Москва, Сербия, Грузия, Армения» → «Москва, Сербия +2»\nfunction areas(s) {\n  const list = String(s ?? '').split(', ').filter(Boolean);\n  return list.length > 2 ? `${list.slice(0, 2).join(', ')} +${list.length - 2}` : list.join(', ');\n}\n\n// '2026-10-06T13:22:00+0300' → '06.10'\nfunction published(s) {\n  const m = String(s ?? '').match(/^\\d{4}-(\\d{2})-(\\d{2})/);\n  return m ? `${m[2]}.${m[1]}` : '';\n}\n\n// Момент в UTC (applied_at) → дата по Таиланду (UTC+7): '2026-10-06T21:17:55Z' → '07.10'\nconst thaiDate = (iso) => (Date.parse(iso) ? published(new Date(Date.parse(iso) + 7 * 3600 * 1000).toISOString()) : '');\n\n// Текст карточки (Parse Mode = HTML). Строка «👤 …» появляется после нажатия кнопки,\n// «📨 …» — после «Отправил» под письмом (W3, status = applied)\nfunction cardText(r) {\n  const date = published(r.published_at);\n  const meta = [esc(r.company), salary(r), EXPERIENCE[r.experience] ?? '', esc(areas(r.areas)), date && `📅 ${date}`]\n    .filter(Boolean)\n    .join(' · ');\n  const flags = [\n    r.has_test && '📝 тест',\n    r.letter_required && '✉️ письмо обязательно',\n    r.responses != null && `👥 ${r.responses}`,\n    r.error && `⚠️ ${esc(r.error)}`,\n  ]\n    .filter(Boolean)\n    .join(' · ');\n  const verdict = `🤖 ${VERDICT[r.decision] ?? esc(r.decision)}${r.llm_reason ? ` — ${esc(r.llm_reason)}` : ''}`;\n  const mine = CHOICE[r.my_decision] ? `👤 ${CHOICE[r.my_decision]}` : '';\n  const sent = r.status === 'applied' ? `📨 Отклик отправлен${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}` : '';\n  return [`<a href=\"${r.url}\"><b>${esc(r.title)}</b></a>`, meta, flags, verdict, mine, sent].filter(Boolean).join('\\n');\n}\n// Общий код сообщения с письмом в Telegram: W5 «Format letter» и W3 «Apply sent».\n// Подключается после n8n/shared/card.js (нужны esc и thaiDate):\n//   // @include n8n/shared/card.js\n//   // @include n8n/shared/letter.js\n\nconst LETTER_HEAD = { new: '✉️ Письмо', redo: '🔄 Новый вариант письма', revise: '✏️ Письмо с правкой' };\n\n// r: строка вакансии + { ok, letter, problem, mode, instruction }. Письмо — в <pre>: копируется одним нажатием.\n// После «📨 Отправил» (status = applied) подсказки заменяет строка «📨 Отклик отправлен …»\nfunction letterText(r) {\n  const head = `${LETTER_HEAD[r.mode] ?? LETTER_HEAD.new} · <a href=\"${r.url}\">${esc(r.title)}</a> · ${esc(r.company)}`;\n  if (!r.ok) {\n    return [head, `⚠️ Письмо не получилось: ${esc(r.problem)}`, 'Нажми «🔄 Переписать», чтобы попробовать ещё раз.'].join('\\n');\n  }\n  const sent = r.status === 'applied';\n  return [\n    head,\n    r.mode === 'revise' && r.instruction ? `<i>Пожелание: «${esc(r.instruction)}»</i>` : '',\n    `<pre>${esc(r.letter)}</pre>`,\n    !sent && r.has_test ? '📝 У вакансии тест — ответы в форме отклика на hh.' : '',\n    sent\n      ? `📨 Отклик отправлен${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}`\n      : '<i>Нажми на письмо — скопируется. Поправить — ответь на это сообщение.</i>',\n  ]\n    .filter(Boolean)\n    .join('\\n');\n}\n\nconst action = $('Route').first().json;\nconst row = $input.first().json;\nconst sent = action.op === 'sent';\nconst updated = {\n  ...row,\n  status: sent ? 'applied' : 'approved',\n  applied_at: sent ? row.applied_at || new Date().toISOString() : '',\n};\n\nreturn [\n  {\n    json: {\n      id: row.id,\n      sent,\n      status: updated.status,\n      applied_at: updated.applied_at,\n      letterText: letterText({ ...updated, ok: Boolean(row.letter), problem: 'письма нет', mode: 'new' }),\n      cardText: cardText(updated),\n      chatId: action.chatId,\n      letterMessageId: action.messageId,\n      cardId: row.tg_message_id,\n      queryId: action.queryId,\n      toast: sent ? '📨 Записал: отклик отправлен' : '↩️ Отменил: отклик не отправлен',\n      apply_url: row.apply_url,\n      url: row.url,\n    },\n  },\n];\n"
       }
     },
     {
@@ -711,7 +711,87 @@
         "operation": "answerQuery",
         "queryId": "={{ $('Apply sent').first().json.queryId }}",
         "additionalFields": {
-          "text": "📨 Записал: отклик отправлен"
+          "text": "={{ $('Apply sent').first().json.toast }}"
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterTgBot01",
+          "name": "Telegram bot"
+        }
+      }
+    },
+    {
+      "id": "5156d797-4b0d-4d5d-a60e-a2669421f30c",
+      "name": "Sent?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1980,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "63bcff14-88ad-3d2a-db62-95431c332290",
+              "leftValue": "={{ $('Apply sent').first().json.sent }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "decf7a68-94cb-6b0f-c68b-c5a196651e5c",
+      "name": "Letter: sent",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2200,
+        250
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "editMessageText",
+        "messageType": "message",
+        "chatId": "={{ $('Apply sent').first().json.chatId }}",
+        "messageId": "={{ $('Apply sent').first().json.letterMessageId }}",
+        "text": "={{ $('Apply sent').first().json.letterText }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "↩️ Отменить",
+                    "additionalFields": {
+                      "callback_data": "=l:{{ $('Apply sent').first().json.id }}:unsent"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
         }
       },
       "credentials": {
@@ -727,8 +807,8 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        1980,
-        300
+        2420,
+        250
       ],
       "parameters": {
         "resource": "message",
@@ -736,7 +816,105 @@
         "messageType": "message",
         "chatId": "={{ $('Apply sent').first().json.chatId }}",
         "messageId": "={{ $('Apply sent').first().json.cardId }}",
-        "text": "={{ $('Apply sent').first().json.text }}",
+        "text": "={{ $('Apply sent').first().json.cardText }}",
+        "replyMarkup": "none",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterTgBot01",
+          "name": "Telegram bot"
+        }
+      }
+    },
+    {
+      "id": "02259af1-b9ea-862d-05d0-0cf4c8ef4403",
+      "name": "Letter: restore",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2200,
+        400
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "editMessageText",
+        "messageType": "message",
+        "chatId": "={{ $('Apply sent').first().json.chatId }}",
+        "messageId": "={{ $('Apply sent').first().json.letterMessageId }}",
+        "text": "={{ $('Apply sent').first().json.letterText }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "📝 Отклик на hh",
+                    "additionalFields": {
+                      "url": "={{ $('Apply sent').first().json.apply_url }}"
+                    }
+                  },
+                  {
+                    "text": "🔗 Вакансия",
+                    "additionalFields": {
+                      "url": "={{ $('Apply sent').first().json.url }}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "🔄 Переписать",
+                    "additionalFields": {
+                      "callback_data": "=l:{{ $('Apply sent').first().json.id }}:redo"
+                    }
+                  },
+                  {
+                    "text": "📨 Отправил",
+                    "additionalFields": {
+                      "callback_data": "=l:{{ $('Apply sent').first().json.id }}:sent"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterTgBot01",
+          "name": "Telegram bot"
+        }
+      }
+    },
+    {
+      "id": "47a978e8-61f1-bf99-9cbd-2e823e92c908",
+      "name": "Card: restore",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2420,
+        400
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "editMessageText",
+        "messageType": "message",
+        "chatId": "={{ $('Apply sent').first().json.chatId }}",
+        "messageId": "={{ $('Apply sent').first().json.cardId }}",
+        "text": "={{ $('Apply sent').first().json.cardText }}",
         "replyMarkup": "inlineKeyboard",
         "inlineKeyboard": {
           "rows": [
@@ -1207,7 +1385,47 @@
       "main": [
         [
           {
+            "node": "Sent?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sent?": {
+      "main": [
+        [
+          {
+            "node": "Letter: sent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Letter: restore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Letter: sent": {
+      "main": [
+        [
+          {
             "node": "Card: sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Letter: restore": {
+      "main": [
+        [
+          {
+            "node": "Card: restore",
             "type": "main",
             "index": 0
           }
