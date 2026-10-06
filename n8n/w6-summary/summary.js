@@ -54,6 +54,10 @@ const agree = count(shadow, (r) => r.my_decision === r.decision);
 
 // Сбои: запуски n8n за сутки (публичный API), туннель, хвост оценки нейросетью
 const NAMES = {
+  jobHunterS0Setup: 'S0 таблицы',
+  jobHunterS1TgTst: 'S1 тест Telegram',
+  jobHunterW0Check: 'W0 проверка hh',
+  jobHunterW4Error: 'W4 тревоги',
   jobHunterW1Colle: 'W1 сбор',
   jobHunterW2Score: 'W2 оценка',
   jobHunterW3Teleg: 'W3 кнопки',
