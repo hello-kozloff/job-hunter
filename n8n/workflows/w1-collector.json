@@ -174,7 +174,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// W1 · Parse search — разбор страниц поиска hh.ru в записи таблицы vacancies.\n// Нода: Code, режим «Run Once for All Items».\n// Вход: ответы HTTP Request «Search hh», по одному на страницу (Response Format = Text,\n//       Include Response Headers and Status = on).\n// Выход: ОДИН item —\n//   { ok: true,  firstRun, vacancies: [...] }  → IF «OK?» → Split Out\n//   { ok: false, reason, html }                → IF «OK?» → сохранить HTML → Stop and Error\n\nconst firstRun = Boolean($('Plan').first().json.firstRun);\n\n// HTML-сущности раскодируем за один проход: иначе &amp;quot; станет кавычкой и сломает JSON\nconst NAMED = { quot: '\"', amp: '&', lt: '<', gt: '>', apos: \"'\", nbsp: '\\u00a0' };\nfunction decodeEntities(s) {\n  return s.replace(/&(#x[0-9a-f]+|#\\d+|[a-z]+);/gi, (m, e) => {\n    if (e[0] === '#') {\n      const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);\n      return Number.isFinite(code) && code <= 0x10ffff ? String.fromCodePoint(code) : m;\n    }\n    return NAMED[e.toLowerCase()] ?? m;\n  });\n}\n\nconst stripTags = (s) => String(s ?? '').replace(/<[^>]+>/g, '').replace(/\\s+/g, ' ').trim();\nconst normTitle = (s) =>\n  String(s ?? '')\n    .toLowerCase()\n    .replace(/ё/g, 'е')\n    .replace(/[^a-zа-я0-9+#]+/g, ' ')\n    .trim();\n\nconst fail = (reason, html) => [{ json: { ok: false, reason, html: String(html ?? '') } }];\n// Текст ответа HTTP Request (Response Format = Text) n8n кладёт в поле data\nconst htmlOf = (res) => String(res.data ?? res.body ?? '');\n\n// Вакансия из выдачи → строка таблицы vacancies (имена полей = имена колонок)\nfunction toRecord(v) {\n  const pay = v.compensation ?? {};\n  const companyId = v.company?.id ? String(v.company.id) : '';\n  return {\n    source: 'hh',\n    external_id: String(v.vacancyId),\n    // Одна вакансия в разных регионах = разные id. Склеиваем по компании и названию;\n    // у скрытой компании id нет — такие не склеиваем\n    dup_key: companyId ? `hh:${companyId}:${normTitle(v.name)}` : `hh:id:${v.vacancyId}`,\n    title: String(v.name).trim(),\n    company: String(v.company?.visibleName ?? v.company?.name ?? '').trim(),\n    company_id: companyId,\n    areas: v.area?.name ?? '',\n    salary_from: pay.from ?? null,\n    salary_to: pay.to ?? null,\n    currency: pay.currencyCode ?? null,\n    salary_gross: typeof pay.gross === 'boolean' ? pay.gross : null,\n    experience: v.workExperience ?? '',\n    employment_form: v.employmentForm ?? '',\n    work_formats: (v.workFormats ?? []).flatMap((w) => w?.workFormatsElement ?? []).join(','),\n    languages: (v.languages ?? [])\n      .flatMap((l) => l?.language ?? [])\n      .map((l) => `${l.isoCode}:${l.degree}`)\n      .join(','),\n    key_skills: stripTags(v.snippet?.skill),\n    has_test: Boolean(v.userTestPresent),\n    letter_required: Boolean(v['@responseLetterRequired']),\n    responses: v.totalResponsesCount ?? null,\n    snippet: [v.snippet?.req, v.snippet?.resp, v.snippet?.cond]\n      .map(stripTags)\n      .filter(Boolean)\n      .join(' | ')\n      .slice(0, 1500),\n    url: `https://hh.ru/vacancy/${v.vacancyId}`,\n    apply_url: `https://hh.ru/applicant/vacancy_response?vacancyId=${v.vacancyId}`,\n    apply_type: 'hh',\n    published_at: v.publicationTime?.$ ?? '',\n    status: firstRun ? 'seen' : 'new',\n  };\n}\n\nconst byKey = new Map();\nconst seenIds = new Set();\n\nfor (const item of $input.all()) {\n  const res = item.json;\n  const html = htmlOf(res);\n\n  if (res.statusCode !== 200) {\n    const to = res.headers?.location ? ` → ${res.headers.location}` : '';\n    return fail(`hh ответил HTTP ${res.statusCode}${to}`, html);\n  }\n\n  const tpl = html.match(/<template[^>]*id=\"HH-Lux-InitialState\"[^>]*>([\\s\\S]*?)<\\/template>/);\n  if (!tpl) {\n    // Слово «captcha» есть и на нормальной странице, поэтому смотрим на него только без InitialState\n    const hint = /captcha|робот/i.test(html) ? 'похоже на капчу/блок' : 'сменилась вёрстка?';\n    return fail(`Нет HH-Lux-InitialState — ${hint}`, html);\n  }\n\n  let state;\n  try {\n    state = JSON.parse(decodeEntities(tpl[1]));\n  } catch (e) {\n    return fail(`InitialState не разбирается: ${e.message}`, html);\n  }\n\n  const list = state?.vacancySearchResult?.vacancies;\n  if (!Array.isArray(list)) return fail('Нет vacancySearchResult.vacancies — сменилась структура', html);\n\n  for (const v of list) {\n    if (!v?.vacancyId || !v?.name) return fail('У вакансии нет vacancyId/name — сменилась структура', html);\n    const id = String(v.vacancyId);\n    // Между запросами страниц вакансия может съехать со страницы 0 на страницу 1\n    if (seenIds.has(id)) continue;\n    seenIds.add(id);\n\n    const rec = toRecord(v);\n    const prev = byKey.get(rec.dup_key);\n    if (!prev) byKey.set(rec.dup_key, rec);\n    else if (rec.areas && !prev.areas.split(', ').includes(rec.areas)) prev.areas += `, ${rec.areas}`;\n  }\n}\n\n// Пустая выдача по нашему запросу не бывает — считаем поломкой\nif (byKey.size === 0) return fail('В выдаче 0 вакансий — сменилась структура или запрос', htmlOf($input.first().json));\n\nreturn [{ json: { ok: true, firstRun, vacancies: [...byKey.values()] } }];\n"
+        "jsCode": "// W1 · Parse search — разбор страниц поиска hh.ru в записи таблицы vacancies.\n// Нода: Code, режим «Run Once for All Items».\n// Вход: ответы HTTP Request «Search hh», по одному на страницу (Response Format = Text,\n//       Include Response Headers and Status = on).\n// Выход: ОДИН item —\n//   { ok: true,  firstRun, vacancies: [...] }  → IF «OK?» → Split Out\n//   { ok: false, reason, html }                → IF «OK?» → сохранить HTML → Stop and Error\n\nconst firstRun = Boolean($('Plan').first().json.firstRun);\n\n// HTML-сущности раскодируем за один проход: иначе &amp;quot; станет кавычкой и сломает JSON\nconst NAMED = { quot: '\"', amp: '&', lt: '<', gt: '>', apos: \"'\", nbsp: '\\u00a0' };\nfunction decodeEntities(s) {\n  return s.replace(/&(#x[0-9a-f]+|#\\d+|[a-z]+);/gi, (m, e) => {\n    if (e[0] === '#') {\n      const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);\n      return Number.isFinite(code) && code <= 0x10ffff ? String.fromCodePoint(code) : m;\n    }\n    return NAMED[e.toLowerCase()] ?? m;\n  });\n}\n\nconst stripTags = (s) => String(s ?? '').replace(/<[^>]+>/g, '').replace(/\\s+/g, ' ').trim();\nconst normTitle = (s) =>\n  String(s ?? '')\n    .toLowerCase()\n    .replace(/ё/g, 'е')\n    .replace(/[^a-zа-я0-9+#]+/g, ' ')\n    .trim();\n\nconst fail = (reason, html) => [{ json: { ok: false, reason, html: String(html ?? '') } }];\n// Текст ответа HTTP Request (Response Format = Text) n8n кладёт в поле data\nconst htmlOf = (res) => String(res.data ?? res.body ?? '');\n\n// Формы оформления: tk = трудовой договор + SELF_EMPLOYED / INDIVIDUAL_ENTREPRENEUR / INDIVIDUAL_PERSON (ГПХ).\n// Пустая строка = работодатель не указал\nconst contractOf = (v) =>\n  [\n    ...(v.acceptLaborContract ? ['tk'] : []),\n    ...(v.civilLawContracts ?? []).flatMap((c) => c?.civilLawContractsElement ?? []).map((c) => c.toLowerCase()),\n  ].join(',');\n\n// Вакансия из выдачи → строка таблицы vacancies (имена полей = имена колонок)\nfunction toRecord(v) {\n  const pay = v.compensation ?? {};\n  const companyId = v.company?.id ? String(v.company.id) : '';\n  return {\n    source: 'hh',\n    external_id: String(v.vacancyId),\n    // Одна вакансия в разных регионах = разные id. Склеиваем по компании и названию;\n    // у скрытой компании id нет — такие не склеиваем\n    dup_key: companyId ? `hh:${companyId}:${normTitle(v.name)}` : `hh:id:${v.vacancyId}`,\n    title: String(v.name).trim(),\n    company: String(v.company?.visibleName ?? v.company?.name ?? '').trim(),\n    company_id: companyId,\n    areas: v.area?.name ?? '',\n    salary_from: pay.from ?? null,\n    salary_to: pay.to ?? null,\n    currency: pay.currencyCode ?? null,\n    salary_gross: typeof pay.gross === 'boolean' ? pay.gross : null,\n    experience: v.workExperience ?? '',\n    employment_form: v.employmentForm ?? '',\n    work_formats: (v.workFormats ?? []).flatMap((w) => w?.workFormatsElement ?? []).join(','),\n    languages: (v.languages ?? [])\n      .flatMap((l) => l?.language ?? [])\n      .map((l) => `${l.isoCode}:${l.degree}`)\n      .join(','),\n    key_skills: stripTags(v.snippet?.skill),\n    contract: contractOf(v),\n    has_test: Boolean(v.userTestPresent),\n    letter_required: Boolean(v['@responseLetterRequired']),\n    responses: v.totalResponsesCount ?? null,\n    snippet: [v.snippet?.req, v.snippet?.resp, v.snippet?.cond]\n      .map(stripTags)\n      .filter(Boolean)\n      .join(' | ')\n      .slice(0, 1500),\n    url: `https://hh.ru/vacancy/${v.vacancyId}`,\n    apply_url: `https://hh.ru/applicant/vacancy_response?vacancyId=${v.vacancyId}`,\n    apply_type: 'hh',\n    published_at: v.publicationTime?.$ ?? '',\n    status: firstRun ? 'seen' : 'new',\n  };\n}\n\nconst byKey = new Map();\nconst seenIds = new Set();\n\nfor (const item of $input.all()) {\n  const res = item.json;\n  const html = htmlOf(res);\n\n  if (res.statusCode !== 200) {\n    const to = res.headers?.location ? ` → ${res.headers.location}` : '';\n    return fail(`hh ответил HTTP ${res.statusCode}${to}`, html);\n  }\n\n  const tpl = html.match(/<template[^>]*id=\"HH-Lux-InitialState\"[^>]*>([\\s\\S]*?)<\\/template>/);\n  if (!tpl) {\n    // Слово «captcha» есть и на нормальной странице, поэтому смотрим на него только без InitialState\n    const hint = /captcha|робот/i.test(html) ? 'похоже на капчу/блок' : 'сменилась вёрстка?';\n    return fail(`Нет HH-Lux-InitialState — ${hint}`, html);\n  }\n\n  let state;\n  try {\n    state = JSON.parse(decodeEntities(tpl[1]));\n  } catch (e) {\n    return fail(`InitialState не разбирается: ${e.message}`, html);\n  }\n\n  const list = state?.vacancySearchResult?.vacancies;\n  if (!Array.isArray(list)) return fail('Нет vacancySearchResult.vacancies — сменилась структура', html);\n\n  for (const v of list) {\n    if (!v?.vacancyId || !v?.name) return fail('У вакансии нет vacancyId/name — сменилась структура', html);\n    const id = String(v.vacancyId);\n    // Между запросами страниц вакансия может съехать со страницы 0 на страницу 1\n    if (seenIds.has(id)) continue;\n    seenIds.add(id);\n\n    const rec = toRecord(v);\n    const prev = byKey.get(rec.dup_key);\n    if (!prev) byKey.set(rec.dup_key, rec);\n    else if (rec.areas && !prev.areas.split(', ').includes(rec.areas)) prev.areas += `, ${rec.areas}`;\n  }\n}\n\n// Пустая выдача по нашему запросу не бывает — считаем поломкой\nif (byKey.size === 0) return fail('В выдаче 0 вакансий — сменилась структура или запрос', htmlOf($input.first().json));\n\nreturn [{ json: { ok: true, firstRun, vacancies: [...byKey.values()] } }];\n"
       }
     },
     {
@@ -260,12 +260,49 @@
       }
     },
     {
+      "id": "1d0bfca5-a11e-4ceb-61f3-9222f988b451",
+      "name": "Blacklist",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        -100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "blacklist"
+        },
+        "returnAll": true
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "d9bad3e6-f977-bb8b-34aa-b059d0e838a9",
+      "name": "Filter search",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        -100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W1 · Filter search — быстрые правила по данным выдачи, до захода на страницу вакансии.\n// Нода: Code, режим «Run Once for All Items».\n// Вход: новые вакансии из «Is new» и строки чёрного списка из «Blacklist».\n// Выход: те же вакансии со status = new | rejected | seen и причиной в reasons.\n// Правила — решения пользователя от 07.10.2026 (CLAUDE.md §7).\n\nconst firstRun = Boolean($('Plan').first().json.firstRun);\nconst rows = $('Is new').all().map((i) => i.json);\n\n// Чёрный список: в колонке company — кусок названия компании или её id на hh (только цифры)\nconst blacklist = $('Blacklist')\n  .all()\n  .map((i) => String(i.json.company ?? '').trim().toLowerCase())\n  .filter(Boolean);\n\nconst inBlacklist = (r) =>\n  blacklist.some((b) => (/^\\d+$/.test(b) ? r.company_id === b : r.company.toLowerCase().includes(b)));\n\n// \\b и \\w в JS не работают с кириллицей — границы слова и окончания задаём явно\nconst ru = (word) => new RegExp(`(^|[^а-яё])${word}([^а-яё]|$)`, 'i');\n\nconst RULES = [\n  ['без опыта', (r) => r.experience === 'noExperience'],\n  ['junior/стажёр', (r) => /junior|\\bintern|trainee/i.test(r.title) || ru('(стаж[её]р|младш[а-яё]*|джун[а-яё]*)').test(r.title)],\n  ['Vue/Angular', (r) => /vue|angular/i.test(r.title)],\n  [\n    'Lead/архитектор',\n    (r) =>\n      (/\\b(team ?lead|tech ?lead|lead|head|architect|cto)\\b/i.test(r.title) ||\n        ru('(тимлид[а-яё]*|техлид[а-яё]*|лид|архитектор[а-яё]*|руководител[а-яё]*)').test(r.title)) &&\n      !/senior|middle/i.test(r.title) &&\n      !ru('(старш[а-яё]*|ведущ[а-яё]*)').test(r.title),\n  ],\n  [\n    'стоп-слово',\n    (r) =>\n      /php|wordpress|bitrix|\\bqa\\b|\\b1c\\b|teacher|tutor|instructor|o.?qituvchi/i.test(r.title) ||\n      ru('(1с|битрикс[а-яё]*|преподавател[а-яё]*|тестировщик[а-яё]*|наставник[а-яё]*)').test(r.title),\n  ],\n  ['только ТК', (r) => r.contract === 'tk'],\n  ['> 3000 откликов', (r) => (r.responses ?? 0) > 3000],\n  ['чёрный список', inBlacklist],\n];\n\nreturn rows.map((r) => {\n  if (firstRun) return { json: { ...r, status: 'seen', reasons: '' } };\n  const failed = RULES.filter(([, test]) => test(r)).map(([name]) => name);\n  return { json: { ...r, status: failed.length ? 'rejected' : 'new', reasons: failed.join(', ') } };\n});\n"
+      }
+    },
+    {
       "id": "b65164b0-7b9a-458c-d6bc-8bfce47113d9",
       "name": "Insert",
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        1760,
+        2200,
         -100
       ],
       "parameters": {
@@ -288,18 +325,163 @@
       }
     },
     {
+      "id": "fd0428d6-d4fb-9181-83d8-bb44027f65e5",
+      "name": "Is candidate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2420,
+        -100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "90ba7949-d25c-072a-7267-3dddf36d0c20",
+              "leftValue": "={{ $json.status === 'new' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "bd95f33c-b89c-0087-9861-29e61e8255b2",
+      "name": "Vacancy page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2640,
+        -200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "ru-RU,ru;q=0.9,en;q=0.8"
+            },
+            {
+              "name": "Referer",
+              "value": "https://hh.ru/search/vacancy"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 3000
+            }
+          },
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 30000
+        }
+      }
+    },
+    {
+      "id": "a2a7f28d-9d86-2773-fa89-70175c5c154a",
+      "name": "Parse vacancy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        -200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W1 · Parse vacancy — полная страница вакансии + правила, которым нужно описание.\n// Нода: Code, режим «Run Once for All Items».\n// Вход: ответы HTTP Request «Vacancy page» — в том же порядке, что строки из «Is candidate»\n//       (строки уже в таблице, у каждой есть id).\n// Выход: строка целиком с обновлёнными status / reasons / description / key_skills / has_test / contract / error\n//        → нода Update пишет её обратно по id.\n\nconst rows = $('Is candidate').all().map((i) => i.json);\nconst responses = $input.all().map((i) => i.json);\n\n// HTML-сущности раскодируем за один проход: иначе &amp;quot; станет кавычкой и сломает JSON\nconst NAMED = { quot: '\"', amp: '&', lt: '<', gt: '>', apos: \"'\", nbsp: '\\u00a0' };\nfunction decodeEntities(s) {\n  return s.replace(/&(#x[0-9a-f]+|#\\d+|[a-z]+);/gi, (m, e) => {\n    if (e[0] === '#') {\n      const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);\n      return Number.isFinite(code) && code <= 0x10ffff ? String.fromCodePoint(code) : m;\n    }\n    return NAMED[e.toLowerCase()] ?? m;\n  });\n}\n\n// Описание вакансии: HTML → текст с переносами строк\nconst htmlToText = (html) =>\n  decodeEntities(\n    String(html ?? '')\n      .replace(/<\\s*(br|\\/p|\\/li|\\/h\\d|\\/div)[^>]*>/gi, '\\n')\n      .replace(/<li[^>]*>/gi, '• ')\n      .replace(/<[^>]+>/g, ''),\n  )\n    .replace(/[ \\t\\u00a0]+/g, ' ')\n    .replace(/\\n\\s*\\n+/g, '\\n')\n    .trim();\n\n// «Работа только из РФ». Совпавший кусок пишем в reasons, чтобы ложные срабатывания было видно\nconst RF_ONLY = [\n  /(только|исключительно)[^.\\n]{0,40}(из|на территории|в|по)\\s+(рф|росси)/i,\n  /(находит[а-яё]*|проживать|проживани[а-яё]*|нахождени[а-яё]*|располож[а-яё]*)[^.\\n]{0,30}(в|на территории|из)\\s+(рф|росси)/i,\n  /(налогов[а-яё]*\\s+)?резидент[а-яё]*\\s+(рф|росси)/i,\n  /(based|located|reside\\w*|living)\\s+in\\s+russia/i,\n];\n\nfunction parsePage(res) {\n  const html = String(res.data ?? res.body ?? '');\n  if (res.statusCode !== 200) return { error: `страница: HTTP ${res.statusCode}` };\n  const tpl = html.match(/<template[^>]*id=\"HH-Lux-InitialState\"[^>]*>([\\s\\S]*?)<\\/template>/);\n  if (!tpl) return { error: 'страница: нет HH-Lux-InitialState' };\n  try {\n    const state = JSON.parse(decodeEntities(tpl[1]));\n    const v = state?.vacancyView?.vacancyFull?.vacancy;\n    if (!v?.description) return { error: 'страница: нет описания' };\n    return { v, test: state?.applicantVacancyResponseStatuses?.[String(v.vacancyId)]?.test };\n  } catch (e) {\n    return { error: `страница: ${e.message}` };\n  }\n}\n\nreturn rows.map((row, i) => {\n  const page = parsePage(responses[i] ?? {});\n  // Страница не открылась — вакансию не теряем: остаётся new с ошибкой, видна в сообщении\n  if (page.error) return { json: { ...row, error: page.error } };\n\n  const { v, test } = page;\n  if (String(v.vacancyId) !== row.external_id) {\n    return { json: { ...row, error: `страница: пришла вакансия ${v.vacancyId}` } };\n  }\n\n  const description = htmlToText(v.description);\n  const skills = (v.keySkills ?? []).join(', ');\n  const contract = [\n    ...(v.acceptLaborContract ? ['tk'] : []),\n    ...(v.civilLawContracts ?? []).flatMap((c) => c?.civilLawContractsElement ?? (typeof c === 'string' ? [c] : [])).map((c) => String(c).toLowerCase()),\n  ].join(',');\n\n  const reasons = [];\n  if (v.status?.archived || v.closedForApplicants) reasons.push('в архиве');\n  const rf = RF_ONLY.map((re) => description.match(re)).find(Boolean);\n  if (rf) reasons.push(`только из РФ: «${rf[0].trim()}»`);\n  if (contract === 'tk') reasons.push('только ТК');\n  if (!/react|next\\.?js/i.test(`${row.title} ${skills} ${description}`)) reasons.push('нет React');\n\n  return {\n    json: {\n      ...row,\n      description: description.slice(0, 8000),\n      key_skills: skills || row.key_skills,\n      has_test: Boolean(test?.hasTests ?? row.has_test),\n      contract,\n      status: reasons.length ? 'rejected' : 'detailed',\n      reasons: reasons.join(', '),\n      error: '',\n    },\n  };\n});\n"
+      }
+    },
+    {
+      "id": "06bad7fe-91c3-5a04-1734-522a23622530",
+      "name": "Update",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3080,
+        -200
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "vacancies"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
       "id": "a89128d3-5cdb-d332-c345-480c6a03919a",
       "name": "Format message",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1980,
-        -100
+        3300,
+        -200
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// W1 · Format message — текст для Telegram (Parse Mode = HTML).\n// Нода: Code, режим «Run Once for All Items».\n// Вакансии берём из ноды «Is new» — это ровно те, что только что записаны в таблицу.\n// Telegram не принимает сообщения длиннее 4096 символов — делим на части до 4000.\n\nconst rows = $('Is new').all().map((i) => i.json);\nconst firstRun = Boolean($('Plan').first().json.firstRun);\n\nif (firstRun) {\n  return [\n    {\n      json: {\n        text: `✅ Первый запуск: ${rows.length} текущих вакансий записано со статусом seen.\\nДальше пришлю только новые.`,\n      },\n    },\n  ];\n}\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst EXPERIENCE = { noExperience: 'без опыта', between1And3: '1–3 г.', between3And6: '3–6 л.', moreThan6: '6+ л.' };\nconst CURRENCY = { RUR: '₽', USD: '$', EUR: '€', KZT: '₸', BYR: 'Br', UZS: 'сум' };\nconst short = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));\n\nfunction salary(r) {\n  if (!r.salary_from && !r.salary_to) return '';\n  const range =\n    r.salary_from && r.salary_to\n      ? `${short(r.salary_from)}–${short(r.salary_to)}`\n      : r.salary_from\n        ? `от ${short(r.salary_from)}`\n        : `до ${short(r.salary_to)}`;\n  return `💰 ${range} ${CURRENCY[r.currency] ?? r.currency ?? ''}${r.salary_gross ? ' до налогов' : ''}`;\n}\n\n// «Москва, Сербия, Грузия, Армения» → «Москва, Сербия +2»\nfunction areas(s) {\n  const list = String(s ?? '').split(', ').filter(Boolean);\n  return list.length > 2 ? `${list.slice(0, 2).join(', ')} +${list.length - 2}` : list.join(', ');\n}\n\nconst blocks = rows.map((r, i) => {\n  const meta = [esc(r.company), salary(r), EXPERIENCE[r.experience] ?? '', esc(areas(r.areas))]\n    .filter(Boolean)\n    .join(' · ');\n  const flags = [r.has_test && '📝 тест', r.letter_required && '✉️ письмо обязательно', r.responses != null && `👥 ${r.responses}`]\n    .filter(Boolean)\n    .join(' · ');\n  return `${i + 1}. <a href=\"${r.url}\">${esc(r.title)}</a>\\n${meta}${flags ? `\\n${flags}` : ''}`;\n});\n\nconst messages = [];\nlet text = `🆕 Новые вакансии: ${rows.length}`;\nfor (const block of blocks) {\n  if (text.length + block.length + 2 > 4000) {\n    messages.push(text);\n    text = block;\n  } else {\n    text += `\\n\\n${block}`;\n  }\n}\nmessages.push(text);\n\nreturn messages.map((t) => ({ json: { text: t } }));\n"
+        "jsCode": "// W1 · Format message — текст для Telegram (Parse Mode = HTML).\n// Нода: Code, режим «Run Once for All Items».\n// Прошедшие фильтр — из «Parse vacancy» (status detailed, или new, если страница не открылась).\n// Отсеянные — из «Filter search» и «Parse vacancy», сводкой по причинам.\n// Telegram не принимает сообщения длиннее 4096 символов — делим на части до 4000.\n\nconst checked = $('Parse vacancy').all().map((i) => i.json);\nconst passed = checked.filter((r) => r.status !== 'rejected');\nconst rejected = [\n  ...$('Filter search')\n    .all()\n    .map((i) => i.json)\n    .filter((r) => r.status === 'rejected'),\n  ...checked.filter((r) => r.status === 'rejected'),\n];\n\n// Нечего показать — молчим, отсеянные видны в таблице\nif (passed.length === 0) return [];\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst EXPERIENCE = { noExperience: 'без опыта', between1And3: '1–3 г.', between3And6: '3–6 л.', moreThan6: '6+ л.' };\nconst CURRENCY = { RUR: '₽', USD: '$', EUR: '€', KZT: '₸', BYR: 'Br', UZS: 'сум' };\nconst short = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));\n\nfunction salary(r) {\n  if (!r.salary_from && !r.salary_to) return '';\n  const range =\n    r.salary_from && r.salary_to\n      ? `${short(r.salary_from)}–${short(r.salary_to)}`\n      : r.salary_from\n        ? `от ${short(r.salary_from)}`\n        : `до ${short(r.salary_to)}`;\n  return `💰 ${range} ${CURRENCY[r.currency] ?? r.currency ?? ''}${r.salary_gross ? ' до налогов' : ''}`;\n}\n\n// «Москва, Сербия, Грузия, Армения» → «Москва, Сербия +2»\nfunction areas(s) {\n  const list = String(s ?? '').split(', ').filter(Boolean);\n  return list.length > 2 ? `${list.slice(0, 2).join(', ')} +${list.length - 2}` : list.join(', ');\n}\n\nconst blocks = passed.map((r, i) => {\n  const meta = [esc(r.company), salary(r), EXPERIENCE[r.experience] ?? '', esc(areas(r.areas))]\n    .filter(Boolean)\n    .join(' · ');\n  const flags = [\n    r.has_test && '📝 тест',\n    r.letter_required && '✉️ письмо обязательно',\n    r.responses != null && `👥 ${r.responses}`,\n    r.error && `⚠️ ${esc(r.error)}`,\n  ]\n    .filter(Boolean)\n    .join(' · ');\n  return `${i + 1}. <a href=\"${r.url}\">${esc(r.title)}</a>\\n${meta}${flags ? `\\n${flags}` : ''}`;\n});\n\n// Сводка отсеянных: «Vue/Angular 2 · только ТК 1». Для «только из РФ» цитату не тащим\nconst counts = {};\nfor (const r of rejected) {\n  for (const reason of String(r.reasons).split(', ').filter(Boolean)) {\n    const key = reason.replace(/:.*$/, '');\n    counts[key] = (counts[key] ?? 0) + 1;\n  }\n}\nconst summary = rejected.length\n  ? `\\n\\n🚫 Отсеяно ${rejected.length}: ${Object.entries(counts)\n      .map(([k, n]) => `${esc(k)} ${n}`)\n      .join(' · ')}`\n  : '';\n\nconst messages = [];\nlet text = `🆕 Подходят: ${passed.length}`;\nfor (const block of blocks) {\n  if (text.length + block.length + 2 > 4000) {\n    messages.push(text);\n    text = block;\n  } else {\n    text += `\\n\\n${block}`;\n  }\n}\nif (text.length + summary.length > 4000) {\n  messages.push(text);\n  text = summary.trim();\n} else {\n  text += summary;\n}\nmessages.push(text);\n\nreturn messages.map((t) => ({ json: { text: t } }));\n"
       }
     },
     {
@@ -308,8 +490,8 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        2200,
-        -100
+        3520,
+        -200
       ],
       "parameters": {
         "resource": "message",
@@ -478,6 +660,28 @@
       "main": [
         [
           {
+            "node": "Blacklist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Blacklist": {
+      "main": [
+        [
+          {
+            "node": "Filter search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter search": {
+      "main": [
+        [
+          {
             "node": "Insert",
             "type": "main",
             "index": 0
@@ -486,6 +690,50 @@
       ]
     },
     "Insert": {
+      "main": [
+        [
+          {
+            "node": "Is candidate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is candidate": {
+      "main": [
+        [
+          {
+            "node": "Vacancy page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vacancy page": {
+      "main": [
+        [
+          {
+            "node": "Parse vacancy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse vacancy": {
+      "main": [
+        [
+          {
+            "node": "Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update": {
       "main": [
         [
           {

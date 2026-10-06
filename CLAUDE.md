@@ -100,16 +100,16 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 ```
 [W0 Check hh]  ручная проверка «жив ли hh» (этап 0)
 [W1 Collector] Schedule (0 9-21/2 * * *, МСК) → поиск hh → разбор InitialState → склейка дублей
-                 → только новые (нет ни external_id, ни dup_key) → таблица vacancies → список новых в Telegram
-                 ↓ этап 2+: в том же запуске
-[W2 Обработка] страница вакансии → быстрые правила (Code) → LLM-оценка → LLM-письмо
-                 → Telegram-карточка с кнопками → status=waiting
+                 → только новые (нет ни external_id, ни dup_key) → Blacklist + Filter search (правила по выдаче)
+                 → Insert (new | rejected) → для new: страница вакансии → Parse vacancy (правила по описанию)
+                 → Update (detailed | rejected) → Telegram: прошедшие + сводка отсеянных
+[W2 Оценка]    (этап 3+) detailed → LLM-оценка → LLM-письмо → Telegram-карточка с кнопками → status=waiting
 [W3 Telegram]  Telegram Trigger (callback кнопок, через ngrok) → обновить статус
 [W4 Errors]    Error Trigger → Telegram (строится на этапе 1)
 [W5 Сводка]    раз в день: найдено / подошло / откликнулся / ошибки
 ```
 
-**Статусы:** `seen` (бэкфилл первого запуска, не обрабатывается) | `new → detailed → rejected | scored → ready → waiting → approved | skipped → applied | failed | needs_human`.
+**Статусы:** `seen` (бэкфилл, не обрабатывается) | `new` (прошла выдачу; если `error` — страница не открылась) → `detailed` (прошла все правила, есть описание) | `rejected` (+ `reasons`) → этап 3+: `scored → ready → waiting → approved | skipped → applied | failed | needs_human`.
 
 **Хранилище:** n8n Data Tables, таблица `vacancies`.
 - Лимит поднят до 100 МБ env-переменной.
@@ -117,8 +117,11 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 - Одна вакансия в разных регионах — это разные id. Склеиваем по `dup_key = hh:<company_id>:<нормализованное название>`; у скрытой компании — `hh:id:<id>`. Регионы копий собираются в `areas`.
 
 **Схема `vacancies`:**
+- источник правды — `n8n/schema.mjs`; новая колонка → `node scripts/n8n-api.mjs migrate`;
 - этап 1: `source, external_id, dup_key, title, company, company_id, areas, salary_from, salary_to, currency, salary_gross, experience, employment_form, work_formats, languages, key_skills, has_test, letter_required, responses, snippet, url, apply_url, apply_type (hh|external|manual), published_at, status`;
-- добавить на этапах 2–4: `description, score, decision, reasons, red_flags, letter, tg_message_id, error`;
+- этап 2: `contract` (tk,self_employed,individual_entrepreneur,individual_person), `reasons`, `description` (текст ≤ 8000), `error`;
+- добавить на этапах 3–4: `score, decision, red_flags, letter, tg_message_id`;
+- таблица `blacklist`: `company, comment`;
 - `id, createdAt, updatedAt` — встроенные.
 
 **Telegram:**
@@ -146,19 +149,27 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 
 ## 7. Правила отбора
 
-Известно:
-- только удалёнка; регионы — любые;
-- **отсекать «работа только из РФ / нахождение в РФ»** — пользователь живёт за границей;
-- уровень Senior/Middle+, стек React / Next.js / TypeScript;
-- исключать: junior, стажёр, intern, Vue/Angular-only, PHP, 1С, WordPress, Битрикс, преподавание;
-- английский у пользователя B1;
-- занятость (из резюме): полная, частичная, проектная; самозанятость есть.
+Решения пользователя (06–07.10.2026). Код: `n8n/w1-collector/filter-search.js` (по выдаче) и `parse-vacancy.js` (по странице вакансии).
 
-Почти всё для правил уже есть в выдаче поиска, без захода на страницу вакансии: зарплата, опыт, формат работы, языки, тест, обязательное письмо, навыки, сниппет, число откликов. Поэтому быстрый фильтр можно запускать до запроса страницы вакансии.
+**Отсекаем по выдаче (Filter search):**
+- опыт «нет опыта»; junior / стажёр / intern / младший;
+- Vue или Angular в названии — даже вместе с React;
+- Lead / тимлид / архитектор / руководитель / head / CTO — кроме гибридов с Senior/Middle/старший/ведущий;
+- стоп-слова в названии: PHP, 1С, WordPress, Битрикс, QA/тестировщик, преподаватель/наставник/teacher/tutor;
+- **только ТК РФ** (`acceptLaborContract` и пустой `civilLawContracts`) — нужен ГПХ / самозанятость / ИП / контракт;
+- больше 3000 откликов;
+- компания из таблицы `blacklist` (кусок названия или id компании на hh; заполняет пользователь в UI).
 
-Чего не знаем — см. §12, спросить на этапе 2.
+**Отсекаем по странице вакансии (Parse vacancy):**
+- архив / закрыта для откликов;
+- «только из РФ / находиться на территории РФ / резидент РФ / located in Russia» (цитата пишется в `reasons`);
+- только ТК (по полным данным);
+- нет React / Next.js ни в названии, ни в навыках, ни в описании.
 
-Двухслойный фильтр: сначала бесплатные правила в Code-ноде, в LLM — только прошедшие.
+**Не фильтруем (решает LLM, этап 3):** зарплата (и без вилки), опыт 1–3 года, английский выше B1, оплата в валюте/USDT — ок.
+**Оставляем:** fullstack React + Node.js, fullstack React + другой бэкенд, React Native. Тест от работодателя — не отсекать, пометка (отклик вручную).
+
+Замер на бэкфилле (135): по выдаче отсеивается 71, больше всего «только ТК» (45) и Vue/Angular (18).
 
 ## 8. Проблемы и решения
 
@@ -191,8 +202,8 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 | Этап | Что | Критерий готовности |
 |---|---|---|
 | 0. Проверка ✅ | Локальный n8n в Docker + W0 Check hh. 06.10.2026: 3 прогона из n8n — поиск и вакансия `OK`, 163 вакансии | Оба вердикта OK из n8n, Data tables есть |
-| **1. Сбор** ← **ТЕКУЩИЙ** (наблюдение) | W4 Errors + W1 Collector + таблица + детектор блока. 06.10.2026: бэкфилл 136 строк `seen`; ветка поломки, Telegram (S1) и цепочка W1 → W4 проверены на запусках по расписанию; W1 и W4 опубликованы в 18:27 МСК | 2–3 дня: таблица наполняется сама, новые вакансии и тревоги — в Telegram |
-| 2. Детали + правила | страница вакансии, быстрый фильтр | Полные описания, мусор отсеян |
+| 1. Сбор ✅ | W4 Errors + W1 Collector + таблица + детектор блока. 06.10.2026: бэкфилл 136 строк `seen`; ветка поломки, Telegram (S1) и цепочка W1 → W4 проверены на запусках по расписанию; W1 и W4 опубликованы в 18:27 МСК | 2–3 дня: таблица наполняется сама, новые вакансии и тревоги — в Telegram |
+| **2. Детали + правила** ← **ТЕКУЩИЙ** | Filter search + Parse vacancy + таблица blacklist в W1 (`docs/stages/stage-2.md`). Код и тесты на фикстурах готовы 07.10.2026; деплой ждёт снятия паузы Docker | Полные описания, мусор отсеян |
 | 3. Оценка | LLM, теневой режим неделю | Решения системы совпадают с мнением пользователя |
 | 4. Письмо + Telegram | Writer, кнопки, W3, ngrok | **MVP: полуавтомат A** |
 | 5. Мониторинг | W5 | Сводка каждый день |
@@ -227,18 +238,8 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 
 ## 12. Открытые вопросы к пользователю
 
-- **Сейчас:** 2–3 дня наблюдения за W1 (что приходит в Telegram, что явно мусор).
-- **Пароль владельца n8n:** 06.10.2026 строка `N8N_OWNER_PASSWORD` пропала из `.env` (пароль в n8n не менялся). Без неё не работают `scripts/n8n-api.mjs run/rows` (ручные запуски W1 и чтение таблицы). Варианты: вернуть пароль в `.env` или сбросить владельца (`n8n user-management:reset` + `setup-owner`). Пока обходимся CLI, журналом событий и чтением SQLite.
-- **Этап 2:**
-  - минимальная зарплата; что делать с вакансиями без ЗП;
-  - валюта и способ оплаты при жизни за границей;
-  - опыт «1–3 года»; требование английского B2+;
-  - fullstack, React Native, смешанные стеки;
-  - сферы: iGaming, МФО, госсектор, кадровые агентства;
-  - Lead/архитектор; вакансии с тестом;
-  - конкуренция (сотни откликов);
-  - чёрный список компаний; стоп-слова;
-  - форма оформления (ТК / ГПХ / самозанятость из-за границы).
+- **Сейчас:** наблюдение за фильтром этапа 2 — не режет ли лишнего (особенно «только ТК» и «только из РФ»); заполнить `blacklist`.
+- **Пароль владельца n8n:** строка `N8N_OWNER_PASSWORD` пропала из `.env` 06.10.2026; пользователь согласовал сброс (`n8n user-management:reset` → перезапуск → `setup-owner`). `setup-owner` теперь правит `.env` на месте.
 - **Этап 3:** LLM-провайдер (с тайского IP доступны OpenAI/Anthropic/Gemini; вариант — Ollama локально на M1 Pro 16 ГБ), бюджет, порог, теневой режим.
 - **Этап 4:** язык и длина письма, контакты, кнопки, тихие часы (UTC+7), настройка ngrok.
 - **Этап 6:** нужен ли VPS, если Mac с домашним IP справится сам.
@@ -252,10 +253,11 @@ docs/stages/stage-N.md              устройство этапов и руч�
 n8n/w0-check/*.js                   код Code-нод W0
 n8n/w1-collector/*.js               код Code-нод W1
 n8n/w4-errors/*.js                  код Code-нод W4
+n8n/schema.mjs                      схема таблиц vacancies и blacklist
 n8n/workflows/*.json                сгенерированные workflow (не править руками)
 scripts/build-workflows.mjs         описание workflow → n8n/workflows/*.json
 scripts/deploy.sh                   сборка + импорт в n8n (+ credential Telegram из .env)
-scripts/n8n-api.mjs                 владелец, запуск workflow, строки таблиц
+scripts/n8n-api.mjs                 владелец, запуск/публикация workflow, строки таблиц, migrate
 scripts/telegram-credential.mjs     JSON credential из TG_BOT_TOKEN (только через pipe)
 scripts/run-code-node.mjs           прогон Code-ноды на фикстурах без n8n
 fixtures/                           страницы hh (не в git, кроме synthetic-*)
@@ -265,7 +267,7 @@ Workflow в n8n (постоянные id):
 
 | id | Имя | Что |
 |---|---|---|
-| `jobHunterS0Setup` | S0 Setup | создать таблицу `vacancies` (если нет) |
+| `jobHunterS0Setup` | S0 Setup | создать таблицы `vacancies` и `blacklist` (если нет) |
 | `jobHunterS1TgTst` | S1 Telegram test | проверочное сообщение в Telegram |
 | `jobHunterW0Check` | W0 Check hh | ручная проверка «жив ли hh» |
 | `jobHunterW1Colle` | W1 Collector | сбор каждые 2 ч |

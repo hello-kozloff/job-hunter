@@ -1,20 +1,21 @@
 // W1 · Format message — текст для Telegram (Parse Mode = HTML).
 // Нода: Code, режим «Run Once for All Items».
-// Вакансии берём из ноды «Is new» — это ровно те, что только что записаны в таблицу.
+// Прошедшие фильтр — из «Parse vacancy» (status detailed, или new, если страница не открылась).
+// Отсеянные — из «Filter search» и «Parse vacancy», сводкой по причинам.
 // Telegram не принимает сообщения длиннее 4096 символов — делим на части до 4000.
 
-const rows = $('Is new').all().map((i) => i.json);
-const firstRun = Boolean($('Plan').first().json.firstRun);
+const checked = $('Parse vacancy').all().map((i) => i.json);
+const passed = checked.filter((r) => r.status !== 'rejected');
+const rejected = [
+  ...$('Filter search')
+    .all()
+    .map((i) => i.json)
+    .filter((r) => r.status === 'rejected'),
+  ...checked.filter((r) => r.status === 'rejected'),
+];
 
-if (firstRun) {
-  return [
-    {
-      json: {
-        text: `✅ Первый запуск: ${rows.length} текущих вакансий записано со статусом seen.\nДальше пришлю только новые.`,
-      },
-    },
-  ];
-}
+// Нечего показать — молчим, отсеянные видны в таблице
+if (passed.length === 0) return [];
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const EXPERIENCE = { noExperience: 'без опыта', between1And3: '1–3 г.', between3And6: '3–6 л.', moreThan6: '6+ л.' };
@@ -38,18 +39,37 @@ function areas(s) {
   return list.length > 2 ? `${list.slice(0, 2).join(', ')} +${list.length - 2}` : list.join(', ');
 }
 
-const blocks = rows.map((r, i) => {
+const blocks = passed.map((r, i) => {
   const meta = [esc(r.company), salary(r), EXPERIENCE[r.experience] ?? '', esc(areas(r.areas))]
     .filter(Boolean)
     .join(' · ');
-  const flags = [r.has_test && '📝 тест', r.letter_required && '✉️ письмо обязательно', r.responses != null && `👥 ${r.responses}`]
+  const flags = [
+    r.has_test && '📝 тест',
+    r.letter_required && '✉️ письмо обязательно',
+    r.responses != null && `👥 ${r.responses}`,
+    r.error && `⚠️ ${esc(r.error)}`,
+  ]
     .filter(Boolean)
     .join(' · ');
   return `${i + 1}. <a href="${r.url}">${esc(r.title)}</a>\n${meta}${flags ? `\n${flags}` : ''}`;
 });
 
+// Сводка отсеянных: «Vue/Angular 2 · только ТК 1». Для «только из РФ» цитату не тащим
+const counts = {};
+for (const r of rejected) {
+  for (const reason of String(r.reasons).split(', ').filter(Boolean)) {
+    const key = reason.replace(/:.*$/, '');
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+}
+const summary = rejected.length
+  ? `\n\n🚫 Отсеяно ${rejected.length}: ${Object.entries(counts)
+      .map(([k, n]) => `${esc(k)} ${n}`)
+      .join(' · ')}`
+  : '';
+
 const messages = [];
-let text = `🆕 Новые вакансии: ${rows.length}`;
+let text = `🆕 Подходят: ${passed.length}`;
 for (const block of blocks) {
   if (text.length + block.length + 2 > 4000) {
     messages.push(text);
@@ -57,6 +77,12 @@ for (const block of blocks) {
   } else {
     text += `\n\n${block}`;
   }
+}
+if (text.length + summary.length > 4000) {
+  messages.push(text);
+  text = summary.trim();
+} else {
+  text += summary;
 }
 messages.push(text);
 

@@ -7,6 +7,7 @@
 // Импорт в локальный n8n: scripts/deploy.sh
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { TABLES } from '../n8n/schema.mjs';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const read = (path) => readFileSync(`${ROOT}${path}`, 'utf8');
@@ -133,35 +134,17 @@ const ifTrue = (wf, expression) => ({
 });
 
 const VACANCIES = { __rl: true, mode: 'name', value: 'vacancies' };
+const BLACKLIST = { __rl: true, mode: 'name', value: 'blacklist' };
 
-// Колонки этапа 1. Имена = поля из n8n/w1-collector/parse-search.js
-const COLUMNS = [
-  ['source', 'string'],
-  ['external_id', 'string'],
-  ['dup_key', 'string'],
-  ['title', 'string'],
-  ['company', 'string'],
-  ['company_id', 'string'],
-  ['areas', 'string'],
-  ['salary_from', 'number'],
-  ['salary_to', 'number'],
-  ['currency', 'string'],
-  ['salary_gross', 'boolean'],
-  ['experience', 'string'],
-  ['employment_form', 'string'],
-  ['work_formats', 'string'],
-  ['languages', 'string'],
-  ['key_skills', 'string'],
-  ['has_test', 'boolean'],
-  ['letter_required', 'boolean'],
-  ['responses', 'number'],
-  ['snippet', 'string'],
-  ['url', 'string'],
-  ['apply_url', 'string'],
-  ['apply_type', 'string'],
-  ['published_at', 'string'],
-  ['status', 'string'],
-];
+// Insert/Update пишут все поля item в одноимённые колонки
+const AUTO_MAP = {
+  mappingMode: 'autoMapInputData',
+  value: {},
+  matchingColumns: [],
+  schema: [],
+  attemptToConvertTypes: false,
+  convertFieldsToString: false,
+};
 
 // ---------- Workflow ----------
 
@@ -171,15 +154,17 @@ const workflows = {
     'S0 Setup',
     [
       node('S0', 'Manual', 'manualTrigger', 1, [0, 0], {}),
-      node('S0', 'Create table', 'dataTable', 1.1, [220, 0], {
-        resource: 'table',
-        operation: 'create',
-        tableName: 'vacancies',
-        columns: { column: COLUMNS.map(([name, type]) => ({ name, type })) },
-        options: { createIfNotExists: true },
-      }),
+      ...Object.entries(TABLES).map(([table, columns], i) =>
+        node('S0', `Create ${table}`, 'dataTable', 1.1, [220 * (i + 1), 0], {
+          resource: 'table',
+          operation: 'create',
+          tableName: table,
+          columns: { column: columns.map(([name, type]) => ({ name, type })) },
+          options: { createIfNotExists: true },
+        }),
+      ),
     ],
-    [['Manual', 'Create table']],
+    Object.keys(TABLES).map((table, i, all) => [i === 0 ? 'Manual' : `Create ${all[i - 1]}`, `Create ${table}`]),
   ),
 
   's1-telegram-test': workflow(
@@ -286,22 +271,48 @@ const workflows = {
           ],
         },
       }),
-      node('W1', 'Insert', 'dataTable', 1.1, [1760, -100], {
+      node(
+        'W1',
+        'Blacklist',
+        'dataTable',
+        1.1,
+        [1760, -100],
+        { resource: 'row', operation: 'get', dataTableId: BLACKLIST, returnAll: true },
+        { executeOnce: true, alwaysOutputData: true },
+      ),
+      code('W1', 'Filter search', 'n8n/w1-collector/filter-search.js', [1980, -100]),
+      node('W1', 'Insert', 'dataTable', 1.1, [2200, -100], {
         resource: 'row',
         operation: 'insert',
         dataTableId: VACANCIES,
-        columns: {
-          mappingMode: 'autoMapInputData',
-          value: {},
-          matchingColumns: [],
-          schema: [],
-          attemptToConvertTypes: false,
-          convertFieldsToString: false,
-        },
+        columns: AUTO_MAP,
         options: {},
       }),
-      code('W1', 'Format message', 'n8n/w1-collector/format-message.js', [1980, -100]),
-      telegram('W1', 'Telegram', [2200, -100]),
+      node('W1', 'Is candidate', 'if', 2.3, [2420, -100], ifTrue('W1', "={{ $json.status === 'new' }}")),
+      node(
+        'W1',
+        'Vacancy page',
+        'httpRequest',
+        4.5,
+        [2640, -200],
+        hhRequest({
+          url: '={{ $json.url }}',
+          headers: [...BROWSER_HEADERS, ['Referer', 'https://hh.ru/search/vacancy']],
+          batching: true,
+        }),
+      ),
+      code('W1', 'Parse vacancy', 'n8n/w1-collector/parse-vacancy.js', [2860, -200]),
+      node('W1', 'Update', 'dataTable', 1.1, [3080, -200], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        matchType: 'allConditions',
+        filters: { conditions: [{ keyName: 'id', keyValue: '={{ $json.id }}' }] },
+        columns: AUTO_MAP,
+        options: {},
+      }),
+      code('W1', 'Format message', 'n8n/w1-collector/format-message.js', [3300, -200]),
+      telegram('W1', 'Telegram', [3520, -200]),
       node('W1', 'To file', 'convertToFile', 1.1, [1320, 100], {
         operation: 'toText',
         sourceProperty: 'html',
@@ -328,8 +339,14 @@ const workflows = {
       ['Parse search', 'OK?'],
       ['OK?', 'Split vacancies', 0],
       ['Split vacancies', 'Is new'],
-      ['Is new', 'Insert'],
-      ['Insert', 'Format message'],
+      ['Is new', 'Blacklist'],
+      ['Blacklist', 'Filter search'],
+      ['Filter search', 'Insert'],
+      ['Insert', 'Is candidate'],
+      ['Is candidate', 'Vacancy page', 0],
+      ['Vacancy page', 'Parse vacancy'],
+      ['Parse vacancy', 'Update'],
+      ['Update', 'Format message'],
       ['Format message', 'Telegram'],
       ['OK?', 'To file', 1],
       ['To file', 'Save fixture'],

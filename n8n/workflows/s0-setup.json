@@ -14,8 +14,8 @@
       "parameters": {}
     },
     {
-      "id": "91be4e2b-3e84-fa93-c66a-b5a97aa05a11",
-      "name": "Create table",
+      "id": "9b261bf0-f428-6922-6b57-46cc68b2116e",
+      "name": "Create vacancies",
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
@@ -127,6 +127,52 @@
             {
               "name": "status",
               "type": "string"
+            },
+            {
+              "name": "contract",
+              "type": "string"
+            },
+            {
+              "name": "reasons",
+              "type": "string"
+            },
+            {
+              "name": "description",
+              "type": "string"
+            },
+            {
+              "name": "error",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {
+          "createIfNotExists": true
+        }
+      }
+    },
+    {
+      "id": "99cdedcc-3911-5ba9-3295-1511b919f8ce",
+      "name": "Create blacklist",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "resource": "table",
+        "operation": "create",
+        "tableName": "blacklist",
+        "columns": {
+          "column": [
+            {
+              "name": "company",
+              "type": "string"
+            },
+            {
+              "name": "comment",
+              "type": "string"
             }
           ]
         },
@@ -141,7 +187,18 @@
       "main": [
         [
           {
-            "node": "Create table",
+            "node": "Create vacancies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create vacancies": {
+      "main": [
+        [
+          {
+            "node": "Create blacklist",
             "type": "main",
             "index": 0
           }

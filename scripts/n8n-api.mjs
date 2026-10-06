@@ -7,9 +7,11 @@
 //   node scripts/n8n-api.mjs unpublish <workflowId>    снять с публикации
 //   node scripts/n8n-api.mjs executions <workflowId> [limit]   последние запуски
 //   node scripts/n8n-api.mjs rows <table> [limit]      показать строки таблицы Data Tables
+//   node scripts/n8n-api.mjs migrate                   создать недостающие таблицы и колонки по n8n/schema.mjs
 //
 // Вход — N8N_OWNER_EMAIL / N8N_OWNER_PASSWORD из .env.
-import { appendFileSync, readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { TABLES } from '../n8n/schema.mjs';
 import { randomBytes } from 'node:crypto';
 
 const BASE = 'http://127.0.0.1:5678/rest';
@@ -25,6 +27,24 @@ function readEnv() {
         return [line.slice(0, i), line.slice(i + 1).trim().replace(/^['"]|['"]$/g, '')];
       }),
   );
+}
+
+// Записать ключи в .env: существующие строки заменяются, новые дописываются в конец
+function setEnv(vars, comment) {
+  const lines = readFileSync(ENV_URL, 'utf8').split('\n');
+  const rest = { ...vars };
+  const out = lines.map((line) => {
+    const key = line.match(/^([A-Z0-9_]+)=/)?.[1];
+    if (key && key in rest) {
+      const value = rest[key];
+      delete rest[key];
+      return `${key}=${value}`;
+    }
+    return line;
+  });
+  const added = Object.entries(rest).map(([k, v]) => `${k}=${v}`);
+  if (added.length) out.push('', `# ${comment}`, ...added);
+  writeFileSync(ENV_URL, `${out.join('\n').replace(/\n*$/, '')}\n`, { mode: 0o600 });
 }
 
 async function api(path, { method = 'GET', body, cookie } = {}) {
@@ -138,10 +158,37 @@ async function executions(workflowId, limit = 5) {
   }
 }
 
+async function personalProject(cookie) {
+  const { json: projects } = await api('/projects', { cookie });
+  return (Array.isArray(projects) ? projects : []).find((p) => p.type === 'personal');
+}
+
+async function migrate() {
+  const cookie = await login();
+  const project = await personalProject(cookie);
+  const base = `/projects/${project.id}/data-tables`;
+  const { json: list } = await api(base, { cookie });
+  const existing = list.data ?? list;
+  for (const [name, columns] of Object.entries(TABLES)) {
+    const table = existing.find((t) => t.name === name);
+    if (!table) {
+      await api(base, { method: 'POST', body: { name, columns: columns.map(([n, type]) => ({ name: n, type })) }, cookie });
+      console.log(`${name}: создана (${columns.length} колонок)`);
+      continue;
+    }
+    const { json: have } = await api(`${base}/${table.id}/columns`, { cookie });
+    const names = new Set((have.data ?? have).map((c) => c.name));
+    const missing = columns.filter(([n]) => !names.has(n));
+    for (const [n, type] of missing) {
+      await api(`${base}/${table.id}/columns`, { method: 'POST', body: { name: n, type }, cookie });
+    }
+    console.log(`${name}: ${missing.length ? `добавлены колонки ${missing.map(([n]) => n).join(', ')}` : 'схема актуальна'}`);
+  }
+}
+
 async function rows(tableName, limit = 5) {
   const cookie = await login();
-  const { json: projects } = await api('/projects', { cookie });
-  const personal = (Array.isArray(projects) ? projects : []).find((p) => p.type === 'personal');
+  const personal = await personalProject(cookie);
   const { json: tables } = await api(`/projects/${personal.id}/data-tables`, { cookie });
   const list = tables.data ?? tables;
   const table = list.find((t) => t.name === tableName);
@@ -169,19 +216,18 @@ async function setupOwner(email) {
     method: 'POST',
     body: { email, firstName: 'Никита', lastName: 'Костров', password },
   });
-  appendFileSync(
-    ENV_URL,
-    `\n# Владелец локального n8n (создан scripts/n8n-api.mjs). Вход: http://localhost:5678\n` +
-      `N8N_OWNER_EMAIL=${email}\nN8N_OWNER_PASSWORD=${password}\n`,
+  setEnv(
+    { N8N_OWNER_EMAIL: email, N8N_OWNER_PASSWORD: password },
+    'Владелец локального n8n (scripts/n8n-api.mjs setup-owner). Вход: http://localhost:5678',
   );
   console.log(`Владелец ${email} создан, пароль записан в .env`);
 }
 
 const [command, ...args] = process.argv.slice(2);
-const commands = { 'setup-owner': setupOwner, run, publish, unpublish, executions, rows };
+const commands = { 'setup-owner': setupOwner, run, publish, unpublish, executions, rows, migrate };
 if (!commands[command]) {
   console.error(
-    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit]',
+    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate',
   );
   process.exit(2);
 }

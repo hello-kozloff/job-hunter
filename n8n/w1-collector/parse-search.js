@@ -32,6 +32,14 @@ const fail = (reason, html) => [{ json: { ok: false, reason, html: String(html ?
 // Текст ответа HTTP Request (Response Format = Text) n8n кладёт в поле data
 const htmlOf = (res) => String(res.data ?? res.body ?? '');
 
+// Формы оформления: tk = трудовой договор + SELF_EMPLOYED / INDIVIDUAL_ENTREPRENEUR / INDIVIDUAL_PERSON (ГПХ).
+// Пустая строка = работодатель не указал
+const contractOf = (v) =>
+  [
+    ...(v.acceptLaborContract ? ['tk'] : []),
+    ...(v.civilLawContracts ?? []).flatMap((c) => c?.civilLawContractsElement ?? []).map((c) => c.toLowerCase()),
+  ].join(',');
+
 // Вакансия из выдачи → строка таблицы vacancies (имена полей = имена колонок)
 function toRecord(v) {
   const pay = v.compensation ?? {};
@@ -58,6 +66,7 @@ function toRecord(v) {
       .map((l) => `${l.isoCode}:${l.degree}`)
       .join(','),
     key_skills: stripTags(v.snippet?.skill),
+    contract: contractOf(v),
     has_test: Boolean(v.userTestPresent),
     letter_required: Boolean(v['@responseLetterRequired']),
     responses: v.totalResponsesCount ?? null,
