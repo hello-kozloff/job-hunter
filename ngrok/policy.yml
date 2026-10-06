@@ -1,14 +1,15 @@
 # Traffic Policy туннеля ngrok: наружу виден только вебхук бота.
 # Интерфейс n8n (/, /rest, /signin …) из интернета недоступен — только http://localhost:5678 на Mac.
+# Действие restrict-ips на бесплатном тарифе недоступно (ERR_NGROK_2263) — то же условие через выражение.
 on_http_request:
   # Вебхуки Telegram приходят только с этих адресов (core.telegram.org/bots/webhooks)
-  - actions:
-      - type: restrict-ips
+  - expressions:
+      - "!inCidrRanges(conn.client_ip, ['149.154.160.0/20', '91.108.4.0/22'])"
+    actions:
+      - type: custom-response
         config:
-          enforce: true
-          allow:
-            - 149.154.160.0/20
-            - 91.108.4.0/22
+          status_code: 403
+          body: Forbidden
   # Всё, кроме /webhook/…, — 404
   - expressions:
       - "!req.url.path.startsWith('/webhook/')"
