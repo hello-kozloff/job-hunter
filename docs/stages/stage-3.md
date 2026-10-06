@@ -46,7 +46,7 @@ Loyalty Labs · 💰 250k–300k ₽ · 3–6 л. · Москва · 📅 06.10
 
 ## Нейросеть
 
-- Сейчас: **Gemini Flash-Lite**, бесплатный тариф. Модель — `GEMINI_MODEL` в `.env` (по умолчанию `gemini-flash-lite-latest`).
+- Сейчас: **Gemini 3.5 Flash-Lite**, бесплатный тариф. Модель — `GEMINI_MODEL` в `.env` (по умолчанию `gemini-3.5-flash-lite`, закреплена: алиас `…-latest` сменил бы модель посреди теневого режима). Замер 07.10.2026: ~2,3 тыс. токенов на вакансию, ответ ~1,2 с.
 - Запросы — не чаще одного в 7 с, до 40 вакансий за запуск.
 - Лимит кончился (HTTP 429) → тревога в Telegram, вакансии остаются `detailed` и оценятся в следующий запуск.
 - **Переключение на Claude Haiku 4.5:** ключ с https://console.anthropic.com → в `.env` строки `ANTHROPIC_API_KEY=…` и `LLM_PROVIDER=claude` → `scripts/deploy.sh --publish`.

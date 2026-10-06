@@ -142,7 +142,7 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 - `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`;
 - `./fixtures` → `/home/node/.n8n-files/fixtures`: файловые ноды n8n 2.x видят только `~/.n8n-files`;
 - `./docs` → `/home/node/.n8n-files/docs` (только чтение): резюме для промпта W2;
-- нейросеть: `LLM_PROVIDER` (gemini | claude), `GEMINI_MODEL` (по умолчанию `gemini-flash-lite-latest`), `CLAUDE_MODEL` (`claude-haiku-4-5`).
+- нейросеть: `LLM_PROVIDER` (gemini | claude), `GEMINI_MODEL` (по умолчанию `gemini-3.5-flash-lite` — закреплена, чтобы оценки не менялись в теневом режиме), `CLAUDE_MODEL` (`claude-haiku-4-5`).
 
 **Особенности n8n 2.x (проверено на 2.42.3):**
 - «Publish» вместо «Activate»; импорт workflow через CLI снимает публикацию со всех → `deploy.sh` всегда публикует W4, W1 — с `--publish`; CLI-публикацию запущенный n8n видит только после перезапуска (`deploy.sh` перезапускает сам);
