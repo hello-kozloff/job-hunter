@@ -54,7 +54,7 @@ const blocks = passed.map((r, i) => {
   return `${i + 1}. <a href="${r.url}">${esc(r.title)}</a>\n${meta}${flags ? `\n${flags}` : ''}`;
 });
 
-// Сводка отсеянных: «Vue/Angular 2 · только ТК 1». Для «только из РФ» цитату не тащим
+// Сводка отсеянных: «Vue/Angular 2 · Lead/архитектор 1». Для «только из РФ» цитату не тащим
 const counts = {};
 for (const r of rejected) {
   for (const reason of String(r.reasons).split(', ').filter(Boolean)) {

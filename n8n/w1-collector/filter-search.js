@@ -37,7 +37,6 @@ const RULES = [
       /php|wordpress|bitrix|\bqa\b|\b1c\b|teacher|tutor|instructor|o.?qituvchi/i.test(r.title) ||
       ru('(1с|битрикс[а-яё]*|преподавател[а-яё]*|тестировщик[а-яё]*|наставник[а-яё]*)').test(r.title),
   ],
-  ['только ТК', (r) => r.contract === 'tk'],
   ['> 3000 откликов', (r) => (r.responses ?? 0) > 3000],
   ['чёрный список', inBlacklist],
 ];
