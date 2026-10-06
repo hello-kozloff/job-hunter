@@ -28,11 +28,38 @@ services:
       N8N_DIAGNOSTICS_ENABLED: "false"
       N8N_PERSONALIZATION_ENABLED: "false"
       TG_CHAT_ID: ${TG_CHAT_ID:-}
+      # Оценка вакансий (W2): нейросеть gemini | claude и модели
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-flash-lite-latest}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-haiku-4-5}
     volumes:
       - n8n_data:/home/node/.n8n
       # Файловые ноды n8n 2.x видят только ~/.n8n-files.
       # Сюда W1 сохраняет HTML, если парсер сломался.
       - ./fixtures:/home/node/.n8n-files/fixtures
+      # Резюме для промпта W2 (docs/resume.md), только чтение
+      - ./docs:/home/node/.n8n-files/docs:ro
+
+  # Туннель для кнопок Telegram (W3): https://<NGROK_DOMAIN>/webhook/* → n8n.
+  # Включается строкой COMPOSE_PROFILES=tunnel в .env; там же NGROK_AUTHTOKEN, NGROK_DOMAIN
+  # и WEBHOOK_URL=https://<NGROK_DOMAIN>/ (адрес, который n8n сообщает Telegram).
+  # Что пускать внутрь — ngrok/policy.yml: только адреса Telegram и только /webhook/*.
+  ngrok:
+    image: ngrok/ngrok:${NGROK_VERSION:-latest}
+    container_name: job-hunter-ngrok
+    restart: unless-stopped
+    profiles: [tunnel]
+    depends_on: [n8n]
+    command:
+      - http
+      - n8n:5678
+      - --url=https://${NGROK_DOMAIN:-}
+      - --traffic-policy-file=/etc/ngrok/policy.yml
+      - --log=stdout
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    volumes:
+      - ./ngrok/policy.yml:/etc/ngrok/policy.yml:ro
 
 volumes:
   n8n_data:

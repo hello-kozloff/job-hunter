@@ -3,7 +3,7 @@
 // Вход: ответы HTTP Request «Vacancy page» — в том же порядке, что строки из «Is candidate»
 //       (строки уже в таблице, у каждой есть id).
 // Выход: строка целиком с обновлёнными status / reasons / description / key_skills / has_test / contract / error
-//        → нода Update пишет её обратно по id.
+//        → нода Update пишет её обратно по id. Дальше строки status = detailed оценивает нейросеть (W2).
 
 const rows = $('Is candidate').all().map((i) => i.json);
 const responses = $input.all().map((i) => i.json);
@@ -57,12 +57,12 @@ function parsePage(res) {
 
 return rows.map((row, i) => {
   const page = parsePage(responses[i] ?? {});
-  // Страница не открылась — вакансию не теряем: остаётся new с ошибкой, видна в сообщении
-  if (page.error) return { json: { ...row, error: page.error } };
+  // Страница не открылась — вакансию не теряем: W2 оценит её по фрагменту из выдачи, ошибка видна в карточке
+  if (page.error) return { json: { ...row, status: 'detailed', error: page.error } };
 
   const { v, test } = page;
   if (String(v.vacancyId) !== row.external_id) {
-    return { json: { ...row, error: `страница: пришла вакансия ${v.vacancyId}` } };
+    return { json: { ...row, status: 'detailed', error: `страница: пришла вакансия ${v.vacancyId}` } };
   }
 
   const description = htmlToText(v.description);

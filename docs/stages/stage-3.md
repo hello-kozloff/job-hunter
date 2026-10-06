@@ -1,0 +1,94 @@
+# Этап 3 — оценка нейросетью и кнопки в Telegram (теневой режим)
+
+**Цель:** нейросеть ставит каждой вакансии, прошедшей фильтр, решение apply / maybe / skip с причиной. Пользователь отвечает кнопками, и неделю решения сверяются.
+
+Решения пользователя (07.10.2026) — CLAUDE.md §7 «Решает нейросеть».
+
+## Как устроено
+
+```
+W1 Collector (каждые 2 ч, :00)  … → Parse vacancy → Update: status = detailed
+W2 Score     (каждые 2 ч, :15)  Pending: строки detailed (до 40, старые первыми)
+                                → Resume (docs/resume.md) → Build prompt
+                                → Claude? ─ да ─→ Claude ─┐
+                                           └ нет → Gemini ─┴→ Parse verdict
+                                → Format card → Send card (кнопки) → Card sent → Save cards: status = waiting
+                                → Recent rejects → Summary → Send summary (сводка и тревоги)
+W3 Telegram  (вебхук)           Telegram Trigger → Route
+                                → кнопка: Vacancy → Apply choice → Save choice → Answer → карточка перерисована
+                                          → решение не совпало с нейросетью → «Почему?» → Save ask
+                                → ответ на «Почему?»: Reason row → Save reason → «✍️ Записал причину»
+```
+
+- Код: `n8n/w2-score/*.js`, `n8n/w3-telegram/*.js`, общий код карточки — `n8n/shared/card.js` (подключается строкой `// @include`).
+- Страница вакансии не открылась → W1 всё равно ставит `detailed`, нейросеть оценивает по фрагменту из выдачи, в карточке ⚠️.
+
+## Карточка
+
+```
+Senior React разработчик                        ← ссылка на hh
+Loyalty Labs · 💰 250k–300k ₽ · 3–6 л. · Москва · 📅 06.10
+📝 тест · 👥 123
+🤖 🟢 apply — React/Next.js основной стек, удалёнка без привязки к стране
+[✅ Откликнусь] [🤔 Возможно] [❌ Мимо]
+```
+
+- После нажатия кнопки исчезают, в карточке строка `👤 ✅ Откликнусь` и кнопка `↩️ Изменить`.
+- Твоё решение не совпало с нейросетью → бот отвечает на карточку: «Почему?». Ответь на это сообщение (reply) одной фразой — причина ляжет в `my_reason`. Можно не отвечать.
+- С 23:00 до 09:00 по Таиланду карточки и сводка приходят без звука, тревоги — всегда со звуком.
+- После карточек — сводка: `📊 Оценено 4: 🟢 1 · 🟡 2 · 🔴 1` и что отсеял фильтр W1.
+
+Статусы: `waiting` (карточка отправлена) → `approved` (✅) | `maybe` (🤔) | `skipped` (❌).
+
+## Теневой режим
+
+Карточка приходит на каждую оценённую вакансию, включая skip. После 50 твоих оценок (примерно неделя) — отчёт: где нейросеть совпала с тобой, где нет и почему (колонки `decision`, `my_decision`, `my_reason`). Потом решаем, выключать ли режим: тогда skip будут только в сводке.
+
+## Нейросеть
+
+- Сейчас: **Gemini Flash-Lite**, бесплатный тариф. Модель — `GEMINI_MODEL` в `.env` (по умолчанию `gemini-flash-lite-latest`).
+- Запросы — не чаще одного в 7 с, до 40 вакансий за запуск.
+- Лимит кончился (HTTP 429) → тревога в Telegram, вакансии остаются `detailed` и оценятся в следующий запуск.
+- **Переключение на Claude Haiku 4.5:** ключ с https://console.anthropic.com → в `.env` строки `ANTHROPIC_API_KEY=…` и `LLM_PROVIDER=claude` → `scripts/deploy.sh --publish`.
+- Бесплатный Gemini может использовать запросы для обучения моделей Google; в промпт уходит резюме целиком (решение пользователя).
+
+## Туннель для кнопок
+
+Telegram сообщает о нажатии кнопки запросом на публичный HTTPS-адрес. Локальному n8n его даёт ngrok — контейнер `job-hunter-ngrok` рядом с n8n (`docker-compose.yml`, профиль `tunnel`).
+
+- Наружу — только `/webhook/*` и только с адресов Telegram (`ngrok/policy.yml`). Интерфейс n8n остаётся на `http://localhost:5678`.
+- Telegram Trigger проверяет секретный заголовок запроса и принимает только твой чат (`TG_CHAT_ID`).
+- Бесплатный ngrok: один постоянный домен, 20 000 запросов в месяц — для кнопок с запасом.
+
+## Настройка (один раз)
+
+1. Ключ Gemini: https://aistudio.google.com/apikey → **Create API key**.
+2. ngrok: https://dashboard.ngrok.com/signup → **Your Authtoken** и **Domains** (домен вида `name.ngrok-free.app`).
+3. В `.env`:
+   ```
+   GEMINI_API_KEY=…
+   NGROK_AUTHTOKEN=…
+   NGROK_DOMAIN=name.ngrok-free.app
+   ```
+4. Деплой (делает Claude):
+   ```bash
+   node scripts/n8n-api.mjs migrate          # колонки decision, llm_reason, my_decision, …
+   scripts/deploy.sh --publish               # WEBHOOK_URL + туннель, credentials, W1–W4
+   ```
+
+## Проверка
+
+```bash
+node scripts/run-code-node.mjs n8n/w2-score/build-prompt.js <resume.json> \
+  --ref 'Pending=@<rows.json>' --ref 'Resume text=@<resume.json>' --env LLM_PROVIDER=gemini
+node scripts/run-code-node.mjs n8n/w2-score/parse-verdict.js <responses.json> \
+  --ref 'Build prompt=@<prompts.json>' --ref 'Pending=@<rows.json>'
+node scripts/run-code-node.mjs n8n/w3-telegram/route.js <update.json> --env TG_CHAT_ID=<id>
+node scripts/n8n-api.mjs run jobHunterW2Score      # оценить то, что лежит в detailed
+node scripts/n8n-api.mjs requeue 3                 # вернуть в обработку бэкфилл за 3 дня → run W1 → run W2
+```
+
+## Готово, когда
+
+- карточки приходят после каждого запуска W1, кнопки и «Почему?» работают;
+- набралось 50 оценок, и решения нейросети в основном совпадают с твоими.

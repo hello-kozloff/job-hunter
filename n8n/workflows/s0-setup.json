@@ -143,6 +143,34 @@
             {
               "name": "error",
               "type": "string"
+            },
+            {
+              "name": "decision",
+              "type": "string"
+            },
+            {
+              "name": "llm_reason",
+              "type": "string"
+            },
+            {
+              "name": "llm_model",
+              "type": "string"
+            },
+            {
+              "name": "my_decision",
+              "type": "string"
+            },
+            {
+              "name": "my_reason",
+              "type": "string"
+            },
+            {
+              "name": "tg_message_id",
+              "type": "number"
+            },
+            {
+              "name": "tg_ask_id",
+              "type": "number"
             }
           ]
         },

@@ -34,6 +34,14 @@ export const TABLES = {
     ['reasons', 'string'],
     ['description', 'string'],
     ['error', 'string'],
+    // этап 3: решение нейросети (W2) и пользователя (кнопки W3)
+    ['decision', 'string'],
+    ['llm_reason', 'string'],
+    ['llm_model', 'string'],
+    ['my_decision', 'string'],
+    ['my_reason', 'string'],
+    ['tg_message_id', 'number'],
+    ['tg_ask_id', 'number'],
   ],
   // Чёрный список компаний — заполняет пользователь в UI n8n.
   // company: кусок названия компании или её id на hh (только цифры)

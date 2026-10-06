@@ -9,6 +9,9 @@
 //   node scripts/n8n-api.mjs rows <table> [limit]      показать строки таблицы Data Tables
 //   node scripts/n8n-api.mjs migrate                   создать недостающие таблицы и колонки по n8n/schema.mjs
 //   node scripts/n8n-api.mjs blacklist-seed            дописать в таблицу blacklist компании из n8n/blacklist.json
+//   node scripts/n8n-api.mjs tunnel-env                по NGROK_DOMAIN в .env включить туннель: WEBHOOK_URL, COMPOSE_PROFILES
+//   node scripts/n8n-api.mjs requeue <days>            вернуть в обработку вакансии бэкфилла (seen) за N дней:
+//                                                      удалить их строки, следующий запуск W1 примет их как новые
 //
 // Вход — N8N_OWNER_EMAIL / N8N_OWNER_PASSWORD из .env.
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -234,6 +237,49 @@ async function blacklistSeed() {
   console.log(`blacklist: добавлено ${add.length}, уже было ${seed.length - add.length}`);
 }
 
+// Удаляются только строки, чьи вакансии есть в выдаче последнего успешного запуска W1:
+// обычный запуск W1 читает одну страницу поиска, и всё, чего на ней нет, пропало бы из таблицы
+async function requeue(days) {
+  if (!Number(days)) throw new Error('usage: requeue <days>');
+  const cookie = await login();
+  const filter = encodeURIComponent(JSON.stringify({ workflowId: 'jobHunterW1Colle', status: ['success'] }));
+  const { json: list } = await api(`/executions?filter=${filter}&limit=1`, { cookie });
+  const last = list.results?.[0];
+  if (!last) throw new Error('Нет успешных запусков W1');
+  const { json: execution } = await api(`/executions/${last.id}`, { cookie });
+  const data = typeof execution.data === 'string' ? unflatten(execution.data) : execution.data;
+  const search = (data.resultData.runData['Split vacancies']?.[0]?.data?.main?.[0] ?? []).map((i) => i.json);
+  const inSearch = new Set(search.flatMap((v) => [v.external_id, v.dup_key]));
+
+  const personal = await personalProject(cookie);
+  const base = `/projects/${personal.id}/data-tables`;
+  const { json: tables } = await api(base, { cookie });
+  const table = (tables.data ?? tables).find((t) => t.name === 'vacancies');
+  const { json: content } = await api(`${base}/${table.id}/rows?take=1000&skip=0`, { cookie });
+  const since = Date.now() - Number(days) * 24 * 3600 * 1000;
+  const rows = (content.data ?? []).filter(
+    (r) => r.status === 'seen' && Date.parse(r.published_at) >= since && (inSearch.has(r.external_id) || inSearch.has(r.dup_key)),
+  );
+  if (!rows.length) return console.log(`Нечего возвращать: seen за ${days} дн. в выдаче запуска ${last.id} нет`);
+  const conditions = { type: 'or', filters: rows.map((r) => ({ columnName: 'id', condition: 'eq', value: r.id })) };
+  await api(`${base}/${table.id}/rows?filter=${encodeURIComponent(JSON.stringify(conditions))}`, { method: 'DELETE', cookie });
+  console.log(`Удалено ${rows.length} строк (выдача запуска ${last.id}). Теперь: node scripts/n8n-api.mjs run jobHunterW1Colle`);
+  for (const r of rows) console.log(`  ${r.published_at.slice(0, 10)}  ${r.company} — ${r.title}`);
+}
+
+// Туннель ngrok (кнопки Telegram): адрес вебхуков n8n и профиль docker compose — из NGROK_DOMAIN
+function tunnelEnv() {
+  const env = readEnv();
+  const domain = String(env.NGROK_DOMAIN ?? '')
+    .replace(/^https?:\/\//, '')
+    .replace(/\/+$/, '');
+  if (!domain) throw new Error('В .env нет NGROK_DOMAIN');
+  const vars = { NGROK_DOMAIN: domain, WEBHOOK_URL: `https://${domain}/`, COMPOSE_PROFILES: 'tunnel' };
+  if (Object.entries(vars).every(([k, v]) => env[k] === v)) return;
+  setEnv(vars, 'Туннель ngrok для кнопок Telegram (scripts/n8n-api.mjs tunnel-env)');
+  console.log(`.env: WEBHOOK_URL=https://${domain}/, COMPOSE_PROFILES=tunnel`);
+}
+
 async function setupOwner(email) {
   const env = readEnv();
   if (env.N8N_OWNER_PASSWORD) {
@@ -255,10 +301,10 @@ async function setupOwner(email) {
 }
 
 const [command, ...args] = process.argv.slice(2);
-const commands = { 'setup-owner': setupOwner, run, publish, unpublish, executions, rows, migrate, 'blacklist-seed': blacklistSeed };
+const commands = { 'setup-owner': setupOwner, run, publish, unpublish, executions, rows, migrate, 'blacklist-seed': blacklistSeed, 'tunnel-env': tunnelEnv, requeue };
 if (!commands[command]) {
   console.error(
-    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate | blacklist-seed',
+    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate | blacklist-seed | tunnel-env | requeue <days>',
   );
   process.exit(2);
 }

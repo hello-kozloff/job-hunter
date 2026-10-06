@@ -6,11 +6,13 @@
 //
 // Импорт в локальный n8n: scripts/deploy.sh
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { TABLES } from '../n8n/schema.mjs';
+import { readCode } from './lib/code.mjs';
 
 const ROOT = new URL('..', import.meta.url).pathname;
-const read = (path) => readFileSync(`${ROOT}${path}`, 'utf8');
+// Код Code-ноды: файл n8n/**/*.js, строки «// @include …» раскрываются (общий код карточки и т. п.)
+const read = (path) => readCode(`${ROOT}${path}`);
 
 // Постоянные id: повторный импорт обновляет те же workflow, а не создаёт копии
 const IDS = {
@@ -18,8 +20,12 @@ const IDS = {
   telegramTest: 'jobHunterS1TgTst',
   check: 'jobHunterW0Check',
   collector: 'jobHunterW1Colle',
+  score: 'jobHunterW2Score',
+  telegramBot: 'jobHunterW3Teleg',
   errors: 'jobHunterW4Error',
   telegramCredential: 'jobHunterTgBot01',
+  geminiCredential: 'jobHunterGemini1',
+  claudeCredential: 'jobHunterClaude1',
 };
 
 const uuid = (seed) => {
@@ -99,7 +105,17 @@ const hhRequest = ({ url, query, headers = BROWSER_HEADERS, batching = false }) 
 const code = (wf, name, file, position) =>
   node(wf, name, 'code', 2, position, { mode: 'runOnceForAllItems', language: 'javaScript', jsCode: read(file) });
 
-const telegram = (wf, name, position) =>
+const TELEGRAM_CREDENTIAL = { telegramApi: { id: IDS.telegramCredential, name: 'Telegram bot' } };
+
+// Inline-клавиатура Telegram-ноды: rows = [[[текст, callback_data], …], …]
+const keyboard = (rows) => ({
+  rows: rows.map((buttons) => ({
+    row: { buttons: buttons.map(([text, data]) => ({ text, additionalFields: { callback_data: data } })) },
+  })),
+});
+
+// Отправка сообщения: HTML, без подписи n8n и без превью ссылок
+const telegram = (wf, name, position, { text = '={{ $json.text }}', fields = {}, markup, extra = {} } = {}) =>
   node(
     wf,
     name,
@@ -110,10 +126,11 @@ const telegram = (wf, name, position) =>
       resource: 'message',
       operation: 'sendMessage',
       chatId: '={{ $env.TG_CHAT_ID }}',
-      text: '={{ $json.text }}',
-      additionalFields: { appendAttribution: false, parse_mode: 'HTML', disable_web_page_preview: true },
+      text,
+      ...(markup ?? {}),
+      additionalFields: { appendAttribution: false, parse_mode: 'HTML', disable_web_page_preview: true, ...fields },
     },
-    { credentials: { telegramApi: { id: IDS.telegramCredential, name: 'Telegram bot' } } },
+    { credentials: TELEGRAM_CREDENTIAL, ...extra },
   );
 
 const ifTrue = (wf, expression) => ({
@@ -145,6 +162,76 @@ const AUTO_MAP = {
   attemptToConvertTypes: false,
   convertFieldsToString: false,
 };
+
+// Update только перечисленных колонок: { колонка: выражение }
+const COLUMN_TYPES = Object.fromEntries(TABLES.vacancies);
+const setColumns = (values) => ({
+  mappingMode: 'defineBelow',
+  value: values,
+  matchingColumns: [],
+  schema: Object.keys(values).map((id) => ({
+    id,
+    displayName: id,
+    required: false,
+    defaultMatch: false,
+    display: true,
+    type: COLUMN_TYPES[id] ?? 'string',
+    readOnly: false,
+    removed: false,
+  })),
+  attemptToConvertTypes: false,
+  convertFieldsToString: false,
+});
+
+const byId = (expression) => ({
+  matchType: 'allConditions',
+  filters: { conditions: [{ keyName: 'id', keyValue: expression }] },
+});
+
+// Запрос к API нейросети: тело готовит «Build prompt» ($json.body), ответ разбирает «Parse verdict».
+// Ключ — из credential n8n; полный ответ без исключений на 4xx/5xx, по одному запросу раз в interval мс
+const llmRequest = ({ url, credential, headers = [], interval }) => ({
+  method: 'POST',
+  url,
+  authentication: 'predefinedCredentialType',
+  nodeCredentialType: credential,
+  sendHeaders: headers.length > 0,
+  ...(headers.length > 0 && { specifyHeaders: 'keypair', headerParameters: pairs(headers) }),
+  sendBody: true,
+  contentType: 'json',
+  specifyBody: 'json',
+  jsonBody: '={{ JSON.stringify($json.body) }}',
+  options: {
+    batching: { batch: { batchSize: 1, batchInterval: interval } },
+    response: { response: { fullResponse: true, neverError: true, responseFormat: 'json' } },
+    timeout: 60000,
+  },
+});
+
+// W3: состояние после нажатия кнопки, которое посчитала нода «Apply choice»
+const CHOICE = "$('Apply choice').first().json";
+
+// W3: перерисовать карточку (текст + кнопки) после нажатия
+const editCard = (name, position, rows) =>
+  node(
+    'W3',
+    name,
+    'telegram',
+    1.2,
+    position,
+    {
+      resource: 'message',
+      operation: 'editMessageText',
+      messageType: 'message',
+      chatId: `={{ ${CHOICE}.chatId }}`,
+      messageId: `={{ ${CHOICE}.messageId }}`,
+      text: `={{ ${CHOICE}.text }}`,
+      replyMarkup: 'inlineKeyboard',
+      inlineKeyboard: keyboard(rows),
+      additionalFields: { parse_mode: 'HTML', disable_web_page_preview: true },
+    },
+    { credentials: TELEGRAM_CREDENTIAL },
+  );
 
 // ---------- Workflow ----------
 
@@ -311,8 +398,6 @@ const workflows = {
         columns: AUTO_MAP,
         options: {},
       }),
-      code('W1', 'Format message', 'n8n/w1-collector/format-message.js', [3300, -200]),
-      telegram('W1', 'Telegram', [3520, -200]),
       node('W1', 'To file', 'convertToFile', 1.1, [1320, 100], {
         operation: 'toText',
         sourceProperty: 'html',
@@ -346,13 +431,269 @@ const workflows = {
       ['Is candidate', 'Vacancy page', 0],
       ['Vacancy page', 'Parse vacancy'],
       ['Parse vacancy', 'Update'],
-      ['Update', 'Format message'],
-      ['Format message', 'Telegram'],
       ['OK?', 'To file', 1],
       ['To file', 'Save fixture'],
       ['Save fixture', 'Stop'],
     ],
     { timezone: 'Europe/Moscow', errorWorkflow: IDS.errors },
+  ),
+
+  'w2-score': workflow(
+    IDS.score,
+    'W2 Score',
+    [
+      node('W2', 'Schedule', 'scheduleTrigger', 1.4, [0, -100], {
+        // Через 15 минут после W1: новые вакансии уже прошли фильтр и лежат со status = detailed
+        rule: { interval: [{ field: 'cronExpression', expression: '15 9-21/2 * * *' }] },
+        misfirePolicy: 'coalesce',
+      }),
+      node('W2', 'Manual', 'manualTrigger', 1, [0, 100], {}),
+      node('W2', 'Pending', 'dataTable', 1.1, [220, 0], {
+        resource: 'row',
+        operation: 'get',
+        dataTableId: VACANCIES,
+        matchType: 'allConditions',
+        filters: { conditions: [{ keyName: 'status', keyValue: 'detailed' }] },
+        returnAll: false,
+        // Лимит на запуск: бесплатный Gemini — несколько сотен запросов в день
+        limit: 40,
+        orderBy: true,
+        orderByColumn: 'createdAt',
+        orderByDirection: 'ASC',
+      }),
+      node(
+        'W2',
+        'Resume',
+        'readWriteFile',
+        1.1,
+        [440, 0],
+        { operation: 'read', fileSelector: '/home/node/.n8n-files/docs/resume.md', options: {} },
+        { executeOnce: true },
+      ),
+      node('W2', 'Resume text', 'extractFromFile', 1.1, [660, 0], {
+        operation: 'text',
+        binaryPropertyName: 'data',
+        destinationKey: 'resume',
+        options: {},
+      }),
+      code('W2', 'Build prompt', 'n8n/w2-score/build-prompt.js', [880, 0]),
+      node('W2', 'Claude?', 'if', 2.3, [1100, 0], ifTrue('W2', "={{ $json.provider === 'claude' }}")),
+      node(
+        'W2',
+        'Claude',
+        'httpRequest',
+        4.5,
+        [1320, -100],
+        llmRequest({
+          url: 'https://api.anthropic.com/v1/messages',
+          credential: 'anthropicApi',
+          headers: [['anthropic-version', '2023-06-01']],
+          interval: 1000,
+        }),
+        { credentials: { anthropicApi: { id: IDS.claudeCredential, name: 'Claude' } }, onError: 'continueRegularOutput' },
+      ),
+      node(
+        'W2',
+        'Gemini',
+        'httpRequest',
+        4.5,
+        [1320, 100],
+        llmRequest({
+          url: '=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.model }}:generateContent',
+          credential: 'googlePalmApi',
+          // Бесплатный Gemini: 10–15 запросов в минуту → не чаще одного в 7 с
+          interval: 7000,
+        }),
+        { credentials: { googlePalmApi: { id: IDS.geminiCredential, name: 'Gemini' } }, onError: 'continueRegularOutput' },
+      ),
+      code('W2', 'Parse verdict', 'n8n/w2-score/parse-verdict.js', [1540, 0]),
+      // Ветка карточек выше ветки сводки: n8n (execution order v1) выполняет её первой
+      code('W2', 'Format card', 'n8n/w2-score/format-card.js', [1760, -100]),
+      telegram('W2', 'Send card', [1980, -100], {
+        markup: {
+          replyMarkup: 'inlineKeyboard',
+          inlineKeyboard: keyboard([
+            [
+              ['✅ Откликнусь', '=v:{{ $json.id }}:apply'],
+              ['🤔 Возможно', '=v:{{ $json.id }}:maybe'],
+              ['❌ Мимо', '=v:{{ $json.id }}:skip'],
+            ],
+          ]),
+        },
+        fields: { disable_notification: '={{ $json.silent }}' },
+        // Ошибка одной карточки не должна терять остальные: Card sent запишет только отправленные
+        extra: { onError: 'continueRegularOutput' },
+      }),
+      code('W2', 'Card sent', 'n8n/w2-score/card-sent.js', [2200, -100]),
+      node('W2', 'Save cards', 'dataTable', 1.1, [2420, -100], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        ...byId('={{ $json.id }}'),
+        columns: AUTO_MAP,
+        options: {},
+      }),
+      node(
+        'W2',
+        'Recent rejects',
+        'dataTable',
+        1.1,
+        [1760, 150],
+        {
+          resource: 'row',
+          operation: 'get',
+          dataTableId: VACANCIES,
+          matchType: 'allConditions',
+          filters: { conditions: [{ keyName: 'status', keyValue: 'rejected' }] },
+          returnAll: false,
+          limit: 100,
+          orderBy: true,
+          orderByColumn: 'updatedAt',
+          orderByDirection: 'DESC',
+        },
+        { executeOnce: true, alwaysOutputData: true },
+      ),
+      code('W2', 'Summary', 'n8n/w2-score/summary.js', [1980, 150]),
+      telegram('W2', 'Send summary', [2200, 150], { fields: { disable_notification: '={{ $json.silent }}' } }),
+    ],
+    [
+      ['Schedule', 'Pending'],
+      ['Manual', 'Pending'],
+      ['Pending', 'Resume'],
+      ['Resume', 'Resume text'],
+      ['Resume text', 'Build prompt'],
+      ['Build prompt', 'Claude?'],
+      ['Claude?', 'Claude', 0],
+      ['Claude?', 'Gemini', 1],
+      ['Claude', 'Parse verdict'],
+      ['Gemini', 'Parse verdict'],
+      ['Parse verdict', 'Format card'],
+      ['Parse verdict', 'Recent rejects'],
+      ['Format card', 'Send card'],
+      ['Send card', 'Card sent'],
+      ['Card sent', 'Save cards'],
+      ['Recent rejects', 'Summary'],
+      ['Summary', 'Send summary'],
+    ],
+    { timezone: 'Europe/Moscow', errorWorkflow: IDS.errors },
+  ),
+
+  'w3-telegram': workflow(
+    IDS.telegramBot,
+    'W3 Telegram',
+    [
+      node(
+        'W3',
+        'Telegram Trigger',
+        'telegramTrigger',
+        1.5,
+        [0, 0],
+        { updates: ['callback_query', 'message'], additionalFields: { chatIds: '={{ $env.TG_CHAT_ID }}' } },
+        { webhookId: uuid('W3/telegram-trigger'), credentials: TELEGRAM_CREDENTIAL },
+      ),
+      code('W3', 'Route', 'n8n/w3-telegram/route.js', [220, 0]),
+      node('W3', 'Button?', 'if', 2.3, [440, 0], ifTrue('W3', "={{ $json.action === 'choice' }}")),
+      // Кнопка на карточке
+      node('W3', 'Vacancy', 'dataTable', 1.1, [660, -100], {
+        resource: 'row',
+        operation: 'get',
+        dataTableId: VACANCIES,
+        ...byId('={{ $json.id }}'),
+        returnAll: false,
+        limit: 1,
+      }),
+      code('W3', 'Apply choice', 'n8n/w3-telegram/apply-choice.js', [880, -100]),
+      node('W3', 'Save choice', 'dataTable', 1.1, [1100, -100], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        ...byId('={{ $json.id }}'),
+        columns: setColumns({ my_decision: '={{ $json.my_decision }}', status: '={{ $json.status }}' }),
+        options: {},
+      }),
+      node(
+        'W3',
+        'Answer',
+        'telegram',
+        1.2,
+        [1320, -100],
+        {
+          resource: 'callback',
+          operation: 'answerQuery',
+          queryId: `={{ ${CHOICE}.queryId }}`,
+          additionalFields: { text: `={{ ${CHOICE}.toast }}` },
+        },
+        { credentials: TELEGRAM_CREDENTIAL },
+      ),
+      node('W3', 'Decided?', 'if', 2.3, [1540, -100], ifTrue('W3', `={{ ${CHOICE}.keyboard === 'decided' }}`)),
+      editCard('Card: decided', [1760, -200], [[['↩️ Изменить', `=v:{{ ${CHOICE}.id }}:edit`]]]),
+      editCard('Card: choose', [1760, 0], [
+        [
+          ['✅ Откликнусь', `=v:{{ ${CHOICE}.id }}:apply`],
+          ['🤔 Возможно', `=v:{{ ${CHOICE}.id }}:maybe`],
+          ['❌ Мимо', `=v:{{ ${CHOICE}.id }}:skip`],
+        ],
+      ]),
+      node('W3', 'Ask?', 'if', 2.3, [1980, -200], ifTrue('W3', `={{ Boolean(${CHOICE}.ask) }}`)),
+      telegram('W3', 'Ask why', [2200, -200], {
+        text: `={{ ${CHOICE}.ask }}`,
+        fields: { reply_to_message_id: `={{ ${CHOICE}.messageId }}` },
+        markup: { replyMarkup: 'forceReply', forceReply: { force_reply: true } },
+      }),
+      node('W3', 'Save ask', 'dataTable', 1.1, [2420, -200], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        ...byId(`={{ ${CHOICE}.id }}`),
+        columns: setColumns({ tg_ask_id: '={{ $json.result.message_id }}' }),
+        options: {},
+      }),
+      // Ответ (reply) на вопрос «почему?» или на саму карточку
+      node('W3', 'Reason row', 'dataTable', 1.1, [660, 150], {
+        resource: 'row',
+        operation: 'get',
+        dataTableId: VACANCIES,
+        matchType: 'anyCondition',
+        filters: {
+          conditions: [
+            { keyName: 'tg_ask_id', keyValue: '={{ $json.replyTo }}' },
+            { keyName: 'tg_message_id', keyValue: '={{ $json.replyTo }}' },
+          ],
+        },
+        returnAll: false,
+        limit: 1,
+      }),
+      node('W3', 'Save reason', 'dataTable', 1.1, [880, 150], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        ...byId('={{ $json.id }}'),
+        columns: setColumns({ my_reason: "={{ $('Route').first().json.text }}" }),
+        options: {},
+      }),
+      telegram('W3', 'Confirm', [1100, 150], {
+        text: '✍️ Записал причину',
+        fields: { reply_to_message_id: "={{ $('Route').first().json.messageId }}", disable_notification: true },
+      }),
+    ],
+    [
+      ['Telegram Trigger', 'Route'],
+      ['Route', 'Button?'],
+      ['Button?', 'Vacancy', 0],
+      ['Vacancy', 'Apply choice'],
+      ['Apply choice', 'Save choice'],
+      ['Save choice', 'Answer'],
+      ['Answer', 'Decided?'],
+      ['Decided?', 'Card: decided', 0],
+      ['Decided?', 'Card: choose', 1],
+      ['Card: decided', 'Ask?'],
+      ['Ask?', 'Ask why', 0],
+      ['Ask why', 'Save ask'],
+      ['Button?', 'Reason row', 1],
+      ['Reason row', 'Save reason'],
+      ['Save reason', 'Confirm'],
+    ],
+    { errorWorkflow: IDS.errors },
   ),
 
   'w4-errors': workflow(

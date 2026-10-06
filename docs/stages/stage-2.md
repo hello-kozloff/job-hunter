@@ -14,13 +14,11 @@ Is new → Blacklist (все строки таблицы blacklist, один р�
        → Vacancy page     страница вакансии (по одной, пауза 3 с)
        → Parse vacancy    описание, навыки, тест, ТК/ГПХ + правила по описанию → detailed | rejected
        → Update           запись обратно по id
-       → Format message   «🆕 Подходят: N» + «🚫 Отсеяно M: причина k …»
-       → Telegram
 ```
 
-- Нет прошедших — сообщения нет. Отсеянные видны в таблице `vacancies` (`status = rejected`, `reasons`).
-- Страница вакансии не открылась → вакансия остаётся `new` с текстом в `error` и всё равно приходит в Telegram с ⚠️.
-- Код: `n8n/w1-collector/filter-search.js`, `parse-vacancy.js`, `format-message.js`.
+- Сообщения в Telegram с этапа 3 шлёт W2: карточка на каждую `detailed` + сводка «🚫 Фильтр отсеял M: причина k …» (`docs/stages/stage-3.md`). Отсеянные видны в таблице `vacancies` (`status = rejected`, `reasons`).
+- Страница вакансии не открылась → вакансия всё равно `detailed` с текстом в `error`: нейросеть оценит её по фрагменту из выдачи, в карточке ⚠️.
+- Код: `n8n/w1-collector/filter-search.js`, `parse-vacancy.js`.
 
 ## Чёрный список
 
