@@ -1,0 +1,38 @@
+# Локальный n8n для Job Hunter.
+# Запуск: docker compose up -d  →  http://localhost:5678
+# Обновление: docker compose pull && docker compose up -d
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-latest}
+    container_name: job-hunter-n8n
+    restart: unless-stopped
+    ports:
+      # Доступ только с этого Mac, из сети не виден
+      - "127.0.0.1:5678:5678"
+    environment:
+      # Расписания и даты по Москве: hh публикует вакансии по МСК
+      GENERIC_TIMEZONE: Europe/Moscow
+      TZ: Europe/Moscow
+      N8N_EDITOR_BASE_URL: http://localhost:5678
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://localhost:5678/}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?заполни N8N_ENCRYPTION_KEY в .env}
+      # Интерфейс открывается по http://localhost, secure cookie не нужна
+      N8N_SECURE_COOKIE: "false"
+      # Разрешить {{ $env.TG_CHAT_ID }} в нодах (в n8n 2.x по умолчанию запрещено)
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      # Data Tables: 100 МБ вместо 50 МБ по умолчанию
+      N8N_DATA_TABLES_MAX_SIZE_BYTES: "104857600"
+      # История запусков хранится 7 дней: страница поиска hh весит ~1,7 МБ
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: "168"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      TG_CHAT_ID: ${TG_CHAT_ID:-}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      # Файловые ноды n8n 2.x видят только ~/.n8n-files.
+      # Сюда W1 сохраняет HTML, если парсер сломался.
+      - ./fixtures:/home/node/.n8n-files/fixtures
+
+volumes:
+  n8n_data:

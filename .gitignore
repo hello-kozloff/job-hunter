@@ -1,0 +1,10 @@
+# Секреты и личные данные
+.env
+docs/resume.md
+
+# Сохранённые страницы hh: в JSON есть имена HR-менеджеров
+fixtures/*
+!fixtures/.gitkeep
+!fixtures/synthetic-*
+
+.DS_Store
