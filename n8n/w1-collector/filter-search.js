@@ -7,17 +7,17 @@
 const firstRun = Boolean($('Plan').first().json.firstRun);
 const rows = $('Is new').all().map((i) => i.json);
 
-// Чёрный список: в колонке company — название компании (целыми словами, без учёта регистра)
-// или её id на hh (только цифры). «VK» ловит «VK» и «VK Tech», но не «Devkit»
-const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const blacklist = $('Blacklist')
-  .all()
-  .map((i) => String(i.json.company ?? '').trim())
-  .filter(Boolean)
-  .map((b) => (/^\d+$/.test(b) ? b : new RegExp(`(?<![\\p{L}\\p{N}])${escapeRe(b)}(?![\\p{L}\\p{N}])`, 'iu')));
+// Чёрный список: в колонке company — точное название компании, как на hh (без учёта регистра
+// и пробелов по краям), или её id на hh (только цифры)
+const norm = (s) => String(s ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+const blacklist = new Set(
+  $('Blacklist')
+    .all()
+    .map((i) => norm(i.json.company))
+    .filter(Boolean),
+);
 
-const inBlacklist = (r) =>
-  blacklist.some((b) => (typeof b === 'string' ? r.company_id === b : b.test(String(r.company ?? ''))));
+const inBlacklist = (r) => blacklist.has(norm(r.company)) || blacklist.has(String(r.company_id));
 
 // \b и \w в JS не работают с кириллицей — границы слова и окончания задаём явно
 const ru = (word) => new RegExp(`(^|[^а-яё])${word}([^а-яё]|$)`, 'i');
