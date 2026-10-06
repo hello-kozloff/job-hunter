@@ -157,7 +157,7 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 - Lead / тимлид / архитектор / руководитель / head / CTO — кроме гибридов с Senior/Middle/старший/ведущий;
 - стоп-слова в названии: PHP, 1С, WordPress, Битрикс, QA/тестировщик, преподаватель/наставник/teacher/tutor;
 - больше 3000 откликов;
-- компания из таблицы `blacklist` (кусок названия или id компании на hh; заполняет пользователь в UI).
+- компания из таблицы `blacklist` (название целыми словами без учёта регистра или id компании на hh). Стартовый список пользователя — `n8n/blacklist.json` (26 компаний, 07.10.2026) → `n8n-api.mjs blacklist-seed`; дальше правит в UI.
 
 **Отсекаем по странице вакансии (Parse vacancy):**
 - архив / закрыта для откликов;
@@ -237,7 +237,7 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 
 ## 12. Открытые вопросы к пользователю
 
-- **Сейчас:** наблюдение за фильтром этапа 2 — не режет ли лишнего (особенно «только из РФ»); заполнить `blacklist`.
+- **Сейчас:** наблюдение за фильтром этапа 2 — не режет ли лишнего (особенно «только из РФ»). `blacklist` — список прислан, загрузить после деплоя.
 - **Пароль владельца n8n:** строка `N8N_OWNER_PASSWORD` пропала из `.env` 06.10.2026; пользователь согласовал сброс (`n8n user-management:reset` → перезапуск → `setup-owner`). `setup-owner` теперь правит `.env` на месте.
 - **Этап 3:** LLM-провайдер (с тайского IP доступны OpenAI/Anthropic/Gemini; вариант — Ollama локально на M1 Pro 16 ГБ), бюджет, порог, теневой режим.
 - **Этап 4:** язык и длина письма, контакты, кнопки, тихие часы (UTC+7), настройка ngrok.
@@ -253,10 +253,11 @@ n8n/w0-check/*.js                   код Code-нод W0
 n8n/w1-collector/*.js               код Code-нод W1
 n8n/w4-errors/*.js                  код Code-нод W4
 n8n/schema.mjs                      схема таблиц vacancies и blacklist
+n8n/blacklist.json                  стартовый чёрный список компаний
 n8n/workflows/*.json                сгенерированные workflow (не править руками)
 scripts/build-workflows.mjs         описание workflow → n8n/workflows/*.json
 scripts/deploy.sh                   сборка + импорт в n8n (+ credential Telegram из .env)
-scripts/n8n-api.mjs                 владелец, запуск/публикация workflow, строки таблиц, migrate
+scripts/n8n-api.mjs                 владелец, запуск/публикация workflow, строки таблиц, migrate, blacklist-seed
 scripts/telegram-credential.mjs     JSON credential из TG_BOT_TOKEN (только через pipe)
 scripts/run-code-node.mjs           прогон Code-ноды на фикстурах без n8n
 fixtures/                           страницы hh (не в git, кроме synthetic-*)

@@ -8,6 +8,7 @@
 //   node scripts/n8n-api.mjs executions <workflowId> [limit]   последние запуски
 //   node scripts/n8n-api.mjs rows <table> [limit]      показать строки таблицы Data Tables
 //   node scripts/n8n-api.mjs migrate                   создать недостающие таблицы и колонки по n8n/schema.mjs
+//   node scripts/n8n-api.mjs blacklist-seed            дописать в таблицу blacklist компании из n8n/blacklist.json
 //
 // Вход — N8N_OWNER_EMAIL / N8N_OWNER_PASSWORD из .env.
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -203,6 +204,22 @@ async function rows(tableName, limit = 5) {
   if (Number(limit) > 0) for (const row of content.data ?? []) console.log(JSON.stringify(row));
 }
 
+// Дописывает только тех, кого в таблице ещё нет (сравнение без учёта регистра) — повторный запуск безопасен
+async function blacklistSeed() {
+  const cookie = await login();
+  const personal = await personalProject(cookie);
+  const base = `/projects/${personal.id}/data-tables`;
+  const { json: tables } = await api(base, { cookie });
+  const table = (tables.data ?? tables).find((t) => t.name === 'blacklist');
+  if (!table) throw new Error('Таблицы blacklist нет — сначала migrate');
+  const { json: content } = await api(`${base}/${table.id}/rows?take=1000&skip=0`, { cookie });
+  const have = new Set((content.data ?? []).map((r) => String(r.company ?? '').trim().toLowerCase()));
+  const seed = JSON.parse(readFileSync(new URL('../n8n/blacklist.json', import.meta.url), 'utf8'));
+  const add = seed.filter((r) => !have.has(r.company.trim().toLowerCase()));
+  if (add.length) await api(`${base}/${table.id}/insert`, { method: 'POST', body: { data: add, returnType: 'count' }, cookie });
+  console.log(`blacklist: добавлено ${add.length}, уже было ${seed.length - add.length}`);
+}
+
 async function setupOwner(email) {
   const env = readEnv();
   if (env.N8N_OWNER_PASSWORD) {
@@ -224,10 +241,10 @@ async function setupOwner(email) {
 }
 
 const [command, ...args] = process.argv.slice(2);
-const commands = { 'setup-owner': setupOwner, run, publish, unpublish, executions, rows, migrate };
+const commands = { 'setup-owner': setupOwner, run, publish, unpublish, executions, rows, migrate, 'blacklist-seed': blacklistSeed };
 if (!commands[command]) {
   console.error(
-    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate',
+    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate | blacklist-seed',
   );
   process.exit(2);
 }

@@ -24,14 +24,16 @@ Is new → Blacklist (все строки таблицы blacklist, один р�
 
 ## Чёрный список
 
-Таблица `blacklist` в n8n (Overview → Data tables → blacklist). Заполняешь сам:
+Таблица `blacklist` в n8n (Overview → Data tables → blacklist).
 
 | company | comment |
 |---|---|
-| `Займиго` | МФО |
+| `Ozon Tech` | название — целыми словами, без учёта регистра |
 | `2180` | id компании на hh — точное совпадение |
 
-- `company` — кусок названия компании (без учёта регистра) **или** её id на hh (только цифры, видно в ссылке `hh.ru/employer/<id>`).
+- `company` — название компании **или** её id на hh (только цифры, видно в ссылке `hh.ru/employer/<id>`).
+- Название ищется целыми словами: `VK` ловит «VK» и «VK Tech», но не «Devkit»; `Альфа-Банк` ловит и «Альфа-Банк. ИТ-специалисты». Обратная сторона: `Точка` поймает и «Точка роста» — тогда лучше id.
+- Стартовый список пользователя (07.10.2026, 26 компаний) — `n8n/blacklist.json`, загружается `node scripts/n8n-api.mjs blacklist-seed` (дописывает только отсутствующих). Дальше можно править прямо в UI.
 - Действует на следующих запусках W1; уже записанные вакансии не пересматриваются.
 
 ## Проверка правил
@@ -46,7 +48,8 @@ node scripts/run-code-node.mjs n8n/w1-collector/parse-vacancy.js fixtures/vacanc
 ## Деплой
 
 ```bash
-node scripts/n8n-api.mjs migrate   # колонки contract, reasons, description, error + таблица blacklist
+node scripts/n8n-api.mjs migrate          # колонки contract, reasons, description, error + таблица blacklist
+node scripts/n8n-api.mjs blacklist-seed   # компании из n8n/blacklist.json
 scripts/deploy.sh --publish
 ```
 
