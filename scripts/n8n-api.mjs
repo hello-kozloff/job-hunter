@@ -2,7 +2,8 @@
 // Мини-клиент внутреннего REST API локального n8n — то же, что делает редактор в браузере.
 //
 //   node scripts/n8n-api.mjs setup-owner <email>      создать владельца (один раз), пароль → .env
-//   node scripts/n8n-api.mjs run <workflowId>          запустить с ноды Manual и вывести сводку по нодам
+//   node scripts/n8n-api.mjs run <workflowId> [нода]   запустить с ноды Manual (до указанной ноды включительно)
+//                                                      и вывести сводку по нодам
 //   node scripts/n8n-api.mjs publish <workflowId>      опубликовать (включить триггеры) текущую версию
 //   node scripts/n8n-api.mjs unpublish <workflowId>    снять с публикации
 //   node scripts/n8n-api.mjs executions <workflowId> [limit]   последние запуски
@@ -123,11 +124,14 @@ function unflatten(text) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function run(workflowId) {
+async function run(workflowId, destination) {
   const cookie = await login();
   const { json } = await api(`/workflows/${workflowId}/run`, {
     method: 'POST',
-    body: { triggerToStartFrom: { name: 'Manual' } },
+    body: {
+      triggerToStartFrom: { name: 'Manual' },
+      ...(destination && { destinationNode: { nodeName: destination, mode: 'inclusive' } }),
+    },
     cookie,
   });
   const executionId = json.executionId;
@@ -304,7 +308,7 @@ const [command, ...args] = process.argv.slice(2);
 const commands = { 'setup-owner': setupOwner, run, publish, unpublish, executions, rows, migrate, 'blacklist-seed': blacklistSeed, 'tunnel-env': tunnelEnv, requeue };
 if (!commands[command]) {
   console.error(
-    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate | blacklist-seed | tunnel-env | requeue <days>',
+    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> [node] | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate | blacklist-seed | tunnel-env | requeue <days>',
   );
   process.exit(2);
 }
