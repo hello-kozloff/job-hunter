@@ -8,8 +8,10 @@ const firstRun = Boolean($('Plan').first().json.firstRun);
 const rows = $('Is new').all().map((i) => i.json);
 
 // Чёрный список: в колонке company — точное название компании, как на hh (без учёта регистра
-// и пробелов по краям), или её id на hh (только цифры)
-const norm = (s) => String(s ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+// и пробелов по краям), или её id на hh (только цифры).
+// Форму организации не сравниваем: на странице вакансии hh пишет «ООО ОнТаргет ЛАБС», в выдаче — «ОнТаргет ЛАБС»
+const ORG_FORM = /^(ооо|оао|зао|пао|ао|нао|ип|тоо|нко|ано|гуп|муп|фгуп|гку|гбу|llc|ltd|inc)\.?\s+|\s+(ооо|оао|зао|пао|ао|нао|ип|тоо|llc|ltd|inc)\.?$/g;
+const norm = (s) => String(s ?? '').trim().replace(/\s+/g, ' ').toLowerCase().replace(ORG_FORM, '');
 const blacklist = new Set(
   $('Blacklist')
     .all()

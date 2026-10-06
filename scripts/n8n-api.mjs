@@ -11,8 +11,9 @@
 //   node scripts/n8n-api.mjs migrate                   создать недостающие таблицы и колонки по n8n/schema.mjs
 //   node scripts/n8n-api.mjs blacklist-seed            дописать в таблицу blacklist компании из n8n/blacklist.json
 //   node scripts/n8n-api.mjs tunnel-env                по NGROK_DOMAIN в .env включить туннель: WEBHOOK_URL, COMPOSE_PROFILES
-//   node scripts/n8n-api.mjs requeue <days>            вернуть в обработку вакансии бэкфилла (seen) за N дней:
+//   node scripts/n8n-api.mjs requeue <days> [--dry]    вернуть в обработку вакансии бэкфилла (seen) за N дней:
 //                                                      удалить их строки, следующий запуск W1 примет их как новые
+//                                                      (--dry — только показать, что удалится)
 //
 // Вход — N8N_OWNER_EMAIL / N8N_OWNER_PASSWORD из .env.
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -243,7 +244,7 @@ async function blacklistSeed() {
 
 // Удаляются только строки, чьи вакансии есть в выдаче последнего успешного запуска W1:
 // обычный запуск W1 читает одну страницу поиска, и всё, чего на ней нет, пропало бы из таблицы
-async function requeue(days) {
+async function requeue(days, flag) {
   if (!Number(days)) throw new Error('usage: requeue <days>');
   const cookie = await login();
   const filter = encodeURIComponent(JSON.stringify({ workflowId: 'jobHunterW1Colle', status: ['success'] }));
@@ -265,6 +266,11 @@ async function requeue(days) {
     (r) => r.status === 'seen' && Date.parse(r.published_at) >= since && (inSearch.has(r.external_id) || inSearch.has(r.dup_key)),
   );
   if (!rows.length) return console.log(`Нечего возвращать: seen за ${days} дн. в выдаче запуска ${last.id} нет`);
+  if (flag === '--dry') {
+    console.log(`Удалилось бы ${rows.length} строк (выдача запуска ${last.id}):`);
+    for (const r of rows) console.log(`  ${r.published_at.slice(0, 10)}  ${r.company} — ${r.title}`);
+    return;
+  }
   const conditions = { type: 'or', filters: rows.map((r) => ({ columnName: 'id', condition: 'eq', value: r.id })) };
   await api(`${base}/${table.id}/rows?filter=${encodeURIComponent(JSON.stringify(conditions))}`, { method: 'DELETE', cookie });
   console.log(`Удалено ${rows.length} строк (выдача запуска ${last.id}). Теперь: node scripts/n8n-api.mjs run jobHunterW1Colle`);
@@ -308,7 +314,7 @@ const [command, ...args] = process.argv.slice(2);
 const commands = { 'setup-owner': setupOwner, run, publish, unpublish, executions, rows, migrate, 'blacklist-seed': blacklistSeed, 'tunnel-env': tunnelEnv, requeue };
 if (!commands[command]) {
   console.error(
-    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> [node] | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate | blacklist-seed | tunnel-env | requeue <days>',
+    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> [node] | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate | blacklist-seed | tunnel-env | requeue <days> [--dry]',
   );
   process.exit(2);
 }
