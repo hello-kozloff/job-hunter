@@ -32,6 +32,9 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
       CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-haiku-4-5}
+      # Сводка W6: проверка туннеля снаружи; страж healthchecks.io — сигнал из W1 после каждого сбора
+      NGROK_DOMAIN: ${NGROK_DOMAIN:-}
+      HC_PING_URL: ${HC_PING_URL:-}
     volumes:
       - n8n_data:/home/node/.n8n
       # Файловые ноды n8n 2.x видят только ~/.n8n-files.

@@ -187,6 +187,10 @@
             {
               "name": "applied_at",
               "type": "string"
+            },
+            {
+              "name": "card_at",
+              "type": "string"
             }
           ]
         },

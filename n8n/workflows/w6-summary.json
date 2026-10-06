@@ -1,0 +1,712 @@
+{
+  "id": "jobHunterW6Summ1",
+  "name": "W6 Summary",
+  "nodes": [
+    {
+      "id": "d093b642-839c-f35f-9dd8-5be639755a11",
+      "name": "Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        -100
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * *"
+            }
+          ]
+        },
+        "misfirePolicy": "coalesce"
+      }
+    },
+    {
+      "id": "4ed37bf8-bb92-f780-faf0-5deb24869b47",
+      "name": "Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        100
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "c67943dc-137e-a8f3-0537-6367ae787124",
+      "name": "All rows",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "vacancies"
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "3b5c58e1-ba4f-65bb-2ef8-d638bd60fb19",
+      "name": "Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W6 · Plan — что сделать перед утренней сводкой.\n// Нода: Code, режим «Run Once for All Items».\n// Вход: все строки таблицы vacancies из «All rows».\n// Выход: один item { expire, check }:\n//   expire — карточки без решения (status = waiting) старше 3 дней → «⌛ устарела», кнопки убрать;\n//   check  — хвосты: карточки без решения моложе 3 дней и ✅ без «📨 Отправил» (status = approved) →\n//            открыть страницу на hh: закрылась — «🔒 закрыта на hh». Не больше 40 за раз, старые первыми.\n// Время карточки — card_at (пишет W2), у старых строк — createdAt.\n\nconst DAY = 24 * 3600 * 1000;\nconst now = Date.now();\nconst rows = $input.all().map((i) => i.json).filter((r) => r.id);\nconst cardTime = (r) => Date.parse(r.card_at || r.createdAt) || now;\n\nconst waiting = rows.filter((r) => r.status === 'waiting');\nconst expire = waiting.filter((r) => now - cardTime(r) > 3 * DAY);\nconst expired = new Set(expire.map((r) => r.id));\nconst check = [...waiting.filter((r) => !expired.has(r.id)), ...rows.filter((r) => r.status === 'approved')]\n  .sort((a, b) => cardTime(a) - cardTime(b))\n  .slice(0, 40);\n\nreturn [{ json: { expire, check } }];\n"
+      }
+    },
+    {
+      "id": "b6de3118-9fcb-3813-cefa-31f176c9a014",
+      "name": "Expire rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        -300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W6 · Expire rows — карточки без решения старше 3 дней: новый текст карточки без кнопок.\n// Нода: Code, режим «Run Once for All Items». Вход: список expire из «Plan».\n// Выход: { id, tg_message_id, text } → «Card: expired» (Telegram) → «Expired done» → «Save expired».\n\n// Общий код карточки вакансии в Telegram: W2 «Format card» и W3 «Apply choice».\n// В Code-ноду попадает при сборке: строка «// @include n8n/shared/card.js» заменяется этим файлом\n// (scripts/build-workflows.mjs, scripts/run-code-node.mjs).\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst EXPERIENCE = { noExperience: 'без опыта', between1And3: '1–3 г.', between3And6: '3–6 л.', moreThan6: '6+ л.' };\nconst CURRENCY = { RUR: '₽', USD: '$', EUR: '€', KZT: '₸', BYR: 'Br', UZS: 'сум' };\n\n// Решение нейросети (колонка decision)\nconst VERDICT = { apply: '🟢 apply', maybe: '🟡 maybe', skip: '🔴 skip', error: '⚠️ не оценено' };\n// Кнопки пользователя: callback_data = v:<id строки>:<choice>, решение — в колонку my_decision\nconst CHOICE = { apply: '✅ Откликнусь', maybe: '🤔 Возможно', skip: '❌ Мимо' };\nconst STATUS_BY_CHOICE = { apply: 'approved', maybe: 'maybe', skip: 'skipped' };\n\nconst short = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));\n\nfunction salary(r) {\n  if (!r.salary_from && !r.salary_to) return '';\n  const range =\n    r.salary_from && r.salary_to\n      ? `${short(r.salary_from)}–${short(r.salary_to)}`\n      : r.salary_from\n        ? `от ${short(r.salary_from)}`\n        : `до ${short(r.salary_to)}`;\n  return `💰 ${range} ${CURRENCY[r.currency] ?? r.currency ?? ''}${r.salary_gross ? ' до налогов' : ''}`;\n}\n\n// «Москва, Сербия, Грузия, Армения» → «Москва, Сербия +2»\nfunction areas(s) {\n  const list = String(s ?? '').split(', ').filter(Boolean);\n  return list.length > 2 ? `${list.slice(0, 2).join(', ')} +${list.length - 2}` : list.join(', ');\n}\n\n// '2026-10-06T13:22:00+0300' → '06.10'\nfunction published(s) {\n  const m = String(s ?? '').match(/^\\d{4}-(\\d{2})-(\\d{2})/);\n  return m ? `${m[2]}.${m[1]}` : '';\n}\n\n// Момент в UTC (applied_at) → дата по Таиланду (UTC+7): '2026-10-06T21:17:55Z' → '07.10'\nconst thaiDate = (iso) => (Date.parse(iso) ? published(new Date(Date.parse(iso) + 7 * 3600 * 1000).toISOString()) : '');\n\n// Итоговые состояния без кнопок: W3 «📨 Отправил», W6 «⌛ устарела» и «🔒 закрыта на hh»\nconst FINAL = { expired: '⌛ Устарела: 3 дня без решения', archived: '🔒 Вакансия закрыта на hh' };\n\n// Текст карточки (Parse Mode = HTML). Строка «👤 …» появляется после нажатия кнопки,\n// «📨 …» — после «Отправил» под письмом (W3, status = applied), FINAL — после W6\nfunction cardText(r) {\n  const date = published(r.published_at);\n  const meta = [esc(r.company), salary(r), EXPERIENCE[r.experience] ?? '', esc(areas(r.areas)), date && `📅 ${date}`]\n    .filter(Boolean)\n    .join(' · ');\n  const flags = [\n    r.has_test && '📝 тест',\n    r.letter_required && '✉️ письмо обязательно',\n    r.responses != null && `👥 ${r.responses}`,\n    r.error && `⚠️ ${esc(r.error)}`,\n  ]\n    .filter(Boolean)\n    .join(' · ');\n  const verdict = `🤖 ${VERDICT[r.decision] ?? esc(r.decision)}${r.llm_reason ? ` — ${esc(r.llm_reason)}` : ''}`;\n  const mine = CHOICE[r.my_decision] ? `👤 ${CHOICE[r.my_decision]}` : '';\n  const sent = r.status === 'applied' ? `📨 Отклик отправлен${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}` : '';\n  return [`<a href=\"${r.url}\"><b>${esc(r.title)}</b></a>`, meta, flags, verdict, mine, sent, FINAL[r.status] ?? '']\n    .filter(Boolean)\n    .join('\\n');\n}\n\nreturn $('Plan')\n  .first()\n  .json.expire.map((r) => ({ json: { id: r.id, tg_message_id: r.tg_message_id, text: cardText({ ...r, status: 'expired' }) } }));\n"
+      }
+    },
+    {
+      "id": "555c6fd1-17ec-c2c1-a94d-17da1f53d416",
+      "name": "Card: expired",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        -300
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "editMessageText",
+        "messageType": "message",
+        "chatId": "={{ $env.TG_CHAT_ID }}",
+        "messageId": "={{ $json.tg_message_id }}",
+        "text": "={{ $json.text }}",
+        "replyMarkup": "none",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterTgBot01",
+          "name": "Telegram bot"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "b47c9f3c-0e84-1cea-272b-622b9035cbad",
+      "name": "Expired done",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        -300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W6 · Expired done — status = expired для всех устаревших (даже если Telegram не дал изменить карточку).\n// Нода: Code, режим «Run Once for All Items». Выход: обновления для «Save expired».\n\nreturn $('Expire rows')\n  .all()\n  .map((i) => ({ json: { id: i.json.id, status: 'expired' } }));\n"
+      }
+    },
+    {
+      "id": "5a71b5e5-6d30-1828-10e3-e15e5b086aec",
+      "name": "Save expired",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        -300
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "vacancies"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "42a6e4aa-b6b0-fb90-ca78-300a78a40850",
+      "name": "Check candidates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        -50
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W6 · Check candidates — хвосты, которые надо проверить на hh (список check из «Plan»).\n// Нода: Code, режим «Run Once for All Items». Выход: { id, url } → HTTP Request «Vacancy page».\n\nreturn $('Plan')\n  .first()\n  .json.check.map((r) => ({ json: { id: r.id, url: r.url } }));\n"
+      }
+    },
+    {
+      "id": "80732194-989c-1374-9ef7-7a8885efe391",
+      "name": "Vacancy page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        880,
+        -50
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "ru-RU,ru;q=0.9,en;q=0.8"
+            },
+            {
+              "name": "Referer",
+              "value": "https://hh.ru/search/vacancy"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 3000
+            }
+          },
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "6c458384-0a06-611e-2acc-a689b2f24ac5",
+      "name": "Archive status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        -50
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W6 · Archive status — какие вакансии из хвостов закрылись на hh.\n// Нода: Code, режим «Run Once for All Items».\n// Вход: ответы «Vacancy page» по порядку списка check из «Plan».\n// Закрыта: страница отдаёт 404/410 (вакансию удалили) или в ней status.archived / closedForApplicants.\n// Не ответила, капча и т. п. — не трогаем, проверим завтра.\n// Выход: только закрытые { id, tg_message_id, tg_letter_id, cardText, letterText } → карточка и письмо без кнопок.\n\n// Общий код карточки вакансии в Telegram: W2 «Format card» и W3 «Apply choice».\n// В Code-ноду попадает при сборке: строка «// @include n8n/shared/card.js» заменяется этим файлом\n// (scripts/build-workflows.mjs, scripts/run-code-node.mjs).\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst EXPERIENCE = { noExperience: 'без опыта', between1And3: '1–3 г.', between3And6: '3–6 л.', moreThan6: '6+ л.' };\nconst CURRENCY = { RUR: '₽', USD: '$', EUR: '€', KZT: '₸', BYR: 'Br', UZS: 'сум' };\n\n// Решение нейросети (колонка decision)\nconst VERDICT = { apply: '🟢 apply', maybe: '🟡 maybe', skip: '🔴 skip', error: '⚠️ не оценено' };\n// Кнопки пользователя: callback_data = v:<id строки>:<choice>, решение — в колонку my_decision\nconst CHOICE = { apply: '✅ Откликнусь', maybe: '🤔 Возможно', skip: '❌ Мимо' };\nconst STATUS_BY_CHOICE = { apply: 'approved', maybe: 'maybe', skip: 'skipped' };\n\nconst short = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));\n\nfunction salary(r) {\n  if (!r.salary_from && !r.salary_to) return '';\n  const range =\n    r.salary_from && r.salary_to\n      ? `${short(r.salary_from)}–${short(r.salary_to)}`\n      : r.salary_from\n        ? `от ${short(r.salary_from)}`\n        : `до ${short(r.salary_to)}`;\n  return `💰 ${range} ${CURRENCY[r.currency] ?? r.currency ?? ''}${r.salary_gross ? ' до налогов' : ''}`;\n}\n\n// «Москва, Сербия, Грузия, Армения» → «Москва, Сербия +2»\nfunction areas(s) {\n  const list = String(s ?? '').split(', ').filter(Boolean);\n  return list.length > 2 ? `${list.slice(0, 2).join(', ')} +${list.length - 2}` : list.join(', ');\n}\n\n// '2026-10-06T13:22:00+0300' → '06.10'\nfunction published(s) {\n  const m = String(s ?? '').match(/^\\d{4}-(\\d{2})-(\\d{2})/);\n  return m ? `${m[2]}.${m[1]}` : '';\n}\n\n// Момент в UTC (applied_at) → дата по Таиланду (UTC+7): '2026-10-06T21:17:55Z' → '07.10'\nconst thaiDate = (iso) => (Date.parse(iso) ? published(new Date(Date.parse(iso) + 7 * 3600 * 1000).toISOString()) : '');\n\n// Итоговые состояния без кнопок: W3 «📨 Отправил», W6 «⌛ устарела» и «🔒 закрыта на hh»\nconst FINAL = { expired: '⌛ Устарела: 3 дня без решения', archived: '🔒 Вакансия закрыта на hh' };\n\n// Текст карточки (Parse Mode = HTML). Строка «👤 …» появляется после нажатия кнопки,\n// «📨 …» — после «Отправил» под письмом (W3, status = applied), FINAL — после W6\nfunction cardText(r) {\n  const date = published(r.published_at);\n  const meta = [esc(r.company), salary(r), EXPERIENCE[r.experience] ?? '', esc(areas(r.areas)), date && `📅 ${date}`]\n    .filter(Boolean)\n    .join(' · ');\n  const flags = [\n    r.has_test && '📝 тест',\n    r.letter_required && '✉️ письмо обязательно',\n    r.responses != null && `👥 ${r.responses}`,\n    r.error && `⚠️ ${esc(r.error)}`,\n  ]\n    .filter(Boolean)\n    .join(' · ');\n  const verdict = `🤖 ${VERDICT[r.decision] ?? esc(r.decision)}${r.llm_reason ? ` — ${esc(r.llm_reason)}` : ''}`;\n  const mine = CHOICE[r.my_decision] ? `👤 ${CHOICE[r.my_decision]}` : '';\n  const sent = r.status === 'applied' ? `📨 Отклик отправлен${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}` : '';\n  return [`<a href=\"${r.url}\"><b>${esc(r.title)}</b></a>`, meta, flags, verdict, mine, sent, FINAL[r.status] ?? '']\n    .filter(Boolean)\n    .join('\\n');\n}\n// Общий код сообщения с письмом в Telegram: W5 «Format letter» и W3 «Apply sent».\n// Подключается после n8n/shared/card.js (нужны esc и thaiDate):\n//   // @include n8n/shared/card.js\n//   // @include n8n/shared/letter.js\n\nconst LETTER_HEAD = { new: '✉️ Письмо', redo: '🔄 Новый вариант письма', revise: '✏️ Письмо с правкой' };\n\n// r: строка вакансии + { ok, letter, problem, mode, instruction }. Письмо — в <pre>: копируется одним нажатием.\n// После «📨 Отправил» (status = applied) подсказки заменяет строка «📨 Отклик отправлен …»\nfunction letterText(r) {\n  const head = `${LETTER_HEAD[r.mode] ?? LETTER_HEAD.new} · <a href=\"${r.url}\">${esc(r.title)}</a> · ${esc(r.company)}`;\n  if (!r.ok) {\n    return [head, `⚠️ Письмо не получилось: ${esc(r.problem)}`, 'Нажми «🔄 Переписать», чтобы попробовать ещё раз.'].join('\\n');\n  }\n  const sent = r.status === 'applied';\n  const closed = r.status === 'archived';\n  return [\n    head,\n    r.mode === 'revise' && r.instruction ? `<i>Пожелание: «${esc(r.instruction)}»</i>` : '',\n    `<pre>${esc(r.letter)}</pre>`,\n    !sent && !closed && r.has_test ? '📝 У вакансии тест — ответы в форме отклика на hh.' : '',\n    sent\n      ? `📨 Отклик отправлен${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}`\n      : closed\n        ? '🔒 Вакансия закрыта на hh — отклик уже не отправить'\n        : '<i>Нажми на письмо — скопируется. Поправить — ответь на это сообщение.</i>',\n  ]\n    .filter(Boolean)\n    .join('\\n');\n}\n// Общий код разбора страницы вакансии hh: W1 «Parse vacancy» и W6 «Archive status».\n// В Code-ноду попадает строкой «// @include n8n/shared/hh.js».\n\n// HTML-сущности раскодируем за один проход: иначе &amp;quot; станет кавычкой и сломает JSON\nconst NAMED = { quot: '\"', amp: '&', lt: '<', gt: '>', apos: \"'\", nbsp: '\\u00a0' };\nfunction decodeEntities(s) {\n  return s.replace(/&(#x[0-9a-f]+|#\\d+|[a-z]+);/gi, (m, e) => {\n    if (e[0] === '#') {\n      const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);\n      return Number.isFinite(code) && code <= 0x10ffff ? String.fromCodePoint(code) : m;\n    }\n    return NAMED[e.toLowerCase()] ?? m;\n  });\n}\n\n// Ответ HTTP Request «Vacancy page» → { v: vacancyFull.vacancy, test } или { error, statusCode }\nfunction parsePage(res) {\n  const html = String(res.data ?? res.body ?? '');\n  if (res.statusCode !== 200) return { error: `страница: HTTP ${res.statusCode}`, statusCode: res.statusCode };\n  const tpl = html.match(/<template[^>]*id=\"HH-Lux-InitialState\"[^>]*>([\\s\\S]*?)<\\/template>/);\n  if (!tpl) return { error: 'страница: нет HH-Lux-InitialState' };\n  try {\n    const state = JSON.parse(decodeEntities(tpl[1]));\n    const v = state?.vacancyView?.vacancyFull?.vacancy;\n    if (!v?.description) return { error: 'страница: нет описания' };\n    return { v, test: state?.applicantVacancyResponseStatuses?.[String(v.vacancyId)]?.test };\n  } catch (e) {\n    return { error: `страница: ${e.message}` };\n  }\n}\n\nconst candidates = $('Plan').first().json.check;\nconst responses = $input.all().map((i) => i.json);\n\nreturn candidates.flatMap((r, i) => {\n  const res = responses[i] ?? {};\n  let closed = res.statusCode === 404 || res.statusCode === 410;\n  if (!closed && res.statusCode === 200) {\n    const page = parsePage(res);\n    closed = Boolean(page.v && (page.v.status?.archived || page.v.closedForApplicants));\n  }\n  if (!closed) return [];\n  const updated = { ...r, status: 'archived' };\n  return [\n    {\n      json: {\n        id: r.id,\n        tg_message_id: r.tg_message_id,\n        tg_letter_id: r.tg_letter_id || null,\n        cardText: cardText(updated),\n        letterText: r.letter ? letterText({ ...updated, ok: true, mode: 'new' }) : '',\n      },\n    },\n  ];\n});\n"
+      }
+    },
+    {
+      "id": "ab344923-408d-bcc7-422b-a90d86b0d10e",
+      "name": "Card: archived",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1320,
+        -100
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "editMessageText",
+        "messageType": "message",
+        "chatId": "={{ $env.TG_CHAT_ID }}",
+        "messageId": "={{ $json.tg_message_id }}",
+        "text": "={{ $json.cardText }}",
+        "replyMarkup": "none",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterTgBot01",
+          "name": "Telegram bot"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "2f3380b6-88ae-0f93-a8cc-5ec11cd2bffc",
+      "name": "Archived done",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        -100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W6 · Archived done — status = archived для закрытых на hh.\n// Нода: Code, режим «Run Once for All Items». Выход: обновления для «Save archived».\n\nreturn $('Archive status')\n  .all()\n  .map((i) => ({ json: { id: i.json.id, status: 'archived' } }));\n"
+      }
+    },
+    {
+      "id": "420bf302-34b3-e747-0cad-f8e088fcc899",
+      "name": "Save archived",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        -100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "vacancies"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "561873fe-3c8a-40c2-7087-a218826b605b",
+      "name": "Has letter?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1320,
+        50
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "3bd76fd2-fadb-0494-ef2a-18170553ffef",
+              "leftValue": "={{ Boolean($json.tg_letter_id) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "49be1b10-e041-b9fd-4f8f-ece6e1f16b15",
+      "name": "Letter: archived",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1540,
+        50
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "editMessageText",
+        "messageType": "message",
+        "chatId": "={{ $env.TG_CHAT_ID }}",
+        "messageId": "={{ $json.tg_letter_id }}",
+        "text": "={{ $json.letterText }}",
+        "replyMarkup": "none",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterTgBot01",
+          "name": "Telegram bot"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "9315dd95-dfb8-b382-8861-ea2b35c943be",
+      "name": "Executions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        250
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "http://localhost:5678/api/v1/executions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "250"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "n8nApi": {
+          "id": "jobHunterN8nApi1",
+          "name": "n8n API"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "executeOnce": true
+    },
+    {
+      "id": "e99338eb-128f-4ecc-9825-5e413b411acd",
+      "name": "Tunnel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        880,
+        250
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://{{ $env.NGROK_DOMAIN }}/",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "15fc3cb9-bd7e-513c-2c5b-6d3fa46db359",
+      "name": "Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        250
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W6 · Summary — утренняя сводка за сутки (10:00 по Таиланду = 06:00 МСК).\n// Нода: Code, режим «Run Once for All Items». Выполняется последней (ветки выше — устаревшие и закрытые).\n// Вход: «All rows» (таблица до правок этого запуска), «Plan», «Expire rows» / «Archive status» (если были),\n//       «Executions» — запуски n8n из публичного API, $input — «Tunnel» (проверка туннеля ngrok).\n// Выход: одно сообщение { text, silent }. Без звука, если сбоев нет (решение пользователя 07.10.2026).\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst from = (name) => {\n  try {\n    return $(name).all().map((i) => i.json);\n  } catch {\n    return []; // ветка не выполнялась: устаревших или закрытых не было\n  }\n};\n\nconst DAY = 24 * 3600 * 1000;\nconst now = Date.now();\nconst since = now - DAY;\nconst at = (s) => Date.parse(s) || 0;\nconst rows = $('All rows').all().map((i) => i.json).filter((r) => r.id);\nconst expired = new Set(from('Expire rows').map((r) => r.id));\nconst archived = new Set(from('Archive status').map((r) => r.id));\n\n// Воронка: новые строки за сутки (кроме бэкфилла seen) → отсеяно фильтром → оценено нейросетью\nconst fresh = rows.filter((r) => at(r.createdAt) >= since && r.status !== 'seen');\nconst rejected = fresh.filter((r) => r.status === 'rejected');\nconst reasons = {};\nfor (const r of rejected) {\n  for (const reason of String(r.reasons).split(', ').filter(Boolean)) {\n    const key = reason.replace(/:.*$/, '');\n    reasons[key] = (reasons[key] ?? 0) + 1;\n  }\n}\nconst topReasons = Object.entries(reasons)\n  .sort((a, b) => b[1] - a[1])\n  .slice(0, 4)\n  .map(([k, n]) => `${esc(k)} ${n}`)\n  .join(' · ');\nconst scored = rows.filter((r) => r.decision && at(r.card_at) >= since);\nconst count = (list, f) => list.filter(f).length;\n\n// Решения пользователя за сутки (по времени последнего изменения строки) и отправленные отклики\nconst mine = rows.filter((r) => r.my_decision && at(r.updatedAt) >= since);\nconst sent = count(rows, (r) => at(r.applied_at) >= since);\n\n// Хвосты после этого запуска\nconst tailsWaiting = count(rows, (r) => r.status === 'waiting' && !expired.has(r.id) && !archived.has(r.id));\nconst tailsApproved = count(rows, (r) => r.status === 'approved' && !archived.has(r.id));\n\n// Теневой режим: оценки пользователя там, где решение нейросети известно\nconst shadow = rows.filter((r) => r.my_decision && ['apply', 'maybe', 'skip'].includes(r.decision));\nconst agree = count(shadow, (r) => r.my_decision === r.decision);\n\n// Сбои: запуски n8n за сутки (публичный API), туннель, хвост оценки нейросетью\nconst NAMES = {\n  jobHunterW1Colle: 'W1 сбор',\n  jobHunterW2Score: 'W2 оценка',\n  jobHunterW3Teleg: 'W3 кнопки',\n  jobHunterW5Lettr: 'W5 письма',\n  jobHunterW6Summ1: 'W6 сводка',\n};\nconst executionsBody = $('Executions').first().json;\nconst executions = (executionsBody.data ?? []).filter((e) => at(e.startedAt) >= since);\nconst collected = count(executions, (e) => e.workflowId === 'jobHunterW1Colle' && e.status === 'success' && e.mode === 'trigger');\nconst errors = executions.filter((e) => e.status === 'error' || e.status === 'crashed');\nconst errorsBy = {};\nfor (const e of errors) errorsBy[NAMES[e.workflowId] ?? e.workflowId] = (errorsBy[NAMES[e.workflowId] ?? e.workflowId] ?? 0) + 1;\nconst pendingScore = count(rows, (r) => r.status === 'detailed');\nconst tunnelCode = $input.first().json.statusCode;\nconst tunnelOk = !$env.NGROK_DOMAIN || tunnelCode === 403; // 403 = туннель жив, политика не пускает чужих\n\nconst problems = [];\nif (executionsBody.error || !executionsBody.data) problems.push('нет данных о запусках n8n');\nif (collected < 7) problems.push(`сборов ${collected} из 7`);\nif (errors.length)\n  problems.push(\n    `ошибок ${errors.length} (${Object.entries(errorsBy)\n      .map(([k, n]) => `${k} ${n}`)\n      .join(' · ')})`,\n  );\nif (!tunnelOk) problems.push(`туннель не отвечает (${tunnelCode ?? 'нет ответа'}) — кнопки не работают`);\nif (pendingScore) problems.push(`ждут оценки нейросетью: ${pendingScore}`);\n\nconst date = new Date(now + 7 * 3600 * 1000).toISOString().slice(0, 10).split('-').reverse().slice(0, 2).join('.');\nconst lines = [\n  `☀️ <b>Сводка за сутки</b> · ${date}`,\n  `🔎 Новых вакансий: ${fresh.length} → фильтр отсеял ${rejected.length}${topReasons ? ` (${topReasons})` : ''}`,\n  `🤖 Оценено: ${scored.length}${scored.length ? ` — 🟢 ${count(scored, (r) => r.decision === 'apply')} · 🟡 ${count(scored, (r) => r.decision === 'maybe')} · 🔴 ${count(scored, (r) => r.decision === 'skip')}` : ''}${count(scored, (r) => r.decision === 'error') ? ` · ⚠️ ${count(scored, (r) => r.decision === 'error')}` : ''}`,\n  `👤 Твои решения: ✅ ${count(mine, (r) => r.my_decision === 'apply')} · 🤔 ${count(mine, (r) => r.my_decision === 'maybe')} · ❌ ${count(mine, (r) => r.my_decision === 'skip')} · 📨 отправлено ${sent}`,\n  `⏳ Хвосты: без решения ${tailsWaiting} · ✅ без отклика ${tailsApproved}`,\n  expired.size || archived.size ? `⌛ Устарели: ${expired.size} · 🔒 закрылись на hh: ${archived.size}` : '',\n  shadow.length >= 50\n    ? `🧪 Теневой режим: ${shadow.length}/50, совпало ${agree} (${Math.round((agree / shadow.length) * 100)}%) — пора разбирать, напиши Claude`\n    : `🧪 Теневой режим: ${shadow.length}/50${shadow.length ? `, совпало ${agree} (${Math.round((agree / shadow.length) * 100)}%)` : ''}`,\n  problems.length ? `⚠️ Сбои: ${problems.join(' · ')}` : `⚙️ Сборов ${collected} из 7, ошибок нет, туннель работает`,\n];\n\nreturn [{ json: { text: lines.filter(Boolean).join('\\n'), silent: problems.length === 0 } }];\n"
+      }
+    },
+    {
+      "id": "7f84f904-e81b-66e7-a496-1026a08e7dbf",
+      "name": "Send summary",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1320,
+        250
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $env.TG_CHAT_ID }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true,
+          "disable_notification": "={{ $json.silent }}"
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterTgBot01",
+          "name": "Telegram bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule": {
+      "main": [
+        [
+          {
+            "node": "All rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual": {
+      "main": [
+        [
+          {
+            "node": "All rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "All rows": {
+      "main": [
+        [
+          {
+            "node": "Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan": {
+      "main": [
+        [
+          {
+            "node": "Expire rows",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check candidates",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Executions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expire rows": {
+      "main": [
+        [
+          {
+            "node": "Card: expired",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Card: expired": {
+      "main": [
+        [
+          {
+            "node": "Expired done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expired done": {
+      "main": [
+        [
+          {
+            "node": "Save expired",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check candidates": {
+      "main": [
+        [
+          {
+            "node": "Vacancy page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vacancy page": {
+      "main": [
+        [
+          {
+            "node": "Archive status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Archive status": {
+      "main": [
+        [
+          {
+            "node": "Card: archived",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Has letter?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Card: archived": {
+      "main": [
+        [
+          {
+            "node": "Archived done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Archived done": {
+      "main": [
+        [
+          {
+            "node": "Save archived",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has letter?": {
+      "main": [
+        [
+          {
+            "node": "Letter: archived",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Executions": {
+      "main": [
+        [
+          {
+            "node": "Tunnel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tunnel": {
+      "main": [
+        [
+          {
+            "node": "Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summary": {
+      "main": [
+        [
+          {
+            "node": "Send summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Moscow",
+    "errorWorkflow": "jobHunterW4Error"
+  },
+  "pinData": {},
+  "active": false,
+  "tags": []
+}

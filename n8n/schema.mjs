@@ -47,6 +47,8 @@ export const TABLES = {
     ['tg_letter_id', 'number'],
     ['letter_notes', 'string'],
     ['applied_at', 'string'],
+    // этап 5: когда отправлена карточка (W2) — по нему W6 помечает «⌛ устарела» через 3 дня
+    ['card_at', 'string'],
   ],
   // Чёрный список компаний — заполняет пользователь в UI n8n.
   // company: кусок названия компании или её id на hh (только цифры)

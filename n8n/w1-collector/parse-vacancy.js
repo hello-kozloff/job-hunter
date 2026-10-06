@@ -8,17 +8,7 @@
 const rows = $('Is candidate').all().map((i) => i.json);
 const responses = $input.all().map((i) => i.json);
 
-// HTML-сущности раскодируем за один проход: иначе &amp;quot; станет кавычкой и сломает JSON
-const NAMED = { quot: '"', amp: '&', lt: '<', gt: '>', apos: "'", nbsp: '\u00a0' };
-function decodeEntities(s) {
-  return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
-    if (e[0] === '#') {
-      const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
-      return Number.isFinite(code) && code <= 0x10ffff ? String.fromCodePoint(code) : m;
-    }
-    return NAMED[e.toLowerCase()] ?? m;
-  });
-}
+// @include n8n/shared/hh.js
 
 // Описание вакансии: HTML → текст с переносами строк
 const htmlToText = (html) =>
@@ -39,21 +29,6 @@ const RF_ONLY = [
   /(налогов[а-яё]*\s+)?резидент[а-яё]*\s+(рф|росси)/i,
   /(based|located|reside\w*|living)\s+in\s+russia/i,
 ];
-
-function parsePage(res) {
-  const html = String(res.data ?? res.body ?? '');
-  if (res.statusCode !== 200) return { error: `страница: HTTP ${res.statusCode}` };
-  const tpl = html.match(/<template[^>]*id="HH-Lux-InitialState"[^>]*>([\s\S]*?)<\/template>/);
-  if (!tpl) return { error: 'страница: нет HH-Lux-InitialState' };
-  try {
-    const state = JSON.parse(decodeEntities(tpl[1]));
-    const v = state?.vacancyView?.vacancyFull?.vacancy;
-    if (!v?.description) return { error: 'страница: нет описания' };
-    return { v, test: state?.applicantVacancyResponseStatuses?.[String(v.vacancyId)]?.test };
-  } catch (e) {
-    return { error: `страница: ${e.message}` };
-  }
-}
 
 return rows.map((row, i) => {
   const page = parsePage(responses[i] ?? {});

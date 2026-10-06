@@ -111,10 +111,12 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 [W5 Letter]    вызов из W3 (✅ / «🔄 Переписать» / ответ на письмо) | Manual → профиль + образец → Gemini | Claude
                  → письмо ответом на карточку: [📝 Отклик на hh] [🔗 Вакансия] [🔄 Переписать] [📨 Отправил]
 [W4 Errors]    Error Trigger → Telegram (строится на этапе 1)
-[W6 Сводка]    (этап 5) раз в день: найдено / подошло / откликнулся / ошибки
+[W6 Summary]   06:00 МСК (10:00 Таиланд): «⌛ устарела» (3 дня без решения), хвосты → проверка на hh «🔒 закрыта»,
+                 сводка: воронка, хвосты, теневой режим, сбои (публичный API n8n, туннель); без звука, если сбоев нет
+[Страж]        healthchecks.io: W1 шлёт сигнал после поиска; нет сигнала 30 мин после расписания → их бот пишет в Telegram
 ```
 
-**Статусы:** `seen` (бэкфилл, не обрабатывается) | `new` (прошла выдачу) → `detailed` (прошла все правила; если `error` — страница не открылась, оценка по фрагменту) | `rejected` (+ `reasons`) → `waiting` (W2: решение нейросети, карточка отправлена) → `approved` (✅) | `maybe` (🤔) | `skipped` (❌); `approved` + письмо (W5) → «📨 Отправил» → `applied` (+ `applied_at`) → этап 6+: `failed | needs_human`.
+**Статусы:** `seen` (бэкфилл, не обрабатывается) | `new` (прошла выдачу) → `detailed` (прошла все правила; если `error` — страница не открылась, оценка по фрагменту) | `rejected` (+ `reasons`) → `waiting` (W2: решение нейросети, карточка отправлена) → `approved` (✅) | `maybe` (🤔) | `skipped` (❌); `approved` + письмо (W5) → «📨 Отправил» → `applied` (+ `applied_at`); W6: `waiting` 3 дня → `expired`, закрыта на hh → `archived`; этап 6+: `failed | needs_human`.
 
 **Хранилище:** n8n Data Tables, таблица `vacancies`.
 - Лимит поднят до 100 МБ env-переменной.
@@ -127,6 +129,7 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 - этап 2: `contract` (tk,self_employed,individual_entrepreneur,individual_person), `reasons`, `description` (текст ≤ 8000), `error`;
 - этап 3: `decision` (apply|maybe|skip|error), `llm_reason`, `llm_model`, `my_decision` (кнопка), `my_reason` (ответ на «Почему?»), `tg_message_id` (карточка), `tg_ask_id` (вопрос «Почему?»);
 - этап 4: `letter`, `tg_letter_id` (сообщение с письмом — на него отвечают с правкой), `letter_notes` (пожелания к письмам через « | »), `applied_at`;
+- этап 5: `card_at` (когда W2 отправил карточку — от него считаются 3 дня);
 - таблица `blacklist`: `company, comment`;
 - `id, createdAt, updatedAt` — встроенные.
 
@@ -143,6 +146,7 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 - `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`;
 - `./fixtures` → `/home/node/.n8n-files/fixtures`: файловые ноды n8n 2.x видят только `~/.n8n-files`;
 - `./docs` → `/home/node/.n8n-files/docs` (только чтение): резюме для промптов W2/W5, образец письма `docs/letter-example.md` (не в git);
+- сводка и страж: `NGROK_DOMAIN` (проверка туннеля снаружи), `HC_PING_URL` (сигнал healthchecks.io);
 - нейросеть: `LLM_PROVIDER` (gemini | claude), `GEMINI_MODEL` (по умолчанию `gemini-3.5-flash-lite` — закреплена, чтобы оценки не менялись в теневом режиме), `CLAUDE_MODEL` (`claude-haiku-4-5`).
 
 **Особенности n8n 2.x (проверено на 2.42.3):**
@@ -233,8 +237,8 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 | 1. Сбор ✅ | W4 Errors + W1 Collector + таблица + детектор блока. 06.10.2026: бэкфилл 136 строк `seen`; ветка поломки, Telegram (S1) и цепочка W1 → W4 проверены на запусках по расписанию; W1 и W4 опубликованы в 18:27 МСК | 2–3 дня: таблица наполняется сама, новые вакансии и тревоги — в Telegram |
 | 2. Детали + правила ✅ | Filter search + Parse vacancy + таблица blacklist в W1 (`docs/stages/stage-2.md`). Развёрнуто 06.10.2026 22:15 МСК (W1 опубликован, blacklist 28 компаний); проверочный прогон на 8 вакансиях: 4 detailed, 4 rejected (Vue/Angular 3, чёрный список 1) | Полные описания, мусор отсеян |
 | **3. Оценка + кнопки** ← **ТЕКУЩИЙ** | W2 (Gemini → apply/maybe/skip, карточки), W3 (кнопки, «Почему?»), ngrok (`docs/stages/stage-3.md`). Развёрнуто 07.10.2026: туннель и вебхук работают, 19 вакансий оценены (4 + бэкфилл 3 дней), промпт откалиброван на них. W3 проверен на живых нажатиях: 13 запусков без ошибок (кнопки, «Почему?» + ответ, «↩️ Изменить»); первые 7 оценок — совпало 6 | 50 оценок, решения нейросети совпадают с пользователем |
-| **4. Письмо** ← **ТЕКУЩИЙ** (параллельно с теневым режимом этапа 3) | W5 Letter по ✅: письмо → копирование → «📝 Отклик на hh» → «📨 Отправил» (`docs/stages/stage-4.md`). 07.10.2026 работает на живых нажатиях: ✅ → письмо, правка ответом, «🔄», «📨 Отправил» / «↩️ Отменить» (пользователь: «всё остальное идеально работает»); промпт поправлен по замечаниям (фраза об интересе, «готов погрузиться» в известные технологии) | **MVP: полуавтомат A** |
-| 5. Мониторинг | W6 | Сводка каждый день |
+| 4. Письмо ✅ (параллельно с теневым режимом этапа 3) | W5 Letter по ✅: письмо → копирование → «📝 Отклик на hh» → «📨 Отправил» (`docs/stages/stage-4.md`). 07.10.2026 работает на живых нажатиях: ✅ → письмо, правка ответом, «🔄», «📨 Отправил» / «↩️ Отменить» (пользователь: «всё остальное идеально работает»); промпт поправлен по замечаниям (фраза об интересе, «готов погрузиться» в известные технологии) | **MVP: полуавтомат A** |
+| **5. Мониторинг** ← **ТЕКУЩИЙ** | W6 Summary + страж healthchecks.io (`docs/stages/stage-5.md`). Код и тесты на моках готовы 07.10.2026 | Сводка каждое утро, страж ловит простои |
 | 6. Playwright | автоотклик hh, DRY_RUN, лимиты (на Mac или VPS) | Отклик без клика |
 | 7. Веб-формы | LLM-сопоставление полей + Playwright | Меньше `needs_human` |
 | 8. Другие источники | Habr Карьера и др. | Больше вакансий |
@@ -269,7 +273,7 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 - **Сейчас:** пользователь жмёт кнопки на карточках (теневой режим, цель — 50 оценок). Наблюдение за фильтром этапа 2 — не режет ли лишнего (особенно «только из РФ»).
 - **После 50 оценок:** отчёт о совпадениях, правка промпта, выключать ли теневой режим. Кандидат в правку: fullstack «с уклоном во фронтенд» — пользователь откликается на такие (Novakid: 🤖 maybe → 👤 ✅); решено не менять до отчёта.
 - **Этап 4:** пользователь проверяет письма на реальных ✅; пожелания копятся в `letter_notes` → правка промпта `n8n/w5-letter/build-letter.js`.
-- **Этап 5:** что в ежедневной сводке, во сколько, напоминать ли о ✅ без «📨 Отправил».
+- **Этап 5:** пользователь заводит healthchecks.io и пишет `HC_PING_URL` в `.env` → редеплой.
 - **Этап 6:** нужен ли VPS, если Mac с домашним IP справится сам.
 
 ## 13. Структура репозитория
@@ -284,7 +288,8 @@ n8n/w1-collector/*.js               код Code-нод W1
 n8n/w2-score/*.js                   код Code-нод W2 (промпт, разбор ответа, карточки, сводка)
 n8n/w3-telegram/*.js                код Code-нод W3 (кнопки, «Почему?», кнопки письма)
 n8n/w5-letter/*.js                  код Code-нод W5 (промпт письма, разбор, сообщение)
-n8n/shared/*.js                     общий код Code-нод (карточка), подключается строкой // @include
+n8n/w6-summary/*.js                 код Code-нод W6 (устаревшие, закрытые на hh, сводка)
+n8n/shared/*.js                     общий код Code-нод (карточка, письмо, разбор страницы hh), подключается строкой // @include
 n8n/w4-errors/*.js                  код Code-нод W4
 n8n/schema.mjs                      схема таблиц vacancies и blacklist
 n8n/blacklist.json                  стартовый чёрный список компаний
@@ -292,7 +297,7 @@ n8n/workflows/*.json                сгенерированные workflow (н�
 scripts/build-workflows.mjs         описание workflow → n8n/workflows/*.json
 scripts/deploy.sh                   сборка + туннель + credentials из .env + импорт и публикация workflow
 scripts/n8n-api.mjs                 владелец, запуск/публикация workflow, строки таблиц, migrate, blacklist-seed,
-                                    tunnel-env, requeue
+                                    tunnel-env, requeue, api-key
 scripts/credentials.mjs             JSON credentials Telegram / Gemini / Claude из .env (только через pipe)
 scripts/run-code-node.mjs           прогон Code-ноды на фикстурах без n8n (--ref, --env)
 scripts/lib/code.mjs                чтение кода Code-ноды с раскрытием // @include
@@ -312,5 +317,6 @@ Workflow в n8n (постоянные id):
 | `jobHunterW3Teleg` | W3 Telegram | кнопки и ответы «Почему?» (вебхук) |
 | `jobHunterW4Error` | W4 Errors | тревоги |
 | `jobHunterW5Lettr` | W5 Letter | сопроводительные письма (вызывает W3; Manual — письма ко всем ✅ без письма) |
+| `jobHunterW6Summ1` | W6 Summary | утренняя сводка, устаревшие и закрытые карточки |
 
-Credentials: `jobHunterTgBot01` «Telegram bot», `jobHunterGemini1` «Gemini», `jobHunterClaude1` «Claude».
+Credentials: `jobHunterTgBot01` «Telegram bot», `jobHunterGemini1` «Gemini», `jobHunterClaude1` «Claude», `jobHunterN8nApi1` «n8n API» (ключ публичного API, создаёт `n8n-api.mjs api-key`).

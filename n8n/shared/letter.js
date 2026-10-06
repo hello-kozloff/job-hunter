@@ -13,14 +13,17 @@ function letterText(r) {
     return [head, `⚠️ Письмо не получилось: ${esc(r.problem)}`, 'Нажми «🔄 Переписать», чтобы попробовать ещё раз.'].join('\n');
   }
   const sent = r.status === 'applied';
+  const closed = r.status === 'archived';
   return [
     head,
     r.mode === 'revise' && r.instruction ? `<i>Пожелание: «${esc(r.instruction)}»</i>` : '',
     `<pre>${esc(r.letter)}</pre>`,
-    !sent && r.has_test ? '📝 У вакансии тест — ответы в форме отклика на hh.' : '',
+    !sent && !closed && r.has_test ? '📝 У вакансии тест — ответы в форме отклика на hh.' : '',
     sent
       ? `📨 Отклик отправлен${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}`
-      : '<i>Нажми на письмо — скопируется. Поправить — ответь на это сообщение.</i>',
+      : closed
+        ? '🔒 Вакансия закрыта на hh — отклик уже не отправить'
+        : '<i>Нажми на письмо — скопируется. Поправить — ответь на это сообщение.</i>',
   ]
     .filter(Boolean)
     .join('\n');

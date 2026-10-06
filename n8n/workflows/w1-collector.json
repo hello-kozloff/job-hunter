@@ -213,6 +213,59 @@
       }
     },
     {
+      "id": "8b496e77-0080-1fdf-e739-5892e7588895",
+      "name": "HC ping?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1320,
+        -300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "aa860f9f-11e8-267e-62e1-1c0bdcc7d8c5",
+              "leftValue": "={{ Boolean($env.HC_PING_URL) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "e9a80324-3751-0786-4e71-c4929b26c0ff",
+      "name": "HC ping",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1540,
+        -300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.HC_PING_URL }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
       "id": "e90b66f6-2796-9f01-4e72-7e0cb3125038",
       "name": "Split vacancies",
       "type": "n8n-nodes-base.splitOut",
@@ -429,7 +482,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// W1 · Parse vacancy — полная страница вакансии + правила, которым нужно описание.\n// Нода: Code, режим «Run Once for All Items».\n// Вход: ответы HTTP Request «Vacancy page» — в том же порядке, что строки из «Is candidate»\n//       (строки уже в таблице, у каждой есть id).\n// Выход: строка целиком с обновлёнными status / reasons / description / key_skills / has_test / contract / error\n//        → нода Update пишет её обратно по id. Дальше строки status = detailed оценивает нейросеть (W2).\n\nconst rows = $('Is candidate').all().map((i) => i.json);\nconst responses = $input.all().map((i) => i.json);\n\n// HTML-сущности раскодируем за один проход: иначе &amp;quot; станет кавычкой и сломает JSON\nconst NAMED = { quot: '\"', amp: '&', lt: '<', gt: '>', apos: \"'\", nbsp: '\\u00a0' };\nfunction decodeEntities(s) {\n  return s.replace(/&(#x[0-9a-f]+|#\\d+|[a-z]+);/gi, (m, e) => {\n    if (e[0] === '#') {\n      const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);\n      return Number.isFinite(code) && code <= 0x10ffff ? String.fromCodePoint(code) : m;\n    }\n    return NAMED[e.toLowerCase()] ?? m;\n  });\n}\n\n// Описание вакансии: HTML → текст с переносами строк\nconst htmlToText = (html) =>\n  decodeEntities(\n    String(html ?? '')\n      .replace(/<\\s*(br|\\/p|\\/li|\\/h\\d|\\/div)[^>]*>/gi, '\\n')\n      .replace(/<li[^>]*>/gi, '• ')\n      .replace(/<[^>]+>/g, ''),\n  )\n    .replace(/[ \\t\\u00a0]+/g, ' ')\n    .replace(/\\n\\s*\\n+/g, '\\n')\n    .trim();\n\n// «Работа только из РФ». Совпавший кусок пишем в reasons, чтобы ложные срабатывания было видно\nconst RF_ONLY = [\n  /(только|исключительно)[^.\\n]{0,40}(из|на территории|в|по)\\s+(рф|росси)/i,\n  /(находит[а-яё]*|проживать|проживани[а-яё]*|нахождени[а-яё]*|располож[а-яё]*)[^.\\n]{0,30}(в|на территории|из)\\s+(рф|росси)/i,\n  /(налогов[а-яё]*\\s+)?резидент[а-яё]*\\s+(рф|росси)/i,\n  /(based|located|reside\\w*|living)\\s+in\\s+russia/i,\n];\n\nfunction parsePage(res) {\n  const html = String(res.data ?? res.body ?? '');\n  if (res.statusCode !== 200) return { error: `страница: HTTP ${res.statusCode}` };\n  const tpl = html.match(/<template[^>]*id=\"HH-Lux-InitialState\"[^>]*>([\\s\\S]*?)<\\/template>/);\n  if (!tpl) return { error: 'страница: нет HH-Lux-InitialState' };\n  try {\n    const state = JSON.parse(decodeEntities(tpl[1]));\n    const v = state?.vacancyView?.vacancyFull?.vacancy;\n    if (!v?.description) return { error: 'страница: нет описания' };\n    return { v, test: state?.applicantVacancyResponseStatuses?.[String(v.vacancyId)]?.test };\n  } catch (e) {\n    return { error: `страница: ${e.message}` };\n  }\n}\n\nreturn rows.map((row, i) => {\n  const page = parsePage(responses[i] ?? {});\n  // Страница не открылась — вакансию не теряем: W2 оценит её по фрагменту из выдачи, ошибка видна в карточке\n  if (page.error) return { json: { ...row, status: 'detailed', error: page.error } };\n\n  const { v, test } = page;\n  if (String(v.vacancyId) !== row.external_id) {\n    return { json: { ...row, status: 'detailed', error: `страница: пришла вакансия ${v.vacancyId}` } };\n  }\n\n  const description = htmlToText(v.description);\n  const skills = (v.keySkills ?? []).join(', ');\n  const contract = [\n    ...(v.acceptLaborContract ? ['tk'] : []),\n    ...(v.civilLawContracts ?? []).flatMap((c) => c?.civilLawContractsElement ?? (typeof c === 'string' ? [c] : [])).map((c) => String(c).toLowerCase()),\n  ].join(',');\n\n  const reasons = [];\n  if (v.status?.archived || v.closedForApplicants) reasons.push('в архиве');\n  const rf = RF_ONLY.map((re) => description.match(re)).find(Boolean);\n  if (rf) reasons.push(`только из РФ: «${rf[0].trim()}»`);\n  if (!/react|next\\.?js/i.test(`${row.title} ${skills} ${description}`)) reasons.push('нет React');\n\n  return {\n    json: {\n      ...row,\n      description: description.slice(0, 8000),\n      key_skills: skills || row.key_skills,\n      has_test: Boolean(test?.hasTests ?? row.has_test),\n      contract,\n      status: reasons.length ? 'rejected' : 'detailed',\n      reasons: reasons.join(', '),\n      error: '',\n    },\n  };\n});\n"
+        "jsCode": "// W1 · Parse vacancy — полная страница вакансии + правила, которым нужно описание.\n// Нода: Code, режим «Run Once for All Items».\n// Вход: ответы HTTP Request «Vacancy page» — в том же порядке, что строки из «Is candidate»\n//       (строки уже в таблице, у каждой есть id).\n// Выход: строка целиком с обновлёнными status / reasons / description / key_skills / has_test / contract / error\n//        → нода Update пишет её обратно по id. Дальше строки status = detailed оценивает нейросеть (W2).\n\nconst rows = $('Is candidate').all().map((i) => i.json);\nconst responses = $input.all().map((i) => i.json);\n\n// Общий код разбора страницы вакансии hh: W1 «Parse vacancy» и W6 «Archive status».\n// В Code-ноду попадает строкой «// @include n8n/shared/hh.js».\n\n// HTML-сущности раскодируем за один проход: иначе &amp;quot; станет кавычкой и сломает JSON\nconst NAMED = { quot: '\"', amp: '&', lt: '<', gt: '>', apos: \"'\", nbsp: '\\u00a0' };\nfunction decodeEntities(s) {\n  return s.replace(/&(#x[0-9a-f]+|#\\d+|[a-z]+);/gi, (m, e) => {\n    if (e[0] === '#') {\n      const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);\n      return Number.isFinite(code) && code <= 0x10ffff ? String.fromCodePoint(code) : m;\n    }\n    return NAMED[e.toLowerCase()] ?? m;\n  });\n}\n\n// Ответ HTTP Request «Vacancy page» → { v: vacancyFull.vacancy, test } или { error, statusCode }\nfunction parsePage(res) {\n  const html = String(res.data ?? res.body ?? '');\n  if (res.statusCode !== 200) return { error: `страница: HTTP ${res.statusCode}`, statusCode: res.statusCode };\n  const tpl = html.match(/<template[^>]*id=\"HH-Lux-InitialState\"[^>]*>([\\s\\S]*?)<\\/template>/);\n  if (!tpl) return { error: 'страница: нет HH-Lux-InitialState' };\n  try {\n    const state = JSON.parse(decodeEntities(tpl[1]));\n    const v = state?.vacancyView?.vacancyFull?.vacancy;\n    if (!v?.description) return { error: 'страница: нет описания' };\n    return { v, test: state?.applicantVacancyResponseStatuses?.[String(v.vacancyId)]?.test };\n  } catch (e) {\n    return { error: `страница: ${e.message}` };\n  }\n}\n\n// Описание вакансии: HTML → текст с переносами строк\nconst htmlToText = (html) =>\n  decodeEntities(\n    String(html ?? '')\n      .replace(/<\\s*(br|\\/p|\\/li|\\/h\\d|\\/div)[^>]*>/gi, '\\n')\n      .replace(/<li[^>]*>/gi, '• ')\n      .replace(/<[^>]+>/g, ''),\n  )\n    .replace(/[ \\t\\u00a0]+/g, ' ')\n    .replace(/\\n\\s*\\n+/g, '\\n')\n    .trim();\n\n// «Работа только из РФ». Совпавший кусок пишем в reasons, чтобы ложные срабатывания было видно\nconst RF_ONLY = [\n  /(только|исключительно)[^.\\n]{0,40}(из|на территории|в|по)\\s+(рф|росси)/i,\n  /(находит[а-яё]*|проживать|проживани[а-яё]*|нахождени[а-яё]*|располож[а-яё]*)[^.\\n]{0,30}(в|на территории|из)\\s+(рф|росси)/i,\n  /(налогов[а-яё]*\\s+)?резидент[а-яё]*\\s+(рф|росси)/i,\n  /(based|located|reside\\w*|living)\\s+in\\s+russia/i,\n];\n\nreturn rows.map((row, i) => {\n  const page = parsePage(responses[i] ?? {});\n  // Страница не открылась — вакансию не теряем: W2 оценит её по фрагменту из выдачи, ошибка видна в карточке\n  if (page.error) return { json: { ...row, status: 'detailed', error: page.error } };\n\n  const { v, test } = page;\n  if (String(v.vacancyId) !== row.external_id) {\n    return { json: { ...row, status: 'detailed', error: `страница: пришла вакансия ${v.vacancyId}` } };\n  }\n\n  const description = htmlToText(v.description);\n  const skills = (v.keySkills ?? []).join(', ');\n  const contract = [\n    ...(v.acceptLaborContract ? ['tk'] : []),\n    ...(v.civilLawContracts ?? []).flatMap((c) => c?.civilLawContractsElement ?? (typeof c === 'string' ? [c] : [])).map((c) => String(c).toLowerCase()),\n  ].join(',');\n\n  const reasons = [];\n  if (v.status?.archived || v.closedForApplicants) reasons.push('в архиве');\n  const rf = RF_ONLY.map((re) => description.match(re)).find(Boolean);\n  if (rf) reasons.push(`только из РФ: «${rf[0].trim()}»`);\n  if (!/react|next\\.?js/i.test(`${row.title} ${skills} ${description}`)) reasons.push('нет React');\n\n  return {\n    json: {\n      ...row,\n      description: description.slice(0, 8000),\n      key_skills: skills || row.key_skills,\n      has_test: Boolean(test?.hasTests ?? row.has_test),\n      contract,\n      status: reasons.length ? 'rejected' : 'detailed',\n      reasons: reasons.join(', '),\n      error: '',\n    },\n  };\n});\n"
       }
     },
     {
@@ -592,11 +645,27 @@
             "node": "Split vacancies",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "HC ping?",
+            "type": "main",
+            "index": 0
           }
         ],
         [
           {
             "node": "To file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HC ping?": {
+      "main": [
+        [
+          {
+            "node": "HC ping",
             "type": "main",
             "index": 0
           }

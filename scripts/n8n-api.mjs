@@ -11,6 +11,8 @@
 //   node scripts/n8n-api.mjs migrate                   создать недостающие таблицы и колонки по n8n/schema.mjs
 //   node scripts/n8n-api.mjs blacklist-seed            дописать в таблицу blacklist компании из n8n/blacklist.json
 //   node scripts/n8n-api.mjs tunnel-env                по NGROK_DOMAIN в .env включить туннель: WEBHOOK_URL, COMPOSE_PROFILES
+//   node scripts/n8n-api.mjs api-key | docker exec -i …  ключ публичного API n8n для W6 → JSON credential в stdout
+//                                                      (только через pipe в n8n import:credentials, см. docs/stages/stage-5.md)
 //   node scripts/n8n-api.mjs requeue <days> [--dry]    вернуть в обработку вакансии бэкфилла (seen) за N дней:
 //                                                      удалить их строки, следующий запуск W1 примет их как новые
 //                                                      (--dry — только показать, что удалится)
@@ -277,6 +279,29 @@ async function requeue(days, flag) {
   for (const r of rows) console.log(`  ${r.published_at.slice(0, 10)}  ${r.company} — ${r.title}`);
 }
 
+// Ключ публичного API n8n (W6 читает запуски за сутки). Старый ключ с той же меткой удаляется.
+// В stdout — только JSON credential «n8n API»: ключ уходит прямо в n8n и на диск хоста не пишется
+async function apiKey() {
+  const LABEL = 'job-hunter W6';
+  const cookie = await login();
+  const { json: list } = await api('/api-keys', { cookie });
+  const items = Array.isArray(list) ? list : (list.items ?? list.data ?? []);
+  for (const k of items.filter((k) => k.label === LABEL)) await api(`/api-keys/${k.id}`, { method: 'DELETE', cookie });
+  const { json: created } = await api('/api-keys', {
+    method: 'POST',
+    body: { label: LABEL, scopes: ['execution:list', 'execution:read'], expiresAt: null },
+    cookie,
+  });
+  const key = created.rawApiKey ?? created.apiKey;
+  if (!key) throw new Error('n8n не вернул ключ');
+  process.stdout.write(
+    JSON.stringify([
+      { id: 'jobHunterN8nApi1', name: 'n8n API', type: 'n8nApi', data: { apiKey: key, baseUrl: 'http://localhost:5678/api/v1' } },
+    ]),
+  );
+  console.error(`Ключ «${LABEL}» создан: execution:list, execution:read`);
+}
+
 // Туннель ngrok (кнопки Telegram): адрес вебхуков n8n и профиль docker compose — из NGROK_DOMAIN
 function tunnelEnv() {
   const env = readEnv();
@@ -311,10 +336,10 @@ async function setupOwner(email) {
 }
 
 const [command, ...args] = process.argv.slice(2);
-const commands = { 'setup-owner': setupOwner, run, publish, unpublish, executions, rows, migrate, 'blacklist-seed': blacklistSeed, 'tunnel-env': tunnelEnv, requeue };
+const commands = { 'setup-owner': setupOwner, run, publish, unpublish, executions, rows, migrate, 'blacklist-seed': blacklistSeed, 'tunnel-env': tunnelEnv, requeue, 'api-key': apiKey };
 if (!commands[command]) {
   console.error(
-    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> [node] | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate | blacklist-seed | tunnel-env | requeue <days> [--dry]',
+    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> [node] | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate | blacklist-seed | tunnel-env | requeue <days> [--dry] | api-key',
   );
   process.exit(2);
 }

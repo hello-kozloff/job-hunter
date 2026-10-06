@@ -20,7 +20,7 @@ CONTAINER=job-hunter-n8n
 # W5 (письма) вызывается из W3 через Execute Workflow: в n8n 2.42 вызвать можно только опубликованный
 WORKFLOWS_TO_PUBLISH=(jobHunterW4Error jobHunterW5Lettr)
 if [[ "${1:-}" == "--publish" ]]; then
-  WORKFLOWS_TO_PUBLISH+=(jobHunterW1Colle)
+  WORKFLOWS_TO_PUBLISH+=(jobHunterW1Colle jobHunterW6Summ1)
   # W2 без ключа нейросети каждый запуск слал бы тревогу — публикуем, когда ключ есть
   if grep -qE '^(GEMINI_API_KEY|ANTHROPIC_API_KEY)=..*' .env 2>/dev/null; then
     WORKFLOWS_TO_PUBLISH+=(jobHunterW2Score)

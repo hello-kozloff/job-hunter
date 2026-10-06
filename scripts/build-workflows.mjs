@@ -24,6 +24,8 @@ const IDS = {
   telegramBot: 'jobHunterW3Teleg',
   errors: 'jobHunterW4Error',
   letter: 'jobHunterW5Lettr',
+  summary: 'jobHunterW6Summ1',
+  n8nApiCredential: 'jobHunterN8nApi1',
   telegramCredential: 'jobHunterTgBot01',
   geminiCredential: 'jobHunterGemini1',
   claudeCredential: 'jobHunterClaude1',
@@ -240,6 +242,28 @@ const llmRequest = ({ url, credential, headers = [], interval }) => ({
 const CHOICE = "$('Apply choice').first().json";
 const SENT = "$('Apply sent').first().json";
 
+// Перерисовать сообщение в чате TG_CHAT_ID без кнопок (W6: устаревшие и закрытые карточки и письма).
+// onError = continue: сообщение могли удалить — запись в таблицу важнее
+const telegramEdit = (wf, name, position, { messageId, text }) =>
+  node(
+    wf,
+    name,
+    'telegram',
+    1.2,
+    position,
+    {
+      resource: 'message',
+      operation: 'editMessageText',
+      messageType: 'message',
+      chatId: '={{ $env.TG_CHAT_ID }}',
+      messageId,
+      text,
+      replyMarkup: 'none',
+      additionalFields: { parse_mode: 'HTML', disable_web_page_preview: true },
+    },
+    { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
+  );
+
 // W3: перерисовать сообщение — текст и кнопки (rows = null — убрать все кнопки)
 const editMessage = (name, position, { chatId, messageId, text, rows }) =>
   node(
@@ -390,6 +414,17 @@ const workflows = {
       ),
       code('W1', 'Parse search', 'n8n/w1-collector/parse-search.js', [880, 0]),
       node('W1', 'OK?', 'if', 2.3, [1100, 0], ifTrue('W1', '={{ $json.ok }}')),
+      // Сигнал стражу healthchecks.io: поиск прошёл. Нет сигнала дольше нормы — страж сам пишет в Telegram
+      node('W1', 'HC ping?', 'if', 2.3, [1320, -300], ifTrue('W1', '={{ Boolean($env.HC_PING_URL) }}')),
+      node(
+        'W1',
+        'HC ping',
+        'httpRequest',
+        4.5,
+        [1540, -300],
+        { method: 'GET', url: '={{ $env.HC_PING_URL }}', options: { timeout: 10000 } },
+        { onError: 'continueRegularOutput' },
+      ),
       node('W1', 'Split vacancies', 'splitOut', 1, [1320, -100], {
         fieldToSplitOut: 'vacancies',
         include: 'noOtherFields',
@@ -472,6 +507,8 @@ const workflows = {
       ['Search hh', 'Parse search'],
       ['Parse search', 'OK?'],
       ['OK?', 'Split vacancies', 0],
+      ['OK?', 'HC ping?', 0],
+      ['HC ping?', 'HC ping', 0],
       ['Split vacancies', 'Is new'],
       ['Is new', 'Blacklist'],
       ['Blacklist', 'Filter search'],
@@ -951,6 +988,126 @@ const workflows = {
       ['Letter sent', 'Save letter'],
     ],
     { errorWorkflow: IDS.errors },
+  ),
+
+  'w6-summary': workflow(
+    IDS.summary,
+    'W6 Summary',
+    [
+      node('W6', 'Schedule', 'scheduleTrigger', 1.4, [0, -100], {
+        // 06:00 МСК = 10:00 по Таиланду: итог прошедшего дня сбора (9–21 МСК)
+        rule: { interval: [{ field: 'cronExpression', expression: '0 6 * * *' }] },
+        misfirePolicy: 'coalesce',
+      }),
+      node('W6', 'Manual', 'manualTrigger', 1, [0, 100], {}),
+      node('W6', 'All rows', 'dataTable', 1.1, [220, 0], {
+        resource: 'row',
+        operation: 'get',
+        dataTableId: VACANCIES,
+        returnAll: true,
+      }),
+      code('W6', 'Plan', 'n8n/w6-summary/plan.js', [440, 0]),
+      // Ветки по порядку сверху вниз: устаревшие → закрытые на hh → сводка
+      code('W6', 'Expire rows', 'n8n/w6-summary/expire-rows.js', [660, -300]),
+      telegramEdit('W6', 'Card: expired', [880, -300], { messageId: '={{ $json.tg_message_id }}', text: '={{ $json.text }}' }),
+      code('W6', 'Expired done', 'n8n/w6-summary/expired-done.js', [1100, -300]),
+      node('W6', 'Save expired', 'dataTable', 1.1, [1320, -300], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        ...byId('={{ $json.id }}'),
+        columns: AUTO_MAP,
+        options: {},
+      }),
+      code('W6', 'Check candidates', 'n8n/w6-summary/check-candidates.js', [660, -50]),
+      node(
+        'W6',
+        'Vacancy page',
+        'httpRequest',
+        4.5,
+        [880, -50],
+        hhRequest({
+          url: '={{ $json.url }}',
+          headers: [...BROWSER_HEADERS, ['Referer', 'https://hh.ru/search/vacancy']],
+          batching: true,
+        }),
+        { onError: 'continueRegularOutput' },
+      ),
+      code('W6', 'Archive status', 'n8n/w6-summary/archive-status.js', [1100, -50]),
+      telegramEdit('W6', 'Card: archived', [1320, -100], { messageId: '={{ $json.tg_message_id }}', text: '={{ $json.cardText }}' }),
+      code('W6', 'Archived done', 'n8n/w6-summary/archived-done.js', [1540, -100]),
+      node('W6', 'Save archived', 'dataTable', 1.1, [1760, -100], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        ...byId('={{ $json.id }}'),
+        columns: AUTO_MAP,
+        options: {},
+      }),
+      node('W6', 'Has letter?', 'if', 2.3, [1320, 50], ifTrue('W6', '={{ Boolean($json.tg_letter_id) }}')),
+      telegramEdit('W6', 'Letter: archived', [1540, 50], { messageId: '={{ $json.tg_letter_id }}', text: '={{ $json.letterText }}' }),
+      // Запуски n8n за сутки — публичный API (ключ в credential «n8n API»)
+      node(
+        'W6',
+        'Executions',
+        'httpRequest',
+        4.5,
+        [660, 250],
+        {
+          method: 'GET',
+          url: 'http://localhost:5678/api/v1/executions',
+          authentication: 'predefinedCredentialType',
+          nodeCredentialType: 'n8nApi',
+          sendQuery: true,
+          specifyQuery: 'keypair',
+          queryParameters: pairs([['limit', '250']]),
+          options: { timeout: 30000 },
+        },
+        {
+          credentials: { n8nApi: { id: IDS.n8nApiCredential, name: 'n8n API' } },
+          onError: 'continueRegularOutput',
+          executeOnce: true,
+        },
+      ),
+      // Туннель ngrok жив, если снаружи отвечает 403: политика не пускает адреса не из Telegram
+      node(
+        'W6',
+        'Tunnel',
+        'httpRequest',
+        4.5,
+        [880, 250],
+        {
+          method: 'GET',
+          url: '=https://{{ $env.NGROK_DOMAIN }}/',
+          options: { response: { response: { fullResponse: true, neverError: true, responseFormat: 'text' } }, timeout: 15000 },
+        },
+        { onError: 'continueRegularOutput' },
+      ),
+      code('W6', 'Summary', 'n8n/w6-summary/summary.js', [1100, 250]),
+      telegram('W6', 'Send summary', [1320, 250], { fields: { disable_notification: '={{ $json.silent }}' } }),
+    ],
+    [
+      ['Schedule', 'All rows'],
+      ['Manual', 'All rows'],
+      ['All rows', 'Plan'],
+      ['Plan', 'Expire rows'],
+      ['Expire rows', 'Card: expired'],
+      ['Card: expired', 'Expired done'],
+      ['Expired done', 'Save expired'],
+      ['Plan', 'Check candidates'],
+      ['Check candidates', 'Vacancy page'],
+      ['Vacancy page', 'Archive status'],
+      ['Archive status', 'Card: archived'],
+      ['Card: archived', 'Archived done'],
+      ['Archived done', 'Save archived'],
+      ['Archive status', 'Has letter?'],
+      ['Has letter?', 'Letter: archived', 0],
+      ['Plan', 'Executions'],
+      ['Executions', 'Tunnel'],
+      ['Tunnel', 'Summary'],
+      ['Summary', 'Send summary'],
+    ],
+    { timezone: 'Europe/Moscow', errorWorkflow: IDS.errors },
   ),
 
   'w4-errors': workflow(

@@ -41,8 +41,11 @@ function published(s) {
 // Момент в UTC (applied_at) → дата по Таиланду (UTC+7): '2026-10-06T21:17:55Z' → '07.10'
 const thaiDate = (iso) => (Date.parse(iso) ? published(new Date(Date.parse(iso) + 7 * 3600 * 1000).toISOString()) : '');
 
+// Итоговые состояния без кнопок: W3 «📨 Отправил», W6 «⌛ устарела» и «🔒 закрыта на hh»
+const FINAL = { expired: '⌛ Устарела: 3 дня без решения', archived: '🔒 Вакансия закрыта на hh' };
+
 // Текст карточки (Parse Mode = HTML). Строка «👤 …» появляется после нажатия кнопки,
-// «📨 …» — после «Отправил» под письмом (W3, status = applied)
+// «📨 …» — после «Отправил» под письмом (W3, status = applied), FINAL — после W6
 function cardText(r) {
   const date = published(r.published_at);
   const meta = [esc(r.company), salary(r), EXPERIENCE[r.experience] ?? '', esc(areas(r.areas)), date && `📅 ${date}`]
@@ -59,5 +62,7 @@ function cardText(r) {
   const verdict = `🤖 ${VERDICT[r.decision] ?? esc(r.decision)}${r.llm_reason ? ` — ${esc(r.llm_reason)}` : ''}`;
   const mine = CHOICE[r.my_decision] ? `👤 ${CHOICE[r.my_decision]}` : '';
   const sent = r.status === 'applied' ? `📨 Отклик отправлен${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}` : '';
-  return [`<a href="${r.url}"><b>${esc(r.title)}</b></a>`, meta, flags, verdict, mine, sent].filter(Boolean).join('\n');
+  return [`<a href="${r.url}"><b>${esc(r.title)}</b></a>`, meta, flags, verdict, mine, sent, FINAL[r.status] ?? '']
+    .filter(Boolean)
+    .join('\n');
 }
