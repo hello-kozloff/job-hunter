@@ -65,17 +65,31 @@ async function api(path, { method = 'GET', body, cookie } = {}) {
   return { json: json?.data ?? json, res };
 }
 
+// Cookie сессии кэшируется в .n8n-session (права 600, не в git): n8n ограничивает частоту входов (429)
+const SESSION_URL = new URL('../.n8n-session', import.meta.url);
+
 async function login() {
+  try {
+    const cached = readFileSync(SESSION_URL, 'utf8').trim();
+    if (cached) {
+      await api('/login', { cookie: cached });
+      return cached;
+    }
+  } catch {
+    // нет файла или сессия истекла — входим заново
+  }
   const env = readEnv();
   if (!env.N8N_OWNER_PASSWORD) throw new Error('В .env нет N8N_OWNER_PASSWORD — сначала setup-owner');
   const { res } = await api('/login', {
     method: 'POST',
     body: { emailOrLdapLoginId: env.N8N_OWNER_EMAIL, password: env.N8N_OWNER_PASSWORD },
   });
-  return res.headers
+  const cookie = res.headers
     .getSetCookie()
     .map((c) => c.split(';')[0])
     .join('; ');
+  writeFileSync(SESSION_URL, cookie, { mode: 0o600 });
+  return cookie;
 }
 
 // n8n отдаёт данные запуска в формате flatted (JSON с ссылками по индексам) — порт flatted.parse
