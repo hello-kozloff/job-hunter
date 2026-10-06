@@ -1,0 +1,541 @@
+{
+  "id": "jobHunterW1Colle",
+  "name": "W1 Collector",
+  "nodes": [
+    {
+      "id": "6d21f05d-78d3-9cc3-b53d-cbe7a9ab554a",
+      "name": "Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        -100
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9-21/2 * * *"
+            }
+          ]
+        },
+        "misfirePolicy": "coalesce"
+      }
+    },
+    {
+      "id": "5b0ad4b7-5ea0-785b-9c35-3c15d6d90ef5",
+      "name": "Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        100
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "b3983f07-d589-819f-d38f-6ab96fa2c1c8",
+      "name": "Any row",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "vacancies"
+        },
+        "returnAll": false,
+        "limit": 1
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "f854e358-a0f8-fc93-0e55-aa044da1c32e",
+      "name": "Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W1 · Plan — какие страницы поиска запрашивать.\n// Нода: Code, режим «Run Once for All Items».\n// Вход: нода «Any row» (Data Table → Get, Limit 1, Settings → Always Output Data = on).\n//       Если таблица пустая, приходит пустой item без id.\n// Первый запуск (таблица пустая) = бэкфилл: страницы 0 и 1, всё пишется со статусом seen.\n// Обычный запуск: только страница 0 — 100 последних вакансий с запасом покрывают 2 часа.\n\nconst firstRun = !$input.first().json.id;\nconst pages = firstRun ? [0, 1] : [0];\n\nreturn pages.map((page) => ({ json: { page, firstRun } }));\n"
+      }
+    },
+    {
+      "id": "c3f9a74e-3f81-8d87-1e64-04fdf4a3a841",
+      "name": "Search hh",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://hh.ru/search/vacancy",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "NAME:(frontend OR front-end OR фронтенд OR react OR next.js OR nextjs OR typescript)"
+            },
+            {
+              "name": "professional_role",
+              "value": "96"
+            },
+            {
+              "name": "work_format",
+              "value": "REMOTE"
+            },
+            {
+              "name": "education",
+              "value": "not_required_or_not_specified"
+            },
+            {
+              "name": "order_by",
+              "value": "publication_time"
+            },
+            {
+              "name": "items_on_page",
+              "value": "100"
+            },
+            {
+              "name": "enable_snippets",
+              "value": "true"
+            },
+            {
+              "name": "page",
+              "value": "={{ $json.page }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "ru-RU,ru;q=0.9,en;q=0.8"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 3000
+            }
+          },
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 30000
+        }
+      }
+    },
+    {
+      "id": "f30850be-aaf9-d29b-98c0-4b02214aae90",
+      "name": "Parse search",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W1 · Parse search — разбор страниц поиска hh.ru в записи таблицы vacancies.\n// Нода: Code, режим «Run Once for All Items».\n// Вход: ответы HTTP Request «Search hh», по одному на страницу (Response Format = Text,\n//       Include Response Headers and Status = on).\n// Выход: ОДИН item —\n//   { ok: true,  firstRun, vacancies: [...] }  → IF «OK?» → Split Out\n//   { ok: false, reason, html }                → IF «OK?» → сохранить HTML → Stop and Error\n\nconst firstRun = Boolean($('Plan').first().json.firstRun);\n\n// HTML-сущности раскодируем за один проход: иначе &amp;quot; станет кавычкой и сломает JSON\nconst NAMED = { quot: '\"', amp: '&', lt: '<', gt: '>', apos: \"'\", nbsp: '\\u00a0' };\nfunction decodeEntities(s) {\n  return s.replace(/&(#x[0-9a-f]+|#\\d+|[a-z]+);/gi, (m, e) => {\n    if (e[0] === '#') {\n      const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);\n      return Number.isFinite(code) && code <= 0x10ffff ? String.fromCodePoint(code) : m;\n    }\n    return NAMED[e.toLowerCase()] ?? m;\n  });\n}\n\nconst stripTags = (s) => String(s ?? '').replace(/<[^>]+>/g, '').replace(/\\s+/g, ' ').trim();\nconst normTitle = (s) =>\n  String(s ?? '')\n    .toLowerCase()\n    .replace(/ё/g, 'е')\n    .replace(/[^a-zа-я0-9+#]+/g, ' ')\n    .trim();\n\nconst fail = (reason, html) => [{ json: { ok: false, reason, html: String(html ?? '') } }];\n// Текст ответа HTTP Request (Response Format = Text) n8n кладёт в поле data\nconst htmlOf = (res) => String(res.data ?? res.body ?? '');\n\n// Вакансия из выдачи → строка таблицы vacancies (имена полей = имена колонок)\nfunction toRecord(v) {\n  const pay = v.compensation ?? {};\n  const companyId = v.company?.id ? String(v.company.id) : '';\n  return {\n    source: 'hh',\n    external_id: String(v.vacancyId),\n    // Одна вакансия в разных регионах = разные id. Склеиваем по компании и названию;\n    // у скрытой компании id нет — такие не склеиваем\n    dup_key: companyId ? `hh:${companyId}:${normTitle(v.name)}` : `hh:id:${v.vacancyId}`,\n    title: String(v.name).trim(),\n    company: String(v.company?.visibleName ?? v.company?.name ?? '').trim(),\n    company_id: companyId,\n    areas: v.area?.name ?? '',\n    salary_from: pay.from ?? null,\n    salary_to: pay.to ?? null,\n    currency: pay.currencyCode ?? null,\n    salary_gross: typeof pay.gross === 'boolean' ? pay.gross : null,\n    experience: v.workExperience ?? '',\n    employment_form: v.employmentForm ?? '',\n    work_formats: (v.workFormats ?? []).flatMap((w) => w?.workFormatsElement ?? []).join(','),\n    languages: (v.languages ?? [])\n      .flatMap((l) => l?.language ?? [])\n      .map((l) => `${l.isoCode}:${l.degree}`)\n      .join(','),\n    key_skills: stripTags(v.snippet?.skill),\n    has_test: Boolean(v.userTestPresent),\n    letter_required: Boolean(v['@responseLetterRequired']),\n    responses: v.totalResponsesCount ?? null,\n    snippet: [v.snippet?.req, v.snippet?.resp, v.snippet?.cond]\n      .map(stripTags)\n      .filter(Boolean)\n      .join(' | ')\n      .slice(0, 1500),\n    url: `https://hh.ru/vacancy/${v.vacancyId}`,\n    apply_url: `https://hh.ru/applicant/vacancy_response?vacancyId=${v.vacancyId}`,\n    apply_type: 'hh',\n    published_at: v.publicationTime?.$ ?? '',\n    status: firstRun ? 'seen' : 'new',\n  };\n}\n\nconst byKey = new Map();\nconst seenIds = new Set();\n\nfor (const item of $input.all()) {\n  const res = item.json;\n  const html = htmlOf(res);\n\n  if (res.statusCode !== 200) {\n    const to = res.headers?.location ? ` → ${res.headers.location}` : '';\n    return fail(`hh ответил HTTP ${res.statusCode}${to}`, html);\n  }\n\n  const tpl = html.match(/<template[^>]*id=\"HH-Lux-InitialState\"[^>]*>([\\s\\S]*?)<\\/template>/);\n  if (!tpl) {\n    // Слово «captcha» есть и на нормальной странице, поэтому смотрим на него только без InitialState\n    const hint = /captcha|робот/i.test(html) ? 'похоже на капчу/блок' : 'сменилась вёрстка?';\n    return fail(`Нет HH-Lux-InitialState — ${hint}`, html);\n  }\n\n  let state;\n  try {\n    state = JSON.parse(decodeEntities(tpl[1]));\n  } catch (e) {\n    return fail(`InitialState не разбирается: ${e.message}`, html);\n  }\n\n  const list = state?.vacancySearchResult?.vacancies;\n  if (!Array.isArray(list)) return fail('Нет vacancySearchResult.vacancies — сменилась структура', html);\n\n  for (const v of list) {\n    if (!v?.vacancyId || !v?.name) return fail('У вакансии нет vacancyId/name — сменилась структура', html);\n    const id = String(v.vacancyId);\n    // Между запросами страниц вакансия может съехать со страницы 0 на страницу 1\n    if (seenIds.has(id)) continue;\n    seenIds.add(id);\n\n    const rec = toRecord(v);\n    const prev = byKey.get(rec.dup_key);\n    if (!prev) byKey.set(rec.dup_key, rec);\n    else if (rec.areas && !prev.areas.split(', ').includes(rec.areas)) prev.areas += `, ${rec.areas}`;\n  }\n}\n\n// Пустая выдача по нашему запросу не бывает — считаем поломкой\nif (byKey.size === 0) return fail('В выдаче 0 вакансий — сменилась структура или запрос', htmlOf($input.first().json));\n\nreturn [{ json: { ok: true, firstRun, vacancies: [...byKey.values()] } }];\n"
+      }
+    },
+    {
+      "id": "15c5f605-783b-8d10-47ec-d7ce5b50bb5d",
+      "name": "OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "cf8c3975-30c7-c9e1-1c46-c528656b543f",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "e90b66f6-2796-9f01-4e72-7e0cb3125038",
+      "name": "Split vacancies",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        -100
+      ],
+      "parameters": {
+        "fieldToSplitOut": "vacancies",
+        "include": "noOtherFields",
+        "options": {}
+      }
+    },
+    {
+      "id": "ed889b84-46b6-36a4-5aa6-48bc0e520011",
+      "name": "Is new",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        -100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "rowNotExists",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "vacancies"
+        },
+        "matchType": "anyCondition",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "external_id",
+              "keyValue": "={{ $json.external_id }}"
+            },
+            {
+              "keyName": "dup_key",
+              "keyValue": "={{ $json.dup_key }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "b65164b0-7b9a-458c-d6bc-8bfce47113d9",
+      "name": "Insert",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        -100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "vacancies"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a89128d3-5cdb-d332-c345-480c6a03919a",
+      "name": "Format message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        -100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W1 · Format message — текст для Telegram (Parse Mode = HTML).\n// Нода: Code, режим «Run Once for All Items».\n// Вакансии берём из ноды «Is new» — это ровно те, что только что записаны в таблицу.\n// Telegram не принимает сообщения длиннее 4096 символов — делим на части до 4000.\n\nconst rows = $('Is new').all().map((i) => i.json);\nconst firstRun = Boolean($('Plan').first().json.firstRun);\n\nif (firstRun) {\n  return [\n    {\n      json: {\n        text: `✅ Первый запуск: ${rows.length} текущих вакансий записано со статусом seen.\\nДальше пришлю только новые.`,\n      },\n    },\n  ];\n}\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst EXPERIENCE = { noExperience: 'без опыта', between1And3: '1–3 г.', between3And6: '3–6 л.', moreThan6: '6+ л.' };\nconst CURRENCY = { RUR: '₽', USD: '$', EUR: '€', KZT: '₸', BYR: 'Br', UZS: 'сум' };\nconst short = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));\n\nfunction salary(r) {\n  if (!r.salary_from && !r.salary_to) return '';\n  const range =\n    r.salary_from && r.salary_to\n      ? `${short(r.salary_from)}–${short(r.salary_to)}`\n      : r.salary_from\n        ? `от ${short(r.salary_from)}`\n        : `до ${short(r.salary_to)}`;\n  return `💰 ${range} ${CURRENCY[r.currency] ?? r.currency ?? ''}${r.salary_gross ? ' до налогов' : ''}`;\n}\n\n// «Москва, Сербия, Грузия, Армения» → «Москва, Сербия +2»\nfunction areas(s) {\n  const list = String(s ?? '').split(', ').filter(Boolean);\n  return list.length > 2 ? `${list.slice(0, 2).join(', ')} +${list.length - 2}` : list.join(', ');\n}\n\nconst blocks = rows.map((r, i) => {\n  const meta = [esc(r.company), salary(r), EXPERIENCE[r.experience] ?? '', esc(areas(r.areas))]\n    .filter(Boolean)\n    .join(' · ');\n  const flags = [r.has_test && '📝 тест', r.letter_required && '✉️ письмо обязательно', r.responses != null && `👥 ${r.responses}`]\n    .filter(Boolean)\n    .join(' · ');\n  return `${i + 1}. <a href=\"${r.url}\">${esc(r.title)}</a>\\n${meta}${flags ? `\\n${flags}` : ''}`;\n});\n\nconst messages = [];\nlet text = `🆕 Новые вакансии: ${rows.length}`;\nfor (const block of blocks) {\n  if (text.length + block.length + 2 > 4000) {\n    messages.push(text);\n    text = block;\n  } else {\n    text += `\\n\\n${block}`;\n  }\n}\nmessages.push(text);\n\nreturn messages.map((t) => ({ json: { text: t } }));\n"
+      }
+    },
+    {
+      "id": "b768ef8b-d010-11b5-e686-f23417bef47a",
+      "name": "Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2200,
+        -100
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $env.TG_CHAT_ID }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterTgBot01",
+          "name": "Telegram bot"
+        }
+      }
+    },
+    {
+      "id": "f1c742cc-b025-3f8b-b288-a05c8c57df32",
+      "name": "To file",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        100
+      ],
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "html",
+        "binaryPropertyName": "data",
+        "options": {
+          "fileName": "hh-fail.html"
+        }
+      }
+    },
+    {
+      "id": "2c398143-0c74-4999-6aef-e1a8687cf0dc",
+      "name": "Save fixture",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        100
+      ],
+      "parameters": {
+        "operation": "write",
+        "fileName": "=/home/node/.n8n-files/fixtures/hh-fail-{{ $now.toFormat('yyyyLLdd-HHmmss') }}.html",
+        "dataPropertyName": "data",
+        "options": {}
+      }
+    },
+    {
+      "id": "00681a84-715c-4270-3885-4c103af95263",
+      "name": "Stop",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1760,
+        100
+      ],
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "={{ $('Parse search').first().json.reason }}"
+      }
+    }
+  ],
+  "connections": {
+    "Schedule": {
+      "main": [
+        [
+          {
+            "node": "Any row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual": {
+      "main": [
+        [
+          {
+            "node": "Any row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any row": {
+      "main": [
+        [
+          {
+            "node": "Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan": {
+      "main": [
+        [
+          {
+            "node": "Search hh",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search hh": {
+      "main": [
+        [
+          {
+            "node": "Parse search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse search": {
+      "main": [
+        [
+          {
+            "node": "OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OK?": {
+      "main": [
+        [
+          {
+            "node": "Split vacancies",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "To file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split vacancies": {
+      "main": [
+        [
+          {
+            "node": "Is new",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is new": {
+      "main": [
+        [
+          {
+            "node": "Insert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert": {
+      "main": [
+        [
+          {
+            "node": "Format message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format message": {
+      "main": [
+        [
+          {
+            "node": "Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "To file": {
+      "main": [
+        [
+          {
+            "node": "Save fixture",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save fixture": {
+      "main": [
+        [
+          {
+            "node": "Stop",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Moscow",
+    "errorWorkflow": "jobHunterW4Error"
+  },
+  "pinData": {},
+  "active": false,
+  "tags": []
+}

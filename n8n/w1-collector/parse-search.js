@@ -9,7 +9,7 @@
 const firstRun = Boolean($('Plan').first().json.firstRun);
 
 // HTML-сущности раскодируем за один проход: иначе &amp;quot; станет кавычкой и сломает JSON
-const NAMED = { quot: '"', amp: '&', lt: '<', gt: '>', apos: "'", nbsp: ' ' };
+const NAMED = { quot: '"', amp: '&', lt: '<', gt: '>', apos: "'", nbsp: '\u00a0' };
 function decodeEntities(s) {
   return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
     if (e[0] === '#') {
@@ -29,6 +29,8 @@ const normTitle = (s) =>
     .trim();
 
 const fail = (reason, html) => [{ json: { ok: false, reason, html: String(html ?? '') } }];
+// Текст ответа HTTP Request (Response Format = Text) n8n кладёт в поле data
+const htmlOf = (res) => String(res.data ?? res.body ?? '');
 
 // Вакансия из выдачи → строка таблицы vacancies (имена полей = имена колонок)
 function toRecord(v) {
@@ -77,7 +79,7 @@ const seenIds = new Set();
 
 for (const item of $input.all()) {
   const res = item.json;
-  const html = String(res.body ?? res.data ?? '');
+  const html = htmlOf(res);
 
   if (res.statusCode !== 200) {
     const to = res.headers?.location ? ` → ${res.headers.location}` : '';
@@ -116,6 +118,6 @@ for (const item of $input.all()) {
 }
 
 // Пустая выдача по нашему запросу не бывает — считаем поломкой
-if (byKey.size === 0) return fail('В выдаче 0 вакансий — сменилась структура или запрос', $input.first().json.body);
+if (byKey.size === 0) return fail('В выдаче 0 вакансий — сменилась структура или запрос', htmlOf($input.first().json));
 
 return [{ json: { ok: true, firstRun, vacancies: [...byKey.values()] } }];

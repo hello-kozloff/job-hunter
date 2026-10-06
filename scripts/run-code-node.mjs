@@ -42,7 +42,7 @@ for (let i = 2; i < args.length; i++) {
 const input = inputArg.endsWith('.json')
   ? toItems(JSON.parse(readFileSync(inputArg, 'utf8')))
   : inputArg.split(',').map((path) => ({
-      json: { statusCode: status, statusMessage: '', headers: {}, body: readFileSync(path, 'utf8') },
+      json: { statusCode: status, statusMessage: '', headers: {}, data: readFileSync(path, 'utf8') },
     }));
 
 // Мини-версии $input и $('Имя') из n8n

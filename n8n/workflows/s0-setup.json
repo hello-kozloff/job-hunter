@@ -1,0 +1,158 @@
+{
+  "id": "jobHunterS0Setup",
+  "name": "S0 Setup",
+  "nodes": [
+    {
+      "id": "e06b4db3-95e4-9555-f0f0-78f7e9f254dc",
+      "name": "Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "91be4e2b-3e84-fa93-c66a-b5a97aa05a11",
+      "name": "Create table",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "resource": "table",
+        "operation": "create",
+        "tableName": "vacancies",
+        "columns": {
+          "column": [
+            {
+              "name": "source",
+              "type": "string"
+            },
+            {
+              "name": "external_id",
+              "type": "string"
+            },
+            {
+              "name": "dup_key",
+              "type": "string"
+            },
+            {
+              "name": "title",
+              "type": "string"
+            },
+            {
+              "name": "company",
+              "type": "string"
+            },
+            {
+              "name": "company_id",
+              "type": "string"
+            },
+            {
+              "name": "areas",
+              "type": "string"
+            },
+            {
+              "name": "salary_from",
+              "type": "number"
+            },
+            {
+              "name": "salary_to",
+              "type": "number"
+            },
+            {
+              "name": "currency",
+              "type": "string"
+            },
+            {
+              "name": "salary_gross",
+              "type": "boolean"
+            },
+            {
+              "name": "experience",
+              "type": "string"
+            },
+            {
+              "name": "employment_form",
+              "type": "string"
+            },
+            {
+              "name": "work_formats",
+              "type": "string"
+            },
+            {
+              "name": "languages",
+              "type": "string"
+            },
+            {
+              "name": "key_skills",
+              "type": "string"
+            },
+            {
+              "name": "has_test",
+              "type": "boolean"
+            },
+            {
+              "name": "letter_required",
+              "type": "boolean"
+            },
+            {
+              "name": "responses",
+              "type": "number"
+            },
+            {
+              "name": "snippet",
+              "type": "string"
+            },
+            {
+              "name": "url",
+              "type": "string"
+            },
+            {
+              "name": "apply_url",
+              "type": "string"
+            },
+            {
+              "name": "apply_type",
+              "type": "string"
+            },
+            {
+              "name": "published_at",
+              "type": "string"
+            },
+            {
+              "name": "status",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {
+          "createIfNotExists": true
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual": {
+      "main": [
+        [
+          {
+            "node": "Create table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "active": false,
+  "tags": []
+}

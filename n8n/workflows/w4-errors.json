@@ -1,0 +1,89 @@
+{
+  "id": "jobHunterW4Error",
+  "name": "W4 Errors",
+  "nodes": [
+    {
+      "id": "eff64b23-0c0a-071d-bedd-f7dcda5a9d3c",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "1b38fade-18e0-0bda-6d63-a06dda7611f5",
+      "name": "Format error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W4 · Format error — текст тревоги для Telegram (Parse Mode = HTML).\n// Нода: Code, режим «Run Once for All Items». Вход: Error Trigger.\n// Без явного parse mode нода Telegram шлёт Markdown, и «_» в тексте ошибки (dup_key) ломает отправку,\n// поэтому шлём HTML и экранируем всё, что пришло из ошибки.\n\nconst e = $input.first().json;\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\n// Ошибка самого триггера приходит в поле trigger, а не execution\nconst error = e.execution?.error ?? e.trigger?.error ?? {};\nconst message = String(error.message ?? 'без текста').slice(0, 1500);\n\nconst lines = [\n  `❗️ <b>${esc(e.workflow?.name ?? 'workflow')}</b>: ошибка`,\n  e.execution?.lastNodeExecuted ? `Нода: ${esc(e.execution.lastNodeExecuted)}` : null,\n  esc(message),\n  e.execution?.url ? esc(e.execution.url) : null,\n].filter(Boolean);\n\nreturn [{ json: { text: lines.join('\\n') } }];\n"
+      }
+    },
+    {
+      "id": "47f0c554-4699-d330-a191-20992d1a34b1",
+      "name": "Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $env.TG_CHAT_ID }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterTgBot01",
+          "name": "Telegram bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Format error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format error": {
+      "main": [
+        [
+          {
+            "node": "Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "active": false,
+  "tags": []
+}

@@ -14,7 +14,7 @@ services:
       GENERIC_TIMEZONE: Europe/Moscow
       TZ: Europe/Moscow
       N8N_EDITOR_BASE_URL: http://localhost:5678
-      WEBHOOK_URL: ${WEBHOOK_URL:-http://localhost:5678/}
+      N8N_WEBHOOK_URL: ${WEBHOOK_URL:-http://localhost:5678/}
       N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?заполни N8N_ENCRYPTION_KEY в .env}
       # Интерфейс открывается по http://localhost, secure cookie не нужна
       N8N_SECURE_COOKIE: "false"

@@ -1,5 +1,8 @@
 # Этап 0 — локальный n8n и проверка hh.ru
 
+> **Статус: выполнен 06.10.2026.** n8n 2.42.3 поднят в Docker, W0 импортирован скриптом (`scripts/deploy.sh`) и прогнан 3 раза: поиск и страница вакансии — `OK`, 163 вакансии.
+> Ниже — как это устроено и как собрать W0 руками, если захочешь разобраться. Повторная проверка «жив ли hh»: открой W0 в n8n → *Execute workflow*.
+
 **Цель:** поднять n8n в Docker на Mac и убедиться, что из него hh.ru отдаёт и поиск, и страницу вакансии.
 **Время:** ~30 минут.
 
@@ -99,10 +102,10 @@ Manual → Search hh → Check search → Vacancy page → Check vacancy
 | Redirects → Follow Redirects | off | редирект на капчу будет виден как 3xx + `location`, а не спрятан |
 | Response → Include Response Headers and Status | on | в выводе появятся `statusCode` и `headers` |
 | Response → Never Error | on | 403/429 не роняют ноду — вердикт поставит код |
-| Response → Response Format | `Text` | страница придёт строкой в поле `body` |
+| Response → Response Format | `Text` | страница придёт строкой в поле `data` |
 | Timeout | `30000` | |
 
-**Execute step** → в выводе `statusCode: 200` и огромный `body` (~1,7 МБ). n8n может спросить, показывать ли такие данные, — можно не показывать.
+**Execute step** → в выводе `statusCode: 200` и огромный `data` (~1,7 МБ). n8n может спросить, показывать ли такие данные, — можно не показывать.
 
 ### 3.3 Check search — Code
 

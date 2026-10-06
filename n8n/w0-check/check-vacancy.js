@@ -6,10 +6,11 @@
 
 const res = $input.first().json;
 const status = res.statusCode ?? null;
-const html = String(res.body ?? res.data ?? '');
+// Текст ответа HTTP Request (Response Format = Text) n8n кладёт в поле data
+const html = String(res.data ?? res.body ?? '');
 
 // HTML-сущности раскодируем за один проход: иначе &amp;quot; станет кавычкой и сломает JSON
-const NAMED = { quot: '"', amp: '&', lt: '<', gt: '>', apos: "'", nbsp: ' ' };
+const NAMED = { quot: '"', amp: '&', lt: '<', gt: '>', apos: "'", nbsp: '\u00a0' };
 function decodeEntities(s) {
   return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
     if (e[0] === '#') {

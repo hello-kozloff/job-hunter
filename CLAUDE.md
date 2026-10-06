@@ -16,12 +16,14 @@
 ## 2. Пользователь и среда
 
 - Никита Костров, Senior Frontend (React / Next.js / TypeScript), 5+ лет. Гражданство РФ, **живёт в Таиланде (UTC+7 = МСК+4)**, ищет **удалёнку**. В резюме на hh указан Санкт-Петербург.
-- **n8n self-hosted в Docker на Mac** (M1 Pro, 16 ГБ, почти всегда включён, Docker Desktop). IP — домашний тайский. n8n Cloud не используем. VPS нет.
-- Пользователь хочет **собирать workflow руками в UI n8n**, чтобы понимать систему. Опыт: собирал простые workflow → средняя детализация.
-- Формат помощи:
-  - пошаговые инструкции в `docs/stages/stage-N.md`;
-  - готовый код Code-нод в `n8n/<workflow>/*.js`;
-  - JSON для импорта — только по запросу.
+- **n8n 2.42.3 self-hosted в Docker на Mac** (M1 Pro, 16 ГБ, почти всегда включён, Docker Desktop). IP — домашний тайский. n8n Cloud не используем. VPS нет.
+- Опыт пользователя с n8n: собирал простые workflow.
+- **Формат работы (с 06.10.2026, по просьбе пользователя «продолжи дальше сам»):** workflow собирает и разворачивает Claude, пользователь смотрит результат в UI (логин — в `.env`).
+  - код Code-нод — `n8n/<workflow>/*.js` (единственный источник правды);
+  - `scripts/build-workflows.mjs` генерирует JSON workflow в `n8n/workflows/`;
+  - `scripts/deploy.sh` импортирует их в n8n (`--publish` — включает расписание W1);
+  - `scripts/n8n-api.mjs run <id>` запускает workflow и печатает сводку по нодам;
+  - `docs/stages/stage-N.md` — описание устройства и ручная сборка (для понимания).
 - **На каждом этапе задавать максимум уточняющих вопросов** (просьба пользователя).
 - Структура: один инстанс n8n, внутри отдельные workflow на каждый участок. Связь между ними — через общую таблицу и статусы.
 
@@ -130,10 +132,16 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 - `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`;
 - `./fixtures` → `/home/node/.n8n-files/fixtures`: файловые ноды n8n 2.x видят только `~/.n8n-files`.
 
-**Особенности n8n 2.x:**
-- «Publish» вместо «Activate»;
+**Особенности n8n 2.x (проверено на 2.42.3):**
+- «Publish» вместо «Activate»; импорт workflow через CLI снимает публикацию → после `deploy.sh` нужен `--publish`;
 - Code-ноды работают в task runner: без `require` и `process.env`;
-- Error workflow не срабатывает на ручных запусках.
+- Error workflow не срабатывает на ручных запусках;
+- HTTP Request (Response Format = Text + Include Response Headers and Status) кладёт тело в поле **`data`**, не `body`;
+- CLI `n8n execute` не грузит модули → Data Table в нём не работает («module is disabled»). Workflow с таблицами запускать через REST `POST /rest/workflows/:id/run` (`scripts/n8n-api.mjs run`); второй CLI-процесс — с `N8N_RUNNERS_BROKER_PORT=5681`;
+- Telegram-нода без `parse_mode` шлёт Markdown (символ `_` ломает отправку) → всегда `parse_mode: HTML` + экранирование;
+- Data Table: таблицу можно указать по имени (`mode: name`), Insert «Map Automatically» пишет все поля item → поля должны совпадать с колонками;
+- Schedule Trigger 1.4: `misfirePolicy: coalesce` — после сна Mac выполняется последний пропущенный запуск;
+- `import:credentials` принимает данные открытым текстом и сам шифрует их ключом из `.env`.
 
 ## 7. Правила отбора
 
@@ -170,8 +178,9 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 7. **Тест / вопросы / внешний сайт** → `needs_human`, ссылка в Telegram.
 8. **Риск аккаунта (этап C)** → свой дневной лимит 15–30 откликов, случайные паузы, рабочие часы, `DRY_RUN` (дойти до кнопки, скриншот, не жать), капчу не обходить — отдавать человеку.
 9. **Секреты.**
-   - Токены и ключи — только в Credentials n8n.
-   - `.env` (ключ шифрования, chat_id) и `docs/resume.md` — в `.gitignore`.
+   - Токены и ключи в n8n — в Credentials (шифруются `N8N_ENCRYPTION_KEY`).
+   - `.env` (ключ шифрования, chat_id, токен бота, логин/пароль владельца n8n) — права 600, в `.gitignore`; токен бота попадает в n8n через pipe (`deploy.sh`), на диск хоста кроме `.env` не пишется.
+   - `docs/resume.md` — в `.gitignore`.
    - Фикстуры hh тоже не в git: в JSON есть имена HR-менеджеров.
 10. **Другие сайты** → свой сборщик на каждый, выход в единую схему (п. 6).
 11. **Размер страниц** → страница поиска весит ~1,7 МБ, поэтому история запусков хранится 7 дней (`EXECUTIONS_DATA_MAX_AGE=168`).
@@ -180,8 +189,8 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 
 | Этап | Что | Критерий готовности |
 |---|---|---|
-| **0. Проверка** ← **ТЕКУЩИЙ** | Локальный n8n в Docker + W0 Check hh. Инструкция: `docs/stages/stage-0.md` (готова) | Оба вердикта OK из n8n, Data tables есть |
-| 1. Сбор | W4 Errors + W1 Collector + таблица + детектор блока. Инструкция: `docs/stages/stage-1.md` (готова) | Таблица наполняется сама, новые вакансии и тревоги — в Telegram |
+| 0. Проверка ✅ | Локальный n8n в Docker + W0 Check hh. 06.10.2026: 3 прогона из n8n — поиск и вакансия `OK`, 163 вакансии | Оба вердикта OK из n8n, Data tables есть |
+| **1. Сбор** ← **ТЕКУЩИЙ** | W4 Errors + W1 Collector + таблица + детектор блока. Сделано: таблица, бэкфилл (136 строк `seen`), ветка поломки проверена. Осталось: `TG_BOT_TOKEN` → S1 Telegram test → проверка W4 → `deploy.sh --publish` | Таблица наполняется сама, новые вакансии и тревоги — в Telegram |
 | 2. Детали + правила | страница вакансии, быстрый фильтр | Полные описания, мусор отсеян |
 | 3. Оценка | LLM, теневой режим неделю | Решения системы совпадают с мнением пользователя |
 | 4. Письмо + Telegram | Writer, кнопки, W3, ngrok | **MVP: полуавтомат A** |
@@ -200,6 +209,8 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
     fixtures/search-p0.html,fixtures/search-p1.html --ref 'Plan={"firstRun":true}'
   ```
 - Фикстуры: `fixtures/search-p0.html`, `search-p1.html`, `vacancy.html` (не в git) и `synthetic-captcha.html` (в git).
+- В живом n8n: `node scripts/n8n-api.mjs run jobHunterW1Colle` (сводка по нодам), `node scripts/n8n-api.mjs rows vacancies 5`.
+- Проверка ветки поломки: временно импортировать W1 с битым URL под тем же id → run → вернуть `scripts/deploy.sh`.
 - Pin data: 10–15 реальных вакансий разных типов, включая «ловушки» (Angular под видом Frontend, React Native, .NET + React, «только из РФ»).
 - Флаг `DRY_RUN` — в `.env` / `$env`.
 - Тест веб-форм — на своих тестовых формах, не на работодателях.
@@ -215,7 +226,7 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 
 ## 12. Открытые вопросы к пользователю
 
-- **Сейчас:** результат этапа 0 (вердикты из n8n, версия n8n), затем этапа 1.
+- **Сейчас:** токен бота в `.env` (`TG_BOT_TOKEN`) — без него не работают Telegram-ноды; затем 2–3 дня наблюдения за W1.
 - **Этап 2:**
   - минимальная зарплата; что делать с вакансиями без ЗП;
   - валюта и способ оплаты при жизни за границей;
@@ -233,11 +244,29 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 ## 13. Структура репозитория
 
 ```
-docker-compose.yml, .env.example   n8n локально (.env — не в git)
+docker-compose.yml, .env.example   n8n локально (.env — не в git, права 600)
 docs/resume.md                      резюме (не в git)
-docs/stages/stage-N.md              пошаговые инструкции по этапам
+docs/stages/stage-N.md              устройство этапов и ручная сборка
 n8n/w0-check/*.js                   код Code-нод W0
 n8n/w1-collector/*.js               код Code-нод W1
-scripts/run-code-node.mjs           прогон Code-ноды на фикстурах
+n8n/w4-errors/*.js                  код Code-нод W4
+n8n/workflows/*.json                сгенерированные workflow (не править руками)
+scripts/build-workflows.mjs         описание workflow → n8n/workflows/*.json
+scripts/deploy.sh                   сборка + импорт в n8n (+ credential Telegram из .env)
+scripts/n8n-api.mjs                 владелец, запуск workflow, строки таблиц
+scripts/telegram-credential.mjs     JSON credential из TG_BOT_TOKEN (только через pipe)
+scripts/run-code-node.mjs           прогон Code-ноды на фикстурах без n8n
 fixtures/                           страницы hh (не в git, кроме synthetic-*)
 ```
+
+Workflow в n8n (постоянные id):
+
+| id | Имя | Что |
+|---|---|---|
+| `jobHunterS0Setup` | S0 Setup | создать таблицу `vacancies` (если нет) |
+| `jobHunterS1TgTst` | S1 Telegram test | проверочное сообщение в Telegram |
+| `jobHunterW0Check` | W0 Check hh | ручная проверка «жив ли hh» |
+| `jobHunterW1Colle` | W1 Collector | сбор каждые 2 ч |
+| `jobHunterW4Error` | W4 Errors | тревоги |
+
+Credential: `jobHunterTgBot01` «Telegram bot».

@@ -1,0 +1,236 @@
+{
+  "id": "jobHunterW0Check",
+  "name": "W0 Check hh",
+  "nodes": [
+    {
+      "id": "53339ed1-048d-7426-4d48-8168626f5c76",
+      "name": "Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "67206886-5e51-e11a-a8cd-09dd15450002",
+      "name": "Search hh",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://hh.ru/search/vacancy",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "NAME:(frontend OR front-end OR фронтенд OR react OR next.js OR nextjs OR typescript)"
+            },
+            {
+              "name": "professional_role",
+              "value": "96"
+            },
+            {
+              "name": "work_format",
+              "value": "REMOTE"
+            },
+            {
+              "name": "education",
+              "value": "not_required_or_not_specified"
+            },
+            {
+              "name": "order_by",
+              "value": "publication_time"
+            },
+            {
+              "name": "items_on_page",
+              "value": "100"
+            },
+            {
+              "name": "enable_snippets",
+              "value": "true"
+            },
+            {
+              "name": "page",
+              "value": "0"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "ru-RU,ru;q=0.9,en;q=0.8"
+            }
+          ]
+        },
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 30000
+        }
+      }
+    },
+    {
+      "id": "ca78b2a3-778b-d45d-d4d4-bf3837a238ef",
+      "name": "Check search",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W0 · Check search — проверка ответа поиска hh.ru.\n// Нода: Code, режим «Run Once for All Items».\n// Вход: ответ HTTP Request «Search hh» (Response Format = Text,\n//       Include Response Headers and Status = on).\n// Выход: один item со сводкой, вердиктом и vacancyId для запроса страницы вакансии.\n\nconst res = $input.first().json;\nconst status = res.statusCode ?? null;\n// Текст ответа HTTP Request (Response Format = Text) n8n кладёт в поле data\nconst html = String(res.data ?? res.body ?? '');\n\n// HTML-сущности раскодируем за один проход: иначе &amp;quot; станет кавычкой и сломает JSON\nconst NAMED = { quot: '\"', amp: '&', lt: '<', gt: '>', apos: \"'\", nbsp: '\\u00a0' };\nfunction decodeEntities(s) {\n  return s.replace(/&(#x[0-9a-f]+|#\\d+|[a-z]+);/gi, (m, e) => {\n    if (e[0] === '#') {\n      const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);\n      return Number.isFinite(code) && code <= 0x10ffff ? String.fromCodePoint(code) : m;\n    }\n    return NAMED[e.toLowerCase()] ?? m;\n  });\n}\n\nconst tpl = html.match(/<template[^>]*id=\"HH-Lux-InitialState\"[^>]*>([\\s\\S]*?)<\\/template>/);\nlet state = null;\nlet parseError = null;\nif (tpl) {\n  try {\n    state = JSON.parse(decodeEntities(tpl[1]));\n  } catch (e) {\n    parseError = e.message;\n  }\n}\nconst result = state?.vacancySearchResult;\nconst vacancies = result?.vacancies ?? [];\n\n// Слово «captcha» встречается и на нормальной странице, поэтому смотрим на него только без InitialState\nlet verdict = 'OK';\nif (status !== 200) verdict = `HTTP_${status}`;\nelse if (!tpl) verdict = /captcha|робот/i.test(html) ? 'CAPTCHA' : 'NO_STATE';\nelse if (parseError) verdict = 'PARSE_ERROR';\nelse if (vacancies.length === 0) verdict = 'EMPTY';\n\n// Для шага 2 берём первую фронтенд-вакансию, иначе просто первую\nconst pick = vacancies.find((v) => /front|фронт|react/i.test(v.name)) ?? vacancies[0];\n\nreturn [\n  {\n    json: {\n      verdict,\n      status,\n      location: res.headers?.location ?? null,\n      htmlLength: html.length,\n      hasInitialState: Boolean(tpl),\n      parseError,\n      totalResults: result?.totalResults ?? null,\n      vacanciesOnPage: vacancies.length,\n      sample: vacancies\n        .slice(0, 5)\n        .map((v) => `${v.vacancyId} · ${v.name} · ${v.company?.visibleName ?? v.company?.name ?? ''}`),\n      vacancyId: pick?.vacancyId ?? null,\n      // Начало страницы — только если что-то не так, чтобы увидеть, что прислал hh\n      htmlStart: verdict === 'OK' ? null : html.slice(0, 1000),\n    },\n  },\n];\n"
+      }
+    },
+    {
+      "id": "f26ae7ef-919f-17ba-4d0c-d45260c85925",
+      "name": "Vacancy page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://hh.ru/vacancy/{{ $json.vacancyId }}",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "ru-RU,ru;q=0.9,en;q=0.8"
+            },
+            {
+              "name": "Referer",
+              "value": "https://hh.ru/search/vacancy"
+            }
+          ]
+        },
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 30000
+        }
+      }
+    },
+    {
+      "id": "36b666de-2dad-1c20-d9fc-01d5929ef0df",
+      "name": "Check vacancy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W0 · Check vacancy — проверка страницы вакансии hh.ru.\n// Нода: Code, режим «Run Once for All Items».\n// Вход: ответ HTTP Request «Vacancy page» (Response Format = Text,\n//       Include Response Headers and Status = on).\n// Ищем два источника данных: JSON-LD JobPosting и HH-Lux-InitialState → vacancyView.vacancyFull.vacancy.\n\nconst res = $input.first().json;\nconst status = res.statusCode ?? null;\n// Текст ответа HTTP Request (Response Format = Text) n8n кладёт в поле data\nconst html = String(res.data ?? res.body ?? '');\n\n// HTML-сущности раскодируем за один проход: иначе &amp;quot; станет кавычкой и сломает JSON\nconst NAMED = { quot: '\"', amp: '&', lt: '<', gt: '>', apos: \"'\", nbsp: '\\u00a0' };\nfunction decodeEntities(s) {\n  return s.replace(/&(#x[0-9a-f]+|#\\d+|[a-z]+);/gi, (m, e) => {\n    if (e[0] === '#') {\n      const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);\n      return Number.isFinite(code) && code <= 0x10ffff ? String.fromCodePoint(code) : m;\n    }\n    return NAMED[e.toLowerCase()] ?? m;\n  });\n}\n\n// JSON-LD лежит как есть, InitialState — с HTML-сущностями: пробуем оба варианта\nfunction parseJson(text) {\n  try {\n    return JSON.parse(text);\n  } catch {\n    try {\n      return JSON.parse(decodeEntities(text));\n    } catch {\n      return null;\n    }\n  }\n}\n\nconst ld =\n  [...html.matchAll(/<script[^>]*type=\"application\\/ld\\+json\"[^>]*>([\\s\\S]*?)<\\/script>/g)]\n    .map((m) => parseJson(m[1]))\n    .find((j) => j?.['@type'] === 'JobPosting') ?? null;\n\nconst tpl = html.match(/<template[^>]*id=\"HH-Lux-InitialState\"[^>]*>([\\s\\S]*?)<\\/template>/);\nconst state = tpl ? parseJson(tpl[1]) : null;\nconst v = state?.vacancyView?.vacancyFull?.vacancy ?? null;\nconst test = v ? (state?.applicantVacancyResponseStatuses?.[String(v.vacancyId)]?.test ?? null) : null;\n\nlet verdict = 'OK';\nif (status !== 200) verdict = `HTTP_${status}`;\nelse if (!v?.description && !ld?.description) verdict = !tpl && /captcha|робот/i.test(html) ? 'CAPTCHA' : 'NO_DATA';\nelse if (!v?.description) verdict = 'LD_ONLY';\n\nreturn [\n  {\n    json: {\n      verdict,\n      status,\n      jsonLd: ld\n        ? {\n            title: ld.title,\n            company: ld.hiringOrganization?.name ?? null,\n            datePosted: ld.datePosted ?? null,\n            validThrough: ld.validThrough ?? null,\n            descriptionLength: ld.description?.length ?? 0,\n          }\n        : null,\n      initialState: v\n        ? {\n            vacancyId: v.vacancyId,\n            name: v.name,\n            company: v.company?.visibleName ?? v.company?.name ?? null,\n            keySkills: v.keySkills ?? [],\n            workExperience: v.workExperience ?? null,\n            workFormats: v.workFormats ?? [],\n            compensation: v.compensation ?? null,\n            languages: v.languages ?? [],\n            archived: v.status?.archived ?? null,\n            country: v.area?.countryIsoCode ?? null,\n            descriptionLength: v.description?.length ?? 0,\n          }\n        : null,\n      test,\n      htmlStart: verdict === 'OK' ? null : html.slice(0, 1000),\n    },\n  },\n];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Manual": {
+      "main": [
+        [
+          {
+            "node": "Search hh",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search hh": {
+      "main": [
+        [
+          {
+            "node": "Check search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check search": {
+      "main": [
+        [
+          {
+            "node": "Vacancy page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vacancy page": {
+      "main": [
+        [
+          {
+            "node": "Check vacancy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "active": false,
+  "tags": []
+}
