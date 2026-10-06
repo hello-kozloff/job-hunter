@@ -3,6 +3,9 @@
 //
 //   node scripts/n8n-api.mjs setup-owner <email>      создать владельца (один раз), пароль → .env
 //   node scripts/n8n-api.mjs run <workflowId>          запустить с ноды Manual и вывести сводку по нодам
+//   node scripts/n8n-api.mjs publish <workflowId>      опубликовать (включить триггеры) текущую версию
+//   node scripts/n8n-api.mjs unpublish <workflowId>    снять с публикации
+//   node scripts/n8n-api.mjs executions <workflowId> [limit]   последние запуски
 //   node scripts/n8n-api.mjs rows <table> [limit]      показать строки таблицы Data Tables
 //
 // Вход — N8N_OWNER_EMAIL / N8N_OWNER_PASSWORD из .env.
@@ -111,6 +114,30 @@ async function run(workflowId) {
   return { executionId, data };
 }
 
+// Публикация через REST: запущенный n8n сразу регистрирует триггеры, перезапуск не нужен
+async function publish(workflowId) {
+  const cookie = await login();
+  const { json: wf } = await api(`/workflows/${workflowId}`, { cookie });
+  await api(`/workflows/${workflowId}/activate`, { method: 'POST', body: { versionId: wf.versionId }, cookie });
+  console.log(`${wf.name}: опубликован`);
+}
+
+async function unpublish(workflowId) {
+  const cookie = await login();
+  const { json: wf } = await api(`/workflows/${workflowId}`, { cookie });
+  await api(`/workflows/${workflowId}/deactivate`, { method: 'POST', body: {}, cookie });
+  console.log(`${wf.name}: снят с публикации`);
+}
+
+async function executions(workflowId, limit = 5) {
+  const cookie = await login();
+  const filter = encodeURIComponent(JSON.stringify({ workflowId }));
+  const { json } = await api(`/executions?filter=${filter}&limit=${limit}`, { cookie });
+  for (const e of json.results ?? []) {
+    console.log(`${e.id}\t${e.status}\t${e.mode}\t${e.startedAt}`);
+  }
+}
+
 async function rows(tableName, limit = 5) {
   const cookie = await login();
   const { json: projects } = await api('/projects', { cookie });
@@ -151,9 +178,11 @@ async function setupOwner(email) {
 }
 
 const [command, ...args] = process.argv.slice(2);
-const commands = { 'setup-owner': setupOwner, run, rows };
+const commands = { 'setup-owner': setupOwner, run, publish, unpublish, executions, rows };
 if (!commands[command]) {
-  console.error('usage: node scripts/n8n-api.mjs setup-owner <email> | run <workflowId> | rows <table> [limit]');
+  console.error(
+    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit]',
+  );
   process.exit(2);
 }
 await commands[command](...args);
