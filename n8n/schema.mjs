@@ -42,6 +42,11 @@ export const TABLES = {
     ['my_reason', 'string'],
     ['tg_message_id', 'number'],
     ['tg_ask_id', 'number'],
+    // этап 4: письмо (W5) и отклик
+    ['letter', 'string'],
+    ['tg_letter_id', 'number'],
+    ['letter_notes', 'string'],
+    ['applied_at', 'string'],
   ],
   // Чёрный список компаний — заполняет пользователь в UI n8n.
   // company: кусок названия компании или её id на hh (только цифры)

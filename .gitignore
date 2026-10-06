@@ -9,3 +9,4 @@ fixtures/*
 
 .DS_Store
 .n8n-session
+docs/letter-example.md

@@ -1,9 +1,10 @@
 // W3 · Apply choice — нажатие кнопки на карточке → новое состояние строки и карточки.
 // Нода: Code, режим «Run Once for All Items».
 // Вход: строка вакансии из «Vacancy»; что нажато — из «Route».
-// Выход: { id, my_decision, status, text, keyboard, ask, toast, chatId, messageId, queryId }
+// Выход: { id, my_decision, status, text, keyboard, ask, toast, need_letter, chatId, messageId, queryId }
 //   ✅ / 🤔 / ❌ — записать решение, кнопки сменить на «↩️ Изменить» (keyboard = decided).
 //     Решение расходится с нейросетью и причины ещё нет → ask: вопрос «почему?» ответом на карточку.
+//     ✅ и письма ещё нет → need_letter: W5 напишет письмо (этап 4).
 //   ↩️ Изменить (choice = edit) — вернуть кнопки выбора (keyboard = choose), решение не меняется.
 
 // @include n8n/shared/card.js
@@ -18,6 +19,7 @@ const out = {
   keyboard: 'choose',
   ask: '',
   toast: '',
+  need_letter: false,
   chatId: action.chatId,
   messageId: action.messageId,
   queryId: action.queryId,
@@ -28,6 +30,7 @@ if (action.choice !== 'edit') {
   out.status = STATUS_BY_CHOICE[action.choice];
   out.keyboard = 'decided';
   out.toast = `Записал: ${CHOICE[action.choice]}`;
+  out.need_letter = action.choice === 'apply' && !row.letter;
   const known = ['apply', 'maybe', 'skip'].includes(row.decision);
   if (known && row.decision !== action.choice && !row.my_reason) {
     out.ask =

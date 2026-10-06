@@ -23,6 +23,7 @@ const IDS = {
   score: 'jobHunterW2Score',
   telegramBot: 'jobHunterW3Teleg',
   errors: 'jobHunterW4Error',
+  letter: 'jobHunterW5Lettr',
   telegramCredential: 'jobHunterTgBot01',
   geminiCredential: 'jobHunterGemini1',
   claudeCredential: 'jobHunterClaude1',
@@ -107,12 +108,39 @@ const code = (wf, name, file, position) =>
 
 const TELEGRAM_CREDENTIAL = { telegramApi: { id: IDS.telegramCredential, name: 'Telegram bot' } };
 
-// Inline-клавиатура Telegram-ноды: rows = [[[текст, callback_data], …], …]
+// Inline-клавиатура Telegram-ноды: rows = [[[текст, callback_data | { url }], …], …]
 const keyboard = (rows) => ({
   rows: rows.map((buttons) => ({
-    row: { buttons: buttons.map(([text, data]) => ({ text, additionalFields: { callback_data: data } })) },
+    row: {
+      buttons: buttons.map(([text, target]) => ({
+        text,
+        additionalFields: typeof target === 'object' ? target : { callback_data: target },
+      })),
+    },
   })),
 });
+
+// Ответ на нажатие кнопки (убирает «часики» на кнопке, показывает всплывающий текст)
+const answerQuery = (wf, name, position, queryId, text) =>
+  node(
+    wf,
+    name,
+    'telegram',
+    1.2,
+    position,
+    { resource: 'callback', operation: 'answerQuery', queryId, additionalFields: { text } },
+    { credentials: TELEGRAM_CREDENTIAL },
+  );
+
+// Запуск другого workflow без ожидания (его ноде-триггеру «When Executed by Another Workflow»
+// с «Accept all data» уходят items как есть)
+const runWorkflow = (wf, name, position, workflowId) =>
+  node(wf, name, 'executeWorkflow', 1.2, position, {
+    source: 'database',
+    workflowId: { __rl: true, mode: 'id', value: workflowId },
+    mode: 'once',
+    options: { waitForSubWorkflow: false },
+  });
 
 // Отправка сообщения: HTML, без подписи n8n и без превью ссылок
 const telegram = (wf, name, position, { text = '={{ $json.text }}', fields = {}, markup, extra = {} } = {}) =>
@@ -208,11 +236,12 @@ const llmRequest = ({ url, credential, headers = [], interval }) => ({
   },
 });
 
-// W3: состояние после нажатия кнопки, которое посчитала нода «Apply choice»
+// W3: состояние после нажатия кнопки, которое посчитали ноды «Apply choice» и «Apply sent»
 const CHOICE = "$('Apply choice').first().json";
+const SENT = "$('Apply sent').first().json";
 
-// W3: перерисовать карточку (текст + кнопки) после нажатия
-const editCard = (name, position, rows) =>
+// W3: перерисовать карточку (текст + кнопки) после нажатия. src — нода с chatId / messageId / text
+const editCard = (name, position, rows, src = CHOICE, messageId = 'messageId') =>
   node(
     'W3',
     name,
@@ -223,9 +252,9 @@ const editCard = (name, position, rows) =>
       resource: 'message',
       operation: 'editMessageText',
       messageType: 'message',
-      chatId: `={{ ${CHOICE}.chatId }}`,
-      messageId: `={{ ${CHOICE}.messageId }}`,
-      text: `={{ ${CHOICE}.text }}`,
+      chatId: `={{ ${src}.chatId }}`,
+      messageId: `={{ ${src}.${messageId} }}`,
+      text: `={{ ${src}.text }}`,
       replyMarkup: 'inlineKeyboard',
       inlineKeyboard: keyboard(rows),
       additionalFields: { parse_mode: 'HTML', disable_web_page_preview: true },
@@ -648,14 +677,40 @@ const workflows = {
         columns: setColumns({ tg_ask_id: '={{ $json.result.message_id }}' }),
         options: {},
       }),
-      // Ответ (reply) на вопрос «почему?» или на саму карточку
-      node('W3', 'Reason row', 'dataTable', 1.1, [660, 150], {
+      // ✅ и письма ещё нет → письмо (W5). Ветка ниже «Ask?»: вопрос «почему?» уходит первым
+      node('W3', 'Letter?', 'if', 2.3, [1980, -50], ifTrue('W3', `={{ ${CHOICE}.need_letter }}`)),
+      // Кнопки под письмом: «🔄 Переписать» и «📨 Отправил»
+      node('W3', 'Letter button?', 'if', 2.3, [660, 250], ifTrue('W3', "={{ $json.action === 'letter' }}")),
+      node('W3', 'Redo?', 'if', 2.3, [880, 200], ifTrue('W3', "={{ $json.op === 'redo' }}")),
+      answerQuery('W3', 'Answer redo', [1100, 150], "={{ $('Route').first().json.queryId }}", '✍️ Пишу новый вариант…'),
+      node('W3', 'Sent row', 'dataTable', 1.1, [1100, 300], {
+        resource: 'row',
+        operation: 'get',
+        dataTableId: VACANCIES,
+        ...byId('={{ $json.id }}'),
+        returnAll: false,
+        limit: 1,
+      }),
+      code('W3', 'Apply sent', 'n8n/w3-telegram/apply-sent.js', [1320, 300]),
+      node('W3', 'Save sent', 'dataTable', 1.1, [1540, 300], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        ...byId('={{ $json.id }}'),
+        columns: setColumns({ status: '={{ $json.status }}', applied_at: '={{ $json.applied_at }}' }),
+        options: {},
+      }),
+      answerQuery('W3', 'Answer sent', [1760, 300], `={{ ${SENT}.queryId }}`, '📨 Записал: отклик отправлен'),
+      editCard('Card: sent', [1980, 300], [[['↩️ Изменить', `=v:{{ ${SENT}.id }}:edit`]]], SENT, 'cardId'),
+      // Ответ (reply): на письмо — правка письма, на вопрос «почему?» или карточку — причина
+      node('W3', 'Reply row', 'dataTable', 1.1, [880, 500], {
         resource: 'row',
         operation: 'get',
         dataTableId: VACANCIES,
         matchType: 'anyCondition',
         filters: {
           conditions: [
+            { keyName: 'tg_letter_id', keyValue: '={{ $json.replyTo }}' },
             { keyName: 'tg_ask_id', keyValue: '={{ $json.replyTo }}' },
             { keyName: 'tg_message_id', keyValue: '={{ $json.replyTo }}' },
           ],
@@ -663,18 +718,23 @@ const workflows = {
         returnAll: false,
         limit: 1,
       }),
-      node('W3', 'Save reason', 'dataTable', 1.1, [880, 150], {
+      code('W3', 'Reply kind', 'n8n/w3-telegram/reply-kind.js', [1100, 500]),
+      node('W3', 'Revise?', 'if', 2.3, [1320, 500], ifTrue('W3', "={{ $json.kind === 'revise' }}")),
+      node('W3', 'Save reason', 'dataTable', 1.1, [1540, 600], {
         resource: 'row',
         operation: 'update',
         dataTableId: VACANCIES,
         ...byId('={{ $json.id }}'),
-        columns: setColumns({ my_reason: "={{ $('Route').first().json.text }}" }),
+        columns: setColumns({ my_reason: '={{ $json.text }}' }),
         options: {},
       }),
-      telegram('W3', 'Confirm', [1100, 150], {
+      telegram('W3', 'Confirm', [1760, 600], {
         text: '✍️ Записал причину',
         fields: { reply_to_message_id: "={{ $('Route').first().json.messageId }}", disable_notification: true },
       }),
+      // Письмо: одна нода на три ветки (✅, «🔄 Переписать», ответ на письмо) → W5 Letter
+      code('W3', 'Letter job', 'n8n/w3-telegram/letter-job.js', [2200, 100]),
+      runWorkflow('W3', 'Write letter', [2420, 100], IDS.letter),
     ],
     [
       ['Telegram Trigger', 'Route'],
@@ -689,9 +749,165 @@ const workflows = {
       ['Card: decided', 'Ask?'],
       ['Ask?', 'Ask why', 0],
       ['Ask why', 'Save ask'],
-      ['Button?', 'Reason row', 1],
-      ['Reason row', 'Save reason'],
+      ['Card: decided', 'Letter?'],
+      ['Letter?', 'Letter job', 0],
+      ['Button?', 'Letter button?', 1],
+      ['Letter button?', 'Redo?', 0],
+      ['Redo?', 'Answer redo', 0],
+      ['Answer redo', 'Letter job'],
+      ['Redo?', 'Sent row', 1],
+      ['Sent row', 'Apply sent'],
+      ['Apply sent', 'Save sent'],
+      ['Save sent', 'Answer sent'],
+      ['Answer sent', 'Card: sent'],
+      ['Letter button?', 'Reply row', 1],
+      ['Reply row', 'Reply kind'],
+      ['Reply kind', 'Revise?'],
+      ['Revise?', 'Letter job', 0],
+      ['Revise?', 'Save reason', 1],
       ['Save reason', 'Confirm'],
+      ['Letter job', 'Write letter'],
+    ],
+    { errorWorkflow: IDS.errors },
+  ),
+
+  'w5-letter': workflow(
+    IDS.letter,
+    'W5 Letter',
+    [
+      // Вызов из W3 (✅, «🔄 Переписать», ответ на письмо): items { id, letter_mode, instruction }
+      node('W5', 'Called by W3', 'executeWorkflowTrigger', 1.1, [0, -100], { inputSource: 'passthrough' }),
+      // Ручной запуск — письма ко всем ✅ без письма
+      node('W5', 'Manual', 'manualTrigger', 1, [0, 100], {}),
+      node('W5', 'Approved', 'dataTable', 1.1, [220, 100], {
+        resource: 'row',
+        operation: 'get',
+        dataTableId: VACANCIES,
+        matchType: 'allConditions',
+        filters: {
+          conditions: [
+            { keyName: 'status', keyValue: 'approved' },
+            { keyName: 'letter', condition: 'isEmpty' },
+          ],
+        },
+        returnAll: true,
+      }),
+      code('W5', 'Jobs', 'n8n/w5-letter/jobs.js', [440, 0]),
+      node('W5', 'Vacancy', 'dataTable', 1.1, [660, 0], {
+        resource: 'row',
+        operation: 'get',
+        dataTableId: VACANCIES,
+        ...byId('={{ $json.id }}'),
+        returnAll: false,
+        limit: 1,
+      }),
+      node(
+        'W5',
+        'Resume',
+        'readWriteFile',
+        1.1,
+        [880, 0],
+        { operation: 'read', fileSelector: '/home/node/.n8n-files/docs/resume.md', options: {} },
+        { executeOnce: true },
+      ),
+      node('W5', 'Resume text', 'extractFromFile', 1.1, [1100, 0], {
+        operation: 'text',
+        binaryPropertyName: 'data',
+        destinationKey: 'resume',
+        options: {},
+      }),
+      node(
+        'W5',
+        'Example',
+        'readWriteFile',
+        1.1,
+        [1320, 0],
+        { operation: 'read', fileSelector: '/home/node/.n8n-files/docs/letter-example.md', options: {} },
+        { executeOnce: true },
+      ),
+      node('W5', 'Example text', 'extractFromFile', 1.1, [1540, 0], {
+        operation: 'text',
+        binaryPropertyName: 'data',
+        destinationKey: 'example',
+        options: {},
+      }),
+      code('W5', 'Build letter', 'n8n/w5-letter/build-letter.js', [1760, 0]),
+      node('W5', 'Claude?', 'if', 2.3, [1980, 0], ifTrue('W5', "={{ $json.provider === 'claude' }}")),
+      node(
+        'W5',
+        'Claude',
+        'httpRequest',
+        4.5,
+        [2200, -100],
+        llmRequest({
+          url: 'https://api.anthropic.com/v1/messages',
+          credential: 'anthropicApi',
+          headers: [['anthropic-version', '2023-06-01']],
+          interval: 1000,
+        }),
+        { credentials: { anthropicApi: { id: IDS.claudeCredential, name: 'Claude' } }, onError: 'continueRegularOutput' },
+      ),
+      node(
+        'W5',
+        'Gemini',
+        'httpRequest',
+        4.5,
+        [2200, 100],
+        llmRequest({
+          url: '=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.model }}:generateContent',
+          credential: 'googlePalmApi',
+          interval: 5000,
+        }),
+        { credentials: { googlePalmApi: { id: IDS.geminiCredential, name: 'Gemini' } }, onError: 'continueRegularOutput' },
+      ),
+      code('W5', 'Parse letter', 'n8n/w5-letter/parse-letter.js', [2420, 0]),
+      code('W5', 'Format letter', 'n8n/w5-letter/format-letter.js', [2640, 0]),
+      telegram('W5', 'Send letter', [2860, 0], {
+        markup: {
+          replyMarkup: 'inlineKeyboard',
+          inlineKeyboard: keyboard([
+            [
+              ['📝 Отклик на hh', { url: '={{ $json.apply_url }}' }],
+              ['🔗 Вакансия', { url: '={{ $json.url }}' }],
+            ],
+            [
+              ['🔄 Переписать', '=l:{{ $json.id }}:redo'],
+              ['📨 Отправил', '=l:{{ $json.id }}:sent'],
+            ],
+          ]),
+        },
+        fields: { reply_to_message_id: '={{ $json.replyTo }}' },
+        extra: { onError: 'continueRegularOutput' },
+      }),
+      code('W5', 'Letter sent', 'n8n/w5-letter/letter-sent.js', [3080, 0]),
+      node('W5', 'Save letter', 'dataTable', 1.1, [3300, 0], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        ...byId('={{ $json.id }}'),
+        columns: AUTO_MAP,
+        options: {},
+      }),
+    ],
+    [
+      ['Called by W3', 'Jobs'],
+      ['Manual', 'Approved'],
+      ['Approved', 'Jobs'],
+      ['Jobs', 'Vacancy'],
+      ['Vacancy', 'Resume'],
+      ['Resume', 'Resume text'],
+      ['Resume text', 'Example'],
+      ['Example', 'Example text'],
+      ['Example text', 'Build letter'],
+      ['Build letter', 'Claude?'],
+      ['Claude?', 'Claude', 0],
+      ['Claude?', 'Gemini', 1],
+      ['Claude', 'Parse letter'],
+      ['Gemini', 'Parse letter'],
+      ['Parse letter', 'Format letter'],
+      ['Format letter', 'Send letter'],
+      ['Send letter', 'Letter sent'],
+      ['Letter sent', 'Save letter'],
     ],
     { errorWorkflow: IDS.errors },
   ),

@@ -171,6 +171,22 @@
             {
               "name": "tg_ask_id",
               "type": "number"
+            },
+            {
+              "name": "letter",
+              "type": "string"
+            },
+            {
+              "name": "tg_letter_id",
+              "type": "number"
+            },
+            {
+              "name": "letter_notes",
+              "type": "string"
+            },
+            {
+              "name": "applied_at",
+              "type": "string"
             }
           ]
         },
