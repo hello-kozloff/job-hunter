@@ -66,9 +66,13 @@ def card_keyboard(p: Profile) -> InlineKeyboardMarkup:
     kb.button(
         text=t("profile.btn_shadow_on" if p.shadow else "profile.btn_shadow_off"), callback_data=Prof(action="shadow", pid=p.id)
     )
+    kb.button(
+        text=t("profile.btn_collect" if p.status == "active" else "profile.btn_trial"),
+        callback_data=Prof(action="collect", pid=p.id),
+    )
     kb.button(text=t("profile.btn_delete"), callback_data=Prof(action="del", pid=p.id))
     kb.button(text=t("profile.btn_list"), callback_data=Prof(action="list"))
-    kb.adjust(1, 2, 2, 1)
+    kb.adjust(1, 2, 2, 1, 1, 1)
     return kb.as_markup()
 
 

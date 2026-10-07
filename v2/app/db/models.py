@@ -271,6 +271,8 @@ class Match(Base):
     llm_reason: Mapped[str | None] = mapped_column(Text)
     llm_model: Mapped[str | None] = mapped_column(String(64))
     config_id: Mapped[int | None] = mapped_column(ForeignKey("profile_configs.id", ondelete="SET NULL"))
+    # Сбор, в котором совпадение появилось (отчёт пробного сбора и «Собрать сейчас»)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("runs.id", ondelete="SET NULL"), index=True)
     scoring_at: Mapped[datetime | None]
     scored_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = created_col()

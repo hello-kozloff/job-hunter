@@ -23,7 +23,7 @@ from app.db.models import User
 from app.domain import resume_text
 from app.domain.llm.draft import ConfigEdit
 from app.domain.resume_text import ResumeTextError
-from app.services import hh_resume, profiles
+from app.services import collect, hh_resume, profiles
 from app.services.llm import LlmError
 
 router = Router(name="profiles")
@@ -167,6 +167,9 @@ async def profile_button(
         await profiles.set_shadow(session, p, not p.shadow)
         await query.answer()
         await _show_card(query.message, loaded, edit=True)
+    elif action == "collect":
+        ok = await collect.trigger(p.id, query.message.chat.id, "bot" if p.status == "active" else "trial")
+        await query.answer(t("collect.started") if ok else t("collect.failed"), show_alert=True)
     elif action == "del":
         await query.answer()
         kb = InlineKeyboardBuilder()

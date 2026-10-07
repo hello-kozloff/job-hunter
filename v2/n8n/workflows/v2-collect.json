@@ -1,0 +1,476 @@
+{
+  "id": "jobHunterV2Collc",
+  "name": "V2 Collect",
+  "nodes": [
+    {
+      "id": "ed8a90b2-9215-d49d-abe5-2f038d3a4bb9",
+      "name": "Every 5 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "b57076a4-1c2a-8ca8-cfc6-e6bac05202e2",
+      "name": "From bot",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "v2-collect",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "webhookId": "5ea83430-18e1-1818-438e-0c41f1edcf62"
+    },
+    {
+      "id": "4426caf3-8008-d771-04d9-a64c7180c9fa",
+      "name": "Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const j = $input.first().json;\nif (j.body !== undefined) {\n  if ((j.headers || {})['x-internal-token'] !== $env.INTERNAL_TOKEN) throw new Error('v2-collect: неверный X-Internal-Token');\n  const b = j.body || {};\n  return [{ json: { kind: b.kind || 'bot', profile_id: b.profile_id ?? null, chat_id: b.chat_id ?? null } }];\n}\nreturn [{ json: { kind: 'schedule', profile_id: null, chat_id: null } }];"
+      }
+    },
+    {
+      "id": "a61a4a24-cef2-793c-1667-d44a1e777292",
+      "name": "Plan",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CORE_URL }}/internal/collect/plan",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Token",
+              "value": "={{ $env.INTERNAL_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "3ccd644d-3619-4706-d1c4-89bb396f65da",
+      "name": "Has run",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "db40738f-b416-f156-da37-626354512d65",
+              "leftValue": "={{ Boolean($json.run_id) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "1b09eeed-c09a-d6ab-a5f3-ad3da3ab14e1",
+      "name": "Tasks",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "fieldToSplitOut": "tasks",
+        "options": {}
+      }
+    },
+    {
+      "id": "71010a00-c981-a27d-81a8-c90713901014",
+      "name": "Search hh",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "ru-RU,ru;q=0.9,en;q=0.8"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 4000
+            }
+          },
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 30000
+        }
+      }
+    },
+    {
+      "id": "7ed9829e-a9e5-2b43-a76e-322f7c099270",
+      "name": "Ingest search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CORE_URL }}/internal/collect/search",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Token",
+              "value": "={{ $env.INTERNAL_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ run_id: $('Tasks').item.json.run_id, search_id: $('Tasks').item.json.search_id, status: $json.statusCode, html: $json.data ?? '', location: ($json.headers || {}).location ?? null }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "7b06ffdd-b97f-f179-d186-aa2b22e7363a",
+      "name": "Pages",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "fieldToSplitOut": "pages",
+        "options": {}
+      }
+    },
+    {
+      "id": "85c3d5fe-f34f-5af6-09ab-b7312282e192",
+      "name": "Vacancy hh",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "ru-RU,ru;q=0.9,en;q=0.8"
+            },
+            {
+              "name": "Referer",
+              "value": "https://hh.ru/search/vacancy"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 4000
+            }
+          },
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 30000
+        }
+      }
+    },
+    {
+      "id": "1c8976c3-2b27-d397-4262-1e841b9e5816",
+      "name": "Ingest vacancy",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CORE_URL }}/internal/collect/vacancy",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Token",
+              "value": "={{ $env.INTERNAL_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ run_id: $('Pages').item.json.run_id, vacancy_id: $('Pages').item.json.vacancy_id, status: $json.statusCode, html: $json.data ?? '' }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "1c43a57b-f1bd-394e-4a5d-4fa549bf17c3",
+      "name": "Finish",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CORE_URL }}/internal/collect/finish",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Token",
+              "value": "={{ $env.INTERNAL_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ run_id: $('Plan').first().json.run_id }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "executeOnce": true
+    }
+  ],
+  "connections": {
+    "Every 5 min": {
+      "main": [
+        [
+          {
+            "node": "Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "From bot": {
+      "main": [
+        [
+          {
+            "node": "Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request": {
+      "main": [
+        [
+          {
+            "node": "Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan": {
+      "main": [
+        [
+          {
+            "node": "Has run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has run": {
+      "main": [
+        [
+          {
+            "node": "Tasks",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Finish",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tasks": {
+      "main": [
+        [
+          {
+            "node": "Search hh",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search hh": {
+      "main": [
+        [
+          {
+            "node": "Ingest search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ingest search": {
+      "main": [
+        [
+          {
+            "node": "Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pages": {
+      "main": [
+        [
+          {
+            "node": "Vacancy hh",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vacancy hh": {
+      "main": [
+        [
+          {
+            "node": "Ingest vacancy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "jobHunterV2Error",
+    "saveDataSuccessExecution": "none"
+  },
+  "pinData": {},
+  "active": false,
+  "tags": []
+}
