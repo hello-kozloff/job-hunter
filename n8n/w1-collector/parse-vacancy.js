@@ -51,7 +51,8 @@ return rows.map((row, i) => {
   if (v.status?.archived || v.closedForApplicants) reasons.push('в архиве');
   const rf = RF_ONLY.map((re) => description.match(re)).find(Boolean);
   if (rf) reasons.push(`только из РФ: «${rf[0].trim()}»`);
-  if (!/react|next\.?js/i.test(`${row.title} ${skills} ${description}`)) reasons.push('нет React');
+  // Vue (и Nuxt) — тоже наш стек с 07.10.2026: только Vue нейросеть оценит как maybe
+  if (!/react|next\.?js|vue|nuxt/i.test(`${row.title} ${skills} ${description}`)) reasons.push('нет React и Vue');
 
   return {
     json: {

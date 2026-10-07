@@ -72,7 +72,8 @@ const workflow = (id, name, nodes, links, settings = {}) => ({
 // ---------- Общие куски ----------
 
 const SEARCH_QUERY = [
-  ['text', 'NAME:(frontend OR front-end OR фронтенд OR react OR next.js OR nextjs OR typescript)'],
+  // vue и nuxt — с 07.10.2026: Vue-вакансии без слов frontend/react в названии иначе не находятся
+  ['text', 'NAME:(frontend OR front-end OR фронтенд OR react OR next.js OR nextjs OR typescript OR vue OR vue.js OR vuejs OR nuxt OR nuxt.js OR nuxtjs)'],
   ['professional_role', '96'],
   ['work_format', 'REMOTE'],
   ['education', 'not_required_or_not_specified'],

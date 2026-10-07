@@ -34,6 +34,16 @@ Is new → Blacklist (все строки таблицы blacklist, один р�
 - Стартовый список пользователя (07.10.2026, 26 компаний) — `n8n/blacklist.json`, загружается `node scripts/n8n-api.mjs blacklist-seed` (дописывает только отсутствующих). Дальше можно править прямо в UI.
 - Действует на следующих запусках W1; уже записанные вакансии не пересматриваются.
 
+## Правило поменялось — перепроверить отсеянных
+
+```bash
+node scripts/n8n-api.mjs recheck 'Vue/Angular' --dry   # что удалится: rejected с этим правилом в reasons
+node scripts/n8n-api.mjs recheck 'Vue/Angular'         # удалить строки (только те, что есть в последней выдаче W1)
+node scripts/n8n-api.mjs run jobHunterW1Colle          # W1 примет их как новые и прогонит через текущие правила
+```
+
+07.10.2026 так вернули Vue-вакансии: правило «Vue/Angular» стало «Angular», страница вакансии отсекает только «нет React и Vue».
+
 ## Проверка правил
 
 ```bash
