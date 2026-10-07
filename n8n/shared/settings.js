@@ -40,15 +40,56 @@ const SETTINGS = {
       'tutor', 'instructor', "o'qituvchi", 'oqituvchi', 'преподавател*', 'тестировщик*', 'наставник*'],
     words: true,
   },
-  // Нейросеть (W2, W5): провайдер; теневой режим — карточки и на skip (выкл — skip только в сводке);
-  // решения по спорным правилам (n8n/w2-score/build-prompt.js: не по умолчанию — «Поправки кандидата»)
+  // Нейросеть (W2, W5): провайдер; теневой режим — карточки и на skip (выкл — skip только в сводке)
   'llm.provider': { default: 'gemini', options: ['gemini', 'claude'] },
   'llm.shadow': { default: true, options: [true, false] },
-  'llm.vue': { default: 'maybe', options: ['apply', 'maybe', 'skip'] },
-  'llm.fullstack': { default: 'maybe', options: ['apply', 'maybe', 'skip'] },
-  'llm.ai_js': { default: 'apply', options: ['apply', 'maybe', 'skip'] },
-  'llm.react_native': { default: 'skip', options: ['skip', 'maybe', 'apply'] },
+  // Спорные случаи — список «случай: решение» (✏️, решение пользователя 07.10.2026: текстом, а не кнопками).
+  // По умолчанию — четыре встроенных случая промпта W2 с их решениями; отличие от них уходит в промпт
+  // «Поправками кандидата» (n8n/w2-score/build-prompt.js)
+  'llm.cases': {
+    default: [
+      { case: 'Vue без React', decision: 'maybe' },
+      { case: 'fullstack', decision: 'maybe' },
+      { case: 'AI на JS/TS', decision: 'apply' },
+      { case: 'React Native', decision: 'skip' },
+    ],
+    cases: true,
+  },
 };
+
+// Встроенные спорные случаи промпта W2: как узнать их в списке пользователя, решение по умолчанию
+// и формулировка для поправки
+const BUILTIN_CASES = {
+  vue: {
+    aliases: ['vue без react', 'vue', 'nuxt', 'vue/nuxt', 'vue nuxt'],
+    default: 'maybe',
+    prompt: 'основной стек — Vue (Vue.js, Nuxt), а React нет в обязательных требованиях',
+  },
+  fullstack: {
+    aliases: ['fullstack', 'full stack', 'full-stack', 'фулстек', 'фуллстек', 'fullstack с react'],
+    default: 'maybe',
+    prompt: 'fullstack: в обязательных требованиях и React, и бэкенд на любом языке',
+  },
+  ai_js: {
+    aliases: ['ai на js/ts', 'ai на js', 'ai на ts', 'ai js/ts', 'ai js', 'ai', 'разработка на ai'],
+    default: 'apply',
+    prompt: 'разработка на AI на JS/TS (Node.js, NestJS, TypeScript): интеграции LLM, AI-агенты, RAG',
+  },
+  react_native: {
+    aliases: ['react native', 'react-native', 'rn'],
+    default: 'skip',
+    prompt: 'мобильная разработка на React Native — основная работа',
+  },
+};
+const normCase = (text) =>
+  String(text ?? '')
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/\s+/g, ' ')
+    .trim();
+// Встроенный случай, которому соответствует запись пользователя, или null
+const builtinOf = (text) =>
+  Object.keys(BUILTIN_CASES).find((key) => BUILTIN_CASES[key].aliases.includes(normCase(text))) ?? null;
 
 // Слово списка: буквы, цифры, пробел и . + # ' - ; «*» в конце — любое окончание. Без скобок и кавычек:
 // они сломали бы язык запросов hh
@@ -78,8 +119,56 @@ function validSetting(spec, value) {
   if (spec.options) return spec.options.some((o) => o === value);
   if (spec.words) return Array.isArray(value) && value.length > 0 && value.length <= 40 && value.every((w) => WORD_RE.test(w));
   if (spec.list) return Array.isArray(value) && value.every((v) => spec.list.includes(v));
+  if (spec.cases) {
+    return (
+      Array.isArray(value) &&
+      value.length <= 20 &&
+      value.every((c) => CASE_RE.test(c?.case ?? '') && ['apply', 'maybe', 'skip'].includes(c?.decision))
+    );
+  }
   return false;
 }
+
+// Спорный случай: 2–80 знаков, без угловых скобок и обратных кавычек
+const CASE_RE = /^[^<>`]{2,80}$/u;
+const DECISION_WORDS = {
+  apply: 'apply',
+  '🟢': 'apply',
+  откликнусь: 'apply',
+  maybe: 'maybe',
+  '🟡': 'maybe',
+  возможно: 'maybe',
+  skip: 'skip',
+  '🔴': 'skip',
+  мимо: 'skip',
+};
+
+// Список спорных случаев из ответа пользователя: «Vue без React: maybe, Angular: skip» → [{ case, decision }].
+// Случаи — через запятую; если в описании нужна запятая — через «;» или с новой строки. Между случаем и решением —
+// «:», «=» или тире; решение — apply, maybe, skip (или 🟢 🟡 🔴, откликнусь, возможно, мимо).
+// «-» — очистить список. { error } — что не так
+function parseCases(text) {
+  const raw = String(text ?? '').trim();
+  if (raw === '-' || raw === '—') return { cases: [] };
+  const parts = (/[;\n]/.test(raw) ? raw.split(/[;\n]+/) : raw.split(',')).map((x) => x.trim()).filter(Boolean);
+  if (!parts.length) return { error: 'список пуст (очистить — пришли «-»)' };
+  if (parts.length > 20) return { error: `случаев ${parts.length}, можно до 20` };
+  const cases = [];
+  for (const part of parts) {
+    const m = part.match(/^(.+?)\s*[:=—–]\s*(\S+)$/u) ?? part.match(/^(.+?)\s+-\s+(\S+)$/u);
+    const decision = m && DECISION_WORDS[m[2].toLowerCase()];
+    if (!decision) return { error: `«${part}»: нужно «случай: решение», решение — apply, maybe или skip` };
+    const name = m[1].trim();
+    if (!CASE_RE.test(name)) return { error: `«${name}»: описание случая — от 2 до 80 знаков, без < > и \`` };
+    const existing = cases.find((c) => normCase(c.case) === normCase(name));
+    if (existing) existing.decision = decision;
+    else cases.push({ case: name, decision });
+  }
+  return { cases };
+}
+
+// Список для показа и вопроса: «Vue без React: maybe, fullstack: maybe»
+const casesText = (cases) => cases.map((c) => `${c.case}: ${c.decision}`).join(', ');
 
 // Список слов из ответа пользователя: «frontend, react, AI» → ['frontend', 'react', 'AI'];
 // { error } — если список пуст, длиннее 40 слов или в слове недопустимые символы

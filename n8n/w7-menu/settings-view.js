@@ -42,7 +42,7 @@ function changeNotes() {
   const notes = [];
   if (settingChange) notes.push('✅ Записал');
   if (job.input && !settingChange) {
-    const parsed = parseWords(job.input.text);
+    const parsed = SETTINGS[job.input.name]?.cases ? parseCases(job.input.text) : parseWords(job.input.text);
     if (parsed.error) notes.push(`⚠️ Не записал: ${esc(parsed.error)}. Нажми ✏️ и пришли список ещё раз`);
   }
   return notes;
@@ -56,7 +56,7 @@ function settingsRootView(note) {
     `🕐 <b>Сбор</b>: ${describeSchedule(sch)} · ${collectsPerDay(sch)} в сутки${sch.paused ? ' · ⏸ <b>пауза</b>' : ''}`,
     `🔎 <b>Поиск</b>: ${periodText(settings['search.period'])} · везде — ${settings['search.anywhere'].length} сл., в названии — ${settings['search.in_name'].length}`,
     `🧹 <b>Фильтр</b>: правил ${rulesOn().length} из ${Object.keys(FILTER_RULES).length} · отклики — ${responsesText(settings['filter.max_responses'])} · стоп-слов ${settings['filter.stop_words'].length} · ЧС ${blacklist.length}`,
-    `🤖 <b>Нейросеть</b>: ${providerText(settings['llm.provider'])} · теневой режим ${settings['llm.shadow'] ? 'вкл' : 'выкл'} · Vue ${VERDICT_ICON[settings['llm.vue']]} · fullstack ${VERDICT_ICON[settings['llm.fullstack']]} · AI на JS/TS ${VERDICT_ICON[settings['llm.ai_js']]} · React Native ${VERDICT_ICON[settings['llm.react_native']]}`,
+    `🤖 <b>Нейросеть</b>: ${providerText(settings['llm.provider'])} · теневой режим ${settings['llm.shadow'] ? 'вкл' : 'выкл'} · спорных случаев ${settings['llm.cases'].length}`,
   ];
   if (note) lines.push('', note);
   return {
@@ -208,30 +208,24 @@ function settingsLlmView() {
       ? 'Теневой режим: вкл — карточки на все оценки, включая 🔴'
       : 'Теневой режим: выкл — 🔴 без карточек: только в итоге после сбора и в меню на вкладке ❌',
     '',
-    'Спорные случаи:',
-    `• Vue без React — ${VERDICT_TEXT[settings['llm.vue']]}`,
-    `• fullstack (React и бэкенд) — ${VERDICT_TEXT[settings['llm.fullstack']]}`,
-    `• разработка на AI на JS/TS — ${VERDICT_TEXT[settings['llm.ai_js']]}`,
-    `• React Native — основная работа — ${VERDICT_TEXT[settings['llm.react_native']]}`,
+    '<b>Спорные случаи</b> — какое решение ставить:',
+    ...(settings['llm.cases'].length
+      ? settings['llm.cases'].map((c) => `• ${esc(c.case)} — ${VERDICT_TEXT[c.decision]}`)
+      : ['• нет — нейросеть решает по общим правилам']),
     '',
-    'Изменённое решение уходит в промпт «поправкой кандидата»; по умолчанию промпт прежний.',
+    '✏️ — прислать список «случай: решение» через запятую. Встроенные случаи — Vue без React, fullstack, AI на JS/TS, React Native: убрал из списка — правило не действует, поменял решение — меняется. Новые случаи описывай как угодно, нейросеть их поймёт.',
   ];
   if (provider === 'claude') {
     lines.push('', '⚠️ Для Claude нужен ключ ANTHROPIC_API_KEY в .env и деплой — без него оценка встанет с ошибкой.');
   }
   const notes = changeNotes();
   if (notes.length) lines.push('', ...notes);
-  const cycle = (name, label) => ({ text: `${label}: ${VERDICT_ICON[settings[name]]} ▸`, cb: `sc:${name}` });
   return {
     layout: 'set_llm',
     text: lines.join('\n'),
     b: {
       provider: { text: `Модель: ${providerText(provider)} ▸`, cb: 'sc:llm.provider' },
       shadow: { text: `Теневой: ${settings['llm.shadow'] ? 'вкл' : 'выкл'} ▸`, cb: 'sc:llm.shadow' },
-      vue: cycle('llm.vue', 'Vue'),
-      fullstack: cycle('llm.fullstack', 'Fullstack'),
-      ai: cycle('llm.ai_js', 'AI на JS/TS'),
-      rn: cycle('llm.react_native', 'React Native'),
     },
   };
 }
@@ -250,6 +244,16 @@ function settingsView(section) {
 
 // Вопрос со списком (ForceReply): ответ узнаёт W3 «Route» по началу текста (SETTING_PROMPTS)
 function settingsPrompt(name) {
+  if (SETTINGS[name].cases) {
+    return [
+      SETTING_PROMPTS[name],
+      `Сейчас: ${esc(casesText(settings[name])) || '—'}`,
+      '',
+      'Пришли список «случай: решение» через запятую — заменю его целиком. Решение — apply, maybe или skip. ' +
+        'Если в описании нужна запятая — разделяй случаи «;» или новой строкой. Очистить — «-».',
+      'Пример: <code>Vue без React: apply, fullstack на Node: apply, Angular: maybe</code>',
+    ].join('\n');
+  }
   return [
     SETTING_PROMPTS[name],
     `Сейчас: ${settings[name].join(', ')}`,
