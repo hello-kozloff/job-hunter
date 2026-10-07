@@ -9,9 +9,11 @@ const CURRENCY = { RUR: '₽', USD: '$', EUR: '€', KZT: '₸', BYR: 'Br', UZS:
 
 // Решение нейросети (колонка decision)
 const VERDICT = { apply: '🟢 apply', maybe: '🟡 maybe', skip: '🔴 skip', error: '⚠️ не оценено' };
-// Кнопки пользователя: callback_data = v:<id строки>:<choice>, решение — в колонку my_decision
-const CHOICE = { apply: '✅ Откликнусь', maybe: '🤔 Возможно', skip: '❌ Мимо' };
-const STATUS_BY_CHOICE = { apply: 'approved', maybe: 'maybe', skip: 'skipped' };
+// Кнопки пользователя: callback_data = v:<id строки>:<choice>, решение — в колонку my_decision.
+// earlier — «📨 Уже откликался» (до бота, 07.10.2026): status = applied без письма и без applied_at,
+// без «Почему?» и вне теневого режима (сравниваются только apply / maybe / skip)
+const CHOICE = { apply: '✅ Откликнусь', maybe: '🤔 Возможно', skip: '❌ Мимо', earlier: '📨 Откликался раньше' };
+const STATUS_BY_CHOICE = { apply: 'approved', maybe: 'maybe', skip: 'skipped', earlier: 'applied' };
 
 const short = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
 
@@ -61,7 +63,11 @@ function cardText(r) {
     .join(' · ');
   const verdict = `🤖 ${VERDICT[r.decision] ?? esc(r.decision)}${r.llm_reason ? ` — ${esc(r.llm_reason)}` : ''}`;
   const mine = CHOICE[r.my_decision] ? `👤 ${CHOICE[r.my_decision]}` : '';
-  const sent = r.status === 'applied' ? `📨 Отклик отправлен${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}` : '';
+  // «📨 Откликался раньше» уже в строке «👤 …» — второй раз не пишем
+  const sent =
+    r.status === 'applied' && r.my_decision !== 'earlier'
+      ? `📨 Отклик отправлен${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}`
+      : '';
   return [`<a href="${r.url}"><b>${esc(r.title)}</b></a>`, meta, flags, verdict, mine, sent, FINAL[r.status] ?? '']
     .filter(Boolean)
     .join('\n');

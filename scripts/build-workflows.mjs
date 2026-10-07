@@ -267,6 +267,7 @@ const PANEL_LAYOUTS = [
         ['🤔 Возможно', panelButton('maybe')],
         ['❌ Мимо', panelButton('skip')],
       ],
+      [['📨 Уже откликался', panelButton('earlier')]],
       [
         ['🔗 На hh', { url: panelButton('url') }],
         ['⬅️ К списку', panelButton('back')],
@@ -681,6 +682,8 @@ const workflows = {
               ['🤔 Возможно', '=v:{{ $json.id }}:maybe'],
               ['❌ Мимо', '=v:{{ $json.id }}:skip'],
             ],
+            // Откликался до бота: без письма, вне теневого режима
+            [['📨 Уже откликался', '=v:{{ $json.id }}:earlier']],
           ]),
         },
         fields: { disable_notification: '={{ $json.silent }}' },
@@ -799,6 +802,7 @@ const workflows = {
           ['🤔 Возможно', `=v:{{ ${CHOICE}.id }}:maybe`],
           ['❌ Мимо', `=v:{{ ${CHOICE}.id }}:skip`],
         ],
+        [['📨 Уже откликался', `=v:{{ ${CHOICE}.id }}:earlier`]],
       ]),
       node('W3', 'Ask?', 'if', 2.3, [1980, -200], ifTrue('W3', `={{ Boolean(${CHOICE}.ask) }}`)),
       telegram('W3', 'Ask why', [2200, -200], {
@@ -866,7 +870,8 @@ const workflows = {
         text: `={{ ${SENT}.cardText }}`,
         rows: [[['↩️ Изменить', `=v:{{ ${SENT}.id }}:edit`]]],
       }),
-      // Отклик отправлен или отменён — обновить панель меню, если на ней открыта эта вакансия (W7)
+      // Решение на карточке в ленте, отклик отправлен или отменён — обновить панель меню,
+      // если на ней открыта эта вакансия (W7)
       code('W3', 'Sync job', 'n8n/w3-telegram/sync-job.js', [2640, 325]),
       runWorkflow('W3', 'Panel sync', [2860, 325], IDS.menu),
       // Ответ (reply): на письмо — правка письма, на вопрос «почему?» или карточку — причина
@@ -920,6 +925,7 @@ const workflows = {
       ['Answer', 'Decided?'],
       ['Answer', 'From panel?'],
       ['From panel?', 'Panel job', 0],
+      ['From panel?', 'Sync job', 1],
       ['Panel job', 'Panel refresh'],
       ['Decided?', 'Card: decided', 0],
       ['Decided?', 'Card: choose', 1],

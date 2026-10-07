@@ -51,7 +51,8 @@ const tailsWaiting = count(rows, (r) => r.status === 'waiting' && !expired.has(r
 const tailsApproved = count(rows, (r) => r.status === 'approved' && !archived.has(r.id));
 
 // Теневой режим: оценки пользователя там, где решение нейросети известно
-const shadow = rows.filter((r) => r.my_decision && ['apply', 'maybe', 'skip'].includes(r.decision));
+// («📨 откликался раньше» — my_decision = earlier — не сравниваем: отклик был до бота)
+const shadow = rows.filter((r) => ['apply', 'maybe', 'skip'].includes(r.my_decision) && ['apply', 'maybe', 'skip'].includes(r.decision));
 const agree = count(shadow, (r) => r.my_decision === r.decision);
 
 // Сбои: запуски n8n за сутки (публичный API), туннель, хвост оценки нейросетью
@@ -109,7 +110,7 @@ const lines = [
   `☀️ <b>Сводка за сутки</b> · ${date}`,
   `🔎 Новых вакансий: ${fresh.length} → фильтр отсеял ${rejected.length}${topReasons ? ` (${topReasons})` : ''}`,
   `🤖 Оценено: ${scored.length}${scored.length ? ` — 🟢 ${count(scored, (r) => r.decision === 'apply')} · 🟡 ${count(scored, (r) => r.decision === 'maybe')} · 🔴 ${count(scored, (r) => r.decision === 'skip')}` : ''}${count(scored, (r) => r.decision === 'error') ? ` · ⚠️ ${count(scored, (r) => r.decision === 'error')}` : ''}`,
-  `👤 Твои решения: ✅ ${count(mine, (r) => r.my_decision === 'apply')} · 🤔 ${count(mine, (r) => r.my_decision === 'maybe')} · ❌ ${count(mine, (r) => r.my_decision === 'skip')} · 📨 отправлено ${sent}`,
+  `👤 Твои решения: ✅ ${count(mine, (r) => r.my_decision === 'apply')} · 🤔 ${count(mine, (r) => r.my_decision === 'maybe')} · ❌ ${count(mine, (r) => r.my_decision === 'skip')} · 📨 отправлено ${sent}${count(mine, (r) => r.my_decision === 'earlier') ? ` · 📨 раньше ${count(mine, (r) => r.my_decision === 'earlier')}` : ''}`,
   `⏳ Хвосты: без решения ${tailsWaiting} · ✅ без отклика ${tailsApproved}`,
   expired.size || archived.size ? `⌛ Устарели: ${expired.size} · 🔒 закрылись на hh: ${archived.size}` : '',
   shadow.length >= 50

@@ -2,7 +2,7 @@
 // Нода: Code, режим «Run Once for All Items».
 // Выход: один item или [] (не наше — игнорируем):
 //   { action: 'choice', id, choice, queryId, chatId, messageId, panel } — нажата кнопка решения.
-//      callback_data = v:<id строки>:<apply|maybe|skip|edit> — на карточке; messageId — id карточки, panel = null;
+//      callback_data = v:<id строки>:<apply|maybe|skip|earlier|edit> — на карточке; messageId — id карточки, panel = null;
 //      callback_data = pv:<id>:<choice>:<tab>:<page> — в карточке на панели меню (W7):
 //      panel = { messageId, tab, page } — панель перерисуется после решения.
 //   { action: 'letter', id, op, queryId, chatId, messageId } — кнопка под письмом (W5):
@@ -41,7 +41,7 @@ if (cb) {
   if (letter) {
     return [{ json: { action: 'letter', id: Number(letter[1]), op: letter[2], ...pressed } }];
   }
-  const fromPanel = data.match(/^pv:(\d+):(apply|maybe|skip|edit):([a-z]+):(\d+)$/);
+  const fromPanel = data.match(/^pv:(\d+):(apply|maybe|skip|earlier|edit):([a-z]+):(\d+)$/);
   if (fromPanel) {
     const tab = TABS[fromPanel[3]] ? fromPanel[3] : 'all';
     return [
@@ -56,7 +56,7 @@ if (cb) {
       },
     ];
   }
-  const match = data.match(/^v:(\d+):(apply|maybe|skip|edit)$/);
+  const match = data.match(/^v:(\d+):(apply|maybe|skip|earlier|edit)$/);
   if (!match) return [];
   return [{ json: { action: 'choice', id: Number(match[1]), choice: match[2], ...pressed, panel: null } }];
 }
