@@ -84,7 +84,7 @@
 Рабочий запрос (W0, W1):
 
 ```
-https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтенд OR react OR next.js OR nextjs OR typescript)&professional_role=96&work_format=REMOTE&education=not_required_or_not_specified&order_by=publication_time&items_on_page=100&enable_snippets=true&page=0
+https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтенд OR react OR next.js OR nextjs OR typescript OR vue OR vue.js OR vuejs OR nuxt OR nuxt.js OR nuxtjs)&professional_role=96&work_format=REMOTE&education=not_required_or_not_specified&order_by=publication_time&items_on_page=100&enable_snippets=true&page=0
 ```
 
 - `NAME:(…)` — язык запросов hh: искать только в названии. Синонимы (Frontend ↔ Фронтенд) hh подставляет сам.
@@ -92,7 +92,8 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 - `education=not_required_or_not_specified` важен: у пользователя среднее образование.
 - Регионы — все (параметра `area` нет): РФ, Казахстан, Узбекистан, Беларусь, Грузия, Сербия, Израиль…
 - Замер 06.10.2026: 161–162 вакансии (2 страницы), после склейки дублей — 135. Новых ~5–10 в день → обычному запуску хватает page 0.
-- Шум в выдаче: React Native, fullstack (.NET/Python + React), Vue/Angular. Его режет фильтр этапа 2.
+- Шум в выдаче: React Native, fullstack (.NET/Python + React), Angular. Его режет фильтр этапа 2.
+- vue и nuxt в запросе — с 07.10.2026 (Vue-вакансии без слов frontend/react в названии иначе не находились): на первой странице 84 вакансии после склейки, из них 12 Vue/Nuxt.
 - Старые варианты:
   - `text=Frontend` по названию + компании + описанию: 531 вакансия, по делу ~15% — не использовать;
   - `text=Frontend&search_field=name`: 99 вакансий, теряет «React-разработчик».
@@ -189,7 +190,7 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 
 **Отсекаем по выдаче (Filter search):**
 - опыт «нет опыта»; junior / стажёр / intern / младший;
-- Vue или Angular в названии — даже вместе с React;
+- Angular в названии — даже вместе с React (до 07.10.2026 так же отсекался и Vue; теперь Vue пропускаем — его оценивает нейросеть);
 - Lead / тимлид / архитектор / руководитель / head / CTO — кроме гибридов с Senior/Middle/старший/ведущий;
 - стоп-слова в названии: PHP, 1С, WordPress, Битрикс, QA/тестировщик, преподаватель/наставник/teacher/tutor;
 - больше 3000 откликов;
@@ -198,12 +199,12 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 **Отсекаем по странице вакансии (Parse vacancy):**
 - архив / закрыта для откликов;
 - «только из РФ / находиться на территории РФ / резидент РФ / located in Russia» (цитата пишется в `reasons`);
-- нет React / Next.js ни в названии, ни в навыках, ни в описании.
+- нет ни React / Next.js, ни Vue / Nuxt — ни в названии, ни в навыках, ни в описании.
 
 **Решает нейросеть (W2, промпт `n8n/w2-score/build-prompt.js`; 07.10.2026):**
-- skip: основной стек не React (React «плюсом» — тоже skip); мобильная разработка, в том числе React Native; английский C1+ или общение только на английском; нужно жить в определённой стране (не только РФ) или ездить в офис; работа ночью по Таиланду (часы США);
-- maybe: любой fullstack (бэкенд на любом языке, включая Node.js); английский B2; мягкие требования к стране/офису («желательно»); мало данных;
-- apply: React/Next.js — основной стек, удалёнка без привязки к стране;
+- skip: основной стек не React и не Vue (React «плюсом» при таком стеке — тоже skip); мобильная разработка, в том числе React Native; английский C1+ или общение только на английском; нужно жить в определённой стране (не только РФ) или ездить в офис; работа ночью по Таиланду (часы США);
+- maybe: основной стек Vue / Nuxt без React (07.10.2026: пользователь готов работать на Vue, решает сам); любой fullstack (бэкенд на любом языке, включая Node.js); английский B2; мягкие требования к стране/офису («желательно»); мало данных;
+- apply: React/Next.js — основной стек (в том числе вместе с Vue: «React, Vue»), удалёнка без привязки к стране;
 - не влияет: Middle/Senior и требуемый опыт (Middle — apply), зарплата (не учитывать вообще), форма оформления, график по МСК (любой, включая строгий 9–18), сфера бизнеса (любая), тестовое;
 - «сборщиков резюме» нейросеть не распознаёт — их пользователь сам вносит в `blacklist`.
 **Не фильтруем кодом:** зарплата (и без вилки), опыт 1–3 года, английский, оплата в валюте/USDT — ок.
@@ -314,7 +315,8 @@ n8n/workflows/*.json                сгенерированные workflow (н�
 scripts/build-workflows.mjs         описание workflow → n8n/workflows/*.json
 scripts/deploy.sh                   сборка + туннель + credentials из .env + импорт и публикация workflow
 scripts/n8n-api.mjs                 владелец, запуск/публикация workflow, строки таблиц, migrate, blacklist-seed,
-                                    tunnel-env, requeue, api-key
+                                    tunnel-env, requeue (бэкфилл в обработку), recheck (перепроверить отсеянных
+                                    правилом после его правки), api-key
 scripts/credentials.mjs             JSON credentials Telegram / Gemini / Claude из .env (только через pipe)
 scripts/run-code-node.mjs           прогон Code-ноды на фикстурах без n8n (--ref, --env, --static)
 scripts/lib/code.mjs                чтение кода Code-ноды с раскрытием // @include
