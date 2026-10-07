@@ -25,6 +25,7 @@ const VERDICT_ICON = { apply: '🟢', maybe: '🟡', skip: '🔴', error: '⚠�
 const STATUS_ICON = {
   new: '⚙️',
   detailed: '⚙️',
+  scoring: '⚙️',
   waiting: '⏳',
   approved: '✅',
   maybe: '🤔',

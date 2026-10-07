@@ -1,13 +1,13 @@
 // W2 · Build prompt — запрос к нейросети по каждой вакансии со status = detailed.
 // Нода: Code, режим «Run Once for All Items».
-// Вход: строки из «Pending» и текст резюме из «Resume text» (docs/resume.md смонтирован в контейнер).
+// Вход: строки, захваченные «Claim» (status = scoring), и текст резюме из «Resume text» (docs/resume.md смонтирован в контейнер).
 // Выход: item на вакансию { id, provider, model, body } — body уходит в HTTP Request «Gemini» или «Claude».
 // Провайдер — $env.LLM_PROVIDER (gemini | claude), модели — $env.GEMINI_MODEL / $env.CLAUDE_MODEL.
 // Правила — ответы пользователя от 07.10.2026 (CLAUDE.md §7, «Решает нейросеть»), AI-вакансии — тоже 07.10.2026.
 
 // @include n8n/shared/ai.js
 
-const rows = $('Pending').all().map((i) => i.json);
+const rows = $('Claim').all().map((i) => i.json);
 const resume = String($('Resume text').first().json.resume ?? '').trim();
 if (!resume) throw new Error('Пустое резюме: проверь docs/resume.md и том ./docs в docker-compose.yml');
 
