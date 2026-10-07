@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Собрать workflow из n8n/**/*.js и залить в локальный n8n (docker compose).
 #
-#   scripts/deploy.sh           импорт всех workflow + публикация рабочих (расписания включены)
-#   scripts/deploy.sh --paused  то же, но W1, W2 и W6 остаются выключенными (сбор и сводка не работают)
+#   scripts/deploy.sh               импорт всех workflow + публикация рабочих (расписания включены)
+#   scripts/deploy.sh --paused      то же, но W1, W2 и W6 остаются выключенными (сбор и сводка не работают)
+#   scripts/deploy.sh --any-branch  деплой не с develop / production (осознанно, в обход git flow)
 #   (--publish — прежнее название обычного деплоя, работает как без флага)
+#
+# Git flow (docs/git-flow.md): в n8n уходит develop (проверка на живых запусках) или production (hotfix, откат).
 #
 # Импорт снимает публикацию со всех workflow, поэтому после него публикуются заново:
 #   - W4 (тревоги) и W5 (письма) — всегда: в n8n 2.42 неопубликованный Error workflow
@@ -17,10 +20,34 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+PAUSED=false
+ANY_BRANCH=false
+for arg in "$@"; do
+  case "$arg" in
+    --paused) PAUSED=true ;;
+    --any-branch) ANY_BRANCH=true ;;
+    --publish) ;;
+    *)
+      echo "Неизвестный флаг: $arg" >&2
+      exit 2
+      ;;
+  esac
+done
+
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [[ "$BRANCH" != develop && "$BRANCH" != production && "$ANY_BRANCH" != true ]]; then
+  echo "Деплой с ветки «${BRANCH}» не по git flow: в n8n уходит develop или production (docs/git-flow.md)." >&2
+  echo "Влей ветку через PR в develop и деплой оттуда. Осознанно с этой ветки — scripts/deploy.sh --any-branch" >&2
+  exit 1
+fi
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+  echo "⚠️  Есть незакоммиченные изменения — в n8n уйдёт код, которого нет в git" >&2
+fi
+
 CONTAINER=job-hunter-n8n
 # W5 (письма) вызывается из W3 через Execute Workflow: в n8n 2.42 вызвать можно только опубликованный
 WORKFLOWS_TO_PUBLISH=(jobHunterW4Error jobHunterW5Lettr)
-if [[ "${1:-}" != "--paused" ]]; then
+if [[ "$PAUSED" != true ]]; then
   # W2 вызывается из W1 тем же способом — публикуется вместе с ним
   WORKFLOWS_TO_PUBLISH+=(jobHunterW1Colle jobHunterW2Score jobHunterW6Summ1)
 fi
