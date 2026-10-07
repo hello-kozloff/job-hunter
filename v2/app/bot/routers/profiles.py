@@ -23,7 +23,7 @@ from app.db.models import User
 from app.domain import resume_text
 from app.domain.llm.draft import ConfigEdit
 from app.domain.resume_text import ResumeTextError
-from app.services import collect, hh_resume, profiles
+from app.services import collect, hh_resume, preview, profiles
 from app.services.llm import LlmError
 
 router = Router(name="profiles")
@@ -240,4 +240,10 @@ async def edit_text(message: Message, session: AsyncSession, user: User, state: 
     kb.button(text=t("edit.btn_apply"), callback_data=Prof(action="apply", pid=loaded.profile.id))
     kb.button(text=t("edit.btn_cancel"), callback_data=Prof(action="cancel", pid=loaded.profile.id))
     changes = "\n".join(f"• {html.escape(c)}" for c in edit.changes)
-    await progress.edit_text(t("edit.preview", changes=changes), reply_markup=kb.as_markup())
+    d = await preview.diff(session, loaded.profile.id, loaded.config.filter, edit.filter)
+    effect = ""
+    if d.total:
+        effect = t("edit.effect", total=d.total, rejected=len(d.now_rejected), passed=len(d.now_passed))
+        effect += "".join(f"\n➖ {html.escape(title)} — {html.escape(', '.join(r))}" for title, r in d.now_rejected[:5])
+        effect += "".join(f"\n➕ {html.escape(title)}" for title in d.now_passed[:5])
+    await progress.edit_text(t("edit.preview", changes=changes) + effect, reply_markup=kb.as_markup())

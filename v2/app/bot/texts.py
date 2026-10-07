@@ -89,6 +89,7 @@ RU = {
     "edit.question": "🤔 {question}\n\nНапиши иначе или /cancel.",
     "edit.nothing": "🤷 Нейросеть ничего не поменяла. Сформулируй иначе или /cancel.",
     "edit.preview": "✏️ <b>Изменения</b>\n{changes}\n\nПрименить?",
+    "edit.effect": "\n\n🔬 На последних {total} вакансиях резюме: станет отсеиваться {rejected}, пройдёт заново {passed}",
     "edit.btn_apply": "✅ Применить",
     "edit.btn_cancel": "Отмена",
     "edit.applied": "✅ Применено: версия {version}.",

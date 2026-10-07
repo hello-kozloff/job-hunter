@@ -48,6 +48,7 @@ for id in jobHunterV2Error jobHunterV2Collc; do
   docker exec "$N8N" n8n publish:workflow --id="$id"
 done
 docker compose restart n8n
+until curl -sf localhost:5679/healthz >/dev/null; do sleep 2; done
 docker compose ps --format 'table {{.Name}}\t{{.Status}}'
 
 if ! grep -q '^TG_BOT_TOKEN=..*' .env; then

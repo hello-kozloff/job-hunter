@@ -156,3 +156,19 @@ async def test_other_users_profiles_not_touched_by_manual_run(session) -> None:
     b = await make_profile(session, 2)
     await run_once(session, search_html([vac(1, "QA")]), kind="bot", profile_id=a.id, chat_id=1)
     assert await session.scalar(select(func.count()).select_from(Match).where(Match.profile_id == b.id)) == 0
+
+
+async def test_preview_diff(session) -> None:
+    from app.services import preview
+
+    p = await make_profile(session)
+    await run_once(session, search_html([vac(1, "QA Engineer"), vac(2, "Java QA"), vac(3, "Selenium QA")]))
+    old = qa_config().filter
+    new = old.model_copy(deep=True)
+    new.rules[0].enabled = False  # Java больше не режем
+    new.rules.append(Rule(id="selenium", label="Selenium", stage="search", kind="reject",
+                          match=[{"fields": ["title"], "patterns": ["selenium"]}]))
+    d = await preview.diff(session, p.id, old, new)
+    assert d.total == 3
+    assert d.now_passed == ["Java QA"]
+    assert d.now_rejected == [("Selenium QA", ["Selenium"])]
