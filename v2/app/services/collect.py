@@ -14,7 +14,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import Integer, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -137,6 +137,19 @@ async def _set_stop(session: AsyncSession, now: datetime, reason: str) -> dateti
 
 async def _clear_stop(session: AsyncSession) -> None:
     await session.execute(delete(SystemState).where(SystemState.name == STOP_KEY))
+
+
+async def _bump(session: AsyncSession, run_id: int, **deltas: int) -> None:
+    """Счётчики сбора += delta одним UPDATE: n8n шлёт страницы параллельно, чтение-правка-запись теряла бы шаги."""
+    expr = Run.stats
+    for key, delta in deltas.items():
+        expr = expr.op("||")(
+            func.jsonb_build_object(key, func.coalesce(Run.stats[key].astext.cast(Integer), 0) + delta)
+        )
+    # synchronize_session=False: иначе ORM «протухнет» объект Run в сессии (следующее чтение полей → MissingGreenlet)
+    await session.execute(
+        update(Run).where(Run.id == run_id).values(stats=expr).execution_options(synchronize_session=False)
+    )
 
 
 # ---------- 1. План ----------
@@ -274,9 +287,8 @@ async def ingest_search(
     await _clear_stop(session)
 
     vacancies, new = await _upsert_pool(session, page.records)
-    stats = dict(run.stats)
-    stats["found"] = stats.get("found", 0) + (page.total or 0)
-    stats["new"] = stats.get("new", 0) + new
+    await _bump(session, run_id, found=page.total or 0, new=new)
+    stats = run.stats
 
     profile_ids = list(await session.scalars(select(ProfileSearch.profile_id).where(ProfileSearch.search_id == search_id)))
     if run.kind in MANUAL_KINDS and stats.get("profile_id"):
@@ -304,7 +316,6 @@ async def ingest_search(
             if status_ == "search_passed":
                 need_page[v.id] = v
     await _schedule_next(session, search, now)
-    run.stats = stats
     await session.commit()
     await alerts.resolve(session, "v2 сбор: hh")
     return {"pages": [{"vacancy_id": v.id, "url": v.url} for v in need_page.values()], "stop": False}
@@ -336,10 +347,7 @@ async def ingest_vacancy(session: AsyncSession, run_id: int, vacancy_id: int, st
         if page.archived and not v.archived_at:
             v.archived_at = now
     if run:
-        stats = dict(run.stats)
-        stats["pages"] = stats.get("pages", 0) + 1
-        stats["page_errors"] = stats.get("page_errors", 0) + (1 if page.error else 0)
-        run.stats = stats
+        await _bump(session, run_id, pages=1, page_errors=1 if page.error else 0)
 
     waiting = list(await session.scalars(select(Match).where(Match.vacancy_id == v.id, Match.filter_status == "search_passed")))
     if waiting:
@@ -357,7 +365,7 @@ async def ingest_vacancy(session: AsyncSession, run_id: int, vacancy_id: int, st
 
 
 async def finish(session: AsyncSession, run_id: int, now: datetime) -> dict:
-    run = await session.get(Run, run_id)
+    run = await session.get(Run, run_id, populate_existing=True)
     if run is None:
         return {}
     if run.status == "running":
