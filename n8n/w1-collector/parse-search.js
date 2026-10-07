@@ -3,10 +3,12 @@
 // Вход: ответы HTTP Request «Search hh», по одному на страницу (Response Format = Text,
 //       Include Response Headers and Status = on).
 // Выход: ОДИН item —
-//   { ok: true,  firstRun, vacancies: [...] }  → IF «OK?» → Split Out
-//   { ok: false, reason, html }                → IF «OK?» → сохранить HTML → Stop and Error
+//   { ok: true,  firstRun, vacancies: [...], requests: [...] }  → IF «OK?» → Split Out
+//   { ok: false, reason, html }                                → IF «OK?» → сохранить HTML → Stop and Error
+// requests — запросы поиска для сообщения о сборе: { page, status, total (нашёл hh), count (на странице) }
 
-const firstRun = Boolean($('Plan').first().json.firstRun);
+const plan = $('Plan').all().map((i) => i.json);
+const firstRun = Boolean(plan[0]?.firstRun);
 
 // HTML-сущности раскодируем за один проход: иначе &amp;quot; станет кавычкой и сломает JSON
 const NAMED = { quot: '"', amp: '&', lt: '<', gt: '>', apos: "'", nbsp: '\u00a0' };
@@ -85,8 +87,9 @@ function toRecord(v) {
 
 const byKey = new Map();
 const seenIds = new Set();
+const requests = [];
 
-for (const item of $input.all()) {
+for (const [index, item] of $input.all().entries()) {
   const res = item.json;
   const html = htmlOf(res);
 
@@ -111,6 +114,12 @@ for (const item of $input.all()) {
 
   const list = state?.vacancySearchResult?.vacancies;
   if (!Array.isArray(list)) return fail('Нет vacancySearchResult.vacancies — сменилась структура', html);
+  requests.push({
+    page: plan[index]?.page ?? index,
+    status: res.statusCode,
+    total: state.vacancySearchResult.totalResults ?? null,
+    count: list.length,
+  });
 
   for (const v of list) {
     if (!v?.vacancyId || !v?.name) return fail('У вакансии нет vacancyId/name — сменилась структура', html);
@@ -129,4 +138,4 @@ for (const item of $input.all()) {
 // Пустая выдача по нашему запросу не бывает — считаем поломкой
 if (byKey.size === 0) return fail('В выдаче 0 вакансий — сменилась структура или запрос', htmlOf($input.first().json));
 
-return [{ json: { ok: true, firstRun, vacancies: [...byKey.values()] } }];
+return [{ json: { ok: true, firstRun, vacancies: [...byKey.values()], requests } }];

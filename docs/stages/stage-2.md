@@ -16,7 +16,7 @@ Is new → Blacklist (все строки таблицы blacklist, один р�
        → Update           запись обратно по id
 ```
 
-- Сообщения в Telegram с этапа 3 шлёт W2: карточка на каждую `detailed` + сводка «🚫 Фильтр отсеял M: причина k …» (`docs/stages/stage-3.md`). Отсеянные видны в таблице `vacancies` (`status = rejected`, `reasons`).
+- Сообщения в Telegram с этапа 3 шлёт W2: карточка на каждую `detailed` + сообщение о сборе, где отсеянные перечислены с причинами: «🚫 Название — причина» (`docs/stages/stage-3.md`). Отсеянные видны в таблице `vacancies` (`status = rejected`, `reasons`).
 - Страница вакансии не открылась → вакансия всё равно `detailed` с текстом в `error`: нейросеть оценит её по фрагменту из выдачи, в карточке ⚠️.
 - Код: `n8n/w1-collector/filter-search.js`, `parse-vacancy.js`.
 

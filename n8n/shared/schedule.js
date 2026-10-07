@@ -1,7 +1,7 @@
 // Расписание сбора W1 по Москве (UTC+3, без перехода на летнее время), решение пользователя 07.10.2026:
 // днём 07:00–17:30 каждые 30 мин, ночью 18, 20, 22, 00, 02, 04, 06 — 29 сборов в сутки.
 // Держать в синхроне с Schedule W1 в scripts/build-workflows.mjs.
-// Общий код W6 «Summary» и W7 «Render»: строка «// @include n8n/shared/schedule.js».
+// Общий код W1 «Score job» (следующий сбор), W6 «Summary» и W7 «Render»: строка «// @include n8n/shared/schedule.js».
 
 const COLLECT_STEP = 30 * 60 * 1000;
 
