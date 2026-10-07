@@ -40,7 +40,7 @@
 | **HTTP-запросы к сайту hh.ru + парсинг HTML** | ✅ **выбран, проверен** | 06.10.2026 с Mac (тайский домашний IP): поиск и страница вакансии отдаются без капчи |
 | n8n Cloud | ❌ не используем | Пользователь выбрал self-hosted: бесплатно, без лимита executions, домашний IP. Блокирует ли hh облачные IP — не проверяли, не нужно |
 | Кнопки Telegram на локальном n8n | ✅ ngrok + Telegram Trigger (перенесено на этап 3) | Контейнер ngrok в docker compose, бесплатный постоянный домен; наружу только `/webhook/*` с адресов Telegram, интерфейс n8n — только localhost |
-| Нейросеть для оценки | ✅ Gemini Flash-Lite, бесплатный тариф (07.10.2026) | Пользователь выбрал бесплатно; при исчерпании лимитов — ручное переключение на Claude Haiku 4.5 (`LLM_PROVIDER=claude`). В промпт уходит резюме целиком (бесплатный Gemini может учиться на запросах — пользователь согласен) |
+| Нейросеть для оценки | ✅ Gemini Flash-Lite, бесплатный тариф (07.10.2026) | Пользователь выбрал бесплатно; при исчерпании лимитов — переключение на Claude Haiku 4.5 кнопкой в боте (⚙️ → 🤖 Нейросеть, с 07.10.2026; нужен `ANTHROPIC_API_KEY`). В промпт уходит резюме целиком (бесплатный Gemini может учиться на запросах — пользователь согласен) |
 
 Устаревшие артефакты из чата (не использовать): `01_collector.json` (на API hh), `explore_hh_bot.py` (юзербот).
 
@@ -155,7 +155,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - этап 3: `decision` (apply|maybe|skip|error), `llm_reason`, `llm_model`, `my_decision` (кнопка: apply|maybe|skip|earlier), `my_reason` (ответ на «Почему?»), `tg_message_id` (карточка), `tg_ask_id` (вопрос «Почему?»);
 - этап 4: `letter`, `tg_letter_id` (сообщение с письмом — на него отвечают с правкой), `letter_notes` (пожелания к письмам через « | »), `applied_at`;
 - этап 5: `card_at` (когда W2 отправил карточку — от него считаются 3 дня);
-- 07.10.2026: `letter_lock` (защита от двойного ✅), `prompt_v` (версия промпта оценки);
+- 07.10.2026: `letter_lock` (защита от двойного ✅), `prompt_v` (версия промпта оценки: хеш правил без резюме — по нему теневой режим разбирается по версиям);
 - таблица `blacklist`: `company, comment`;
 - таблица `runs` — журнал сборов W1: `started_at, finished_at, kind` (schedule | catchup | bot | manual), `status` (running | ok | error), `found, uniq, fresh, rejected, scoring, pages, cards, error`;
 - таблица `settings` — настройки из бота: `name, value_json` (только изменения; значения по умолчанию — в коде);
@@ -178,7 +178,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - `./fixtures` → `/home/node/.n8n-files/fixtures`: файловые ноды n8n 2.x видят только `~/.n8n-files`;
 - `./docs` → `/home/node/.n8n-files/docs` (только чтение): резюме для промптов W2/W5, образец письма `docs/letter-example.md` (не в git);
 - сводка и страж: `NGROK_DOMAIN` (проверка туннеля снаружи), `HC_PING_URL` (сигнал healthchecks.io);
-- нейросеть: `LLM_PROVIDER` (gemini | claude), `GEMINI_MODEL` (по умолчанию `gemini-3.5-flash-lite` — закреплена, чтобы оценки не менялись в теневом режиме), `CLAUDE_MODEL` (`claude-haiku-4-5`).
+- нейросеть: провайдер — настройка бота `llm.provider` (с 07.10.2026; `LLM_PROVIDER` больше не читается), `GEMINI_MODEL` (по умолчанию `gemini-3.5-flash-lite` — закреплена, чтобы оценки не менялись в теневом режиме), `CLAUDE_MODEL` (`claude-haiku-4-5`).
 
 **Особенности n8n 2.x (проверено на 2.42.3):**
 - «Publish» вместо «Activate»; импорт workflow через CLI снимает публикацию со всех → `deploy.sh` после импорта публикует рабочие заново (W1, W2, W4, W5, W6; W3 — при туннеле; `--paused` — без W1/W2/W6); CLI-публикацию запущенный n8n видит только после перезапуска (`deploy.sh` перезапускает сам);
@@ -227,7 +227,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - «только из РФ / находиться на территории РФ / резидент РФ / located in Russia» (цитата пишется в `reasons`);
 - нет ни React / Next.js, ни Vue / Nuxt — ни в названии, ни в навыках, ни в описании. Кроме AI-вакансий (по названию и навыкам, `n8n/shared/ai.js`) с JS/TS в тексте (Node.js, NestJS, TypeScript, JavaScript); AI без JS/TS → «AI не на JS/TS» (07.10.2026: AI на Python пользователь отклонил).
 
-**Решает нейросеть (W2, промпт `n8n/w2-score/build-prompt.js`; 07.10.2026):**
+**Решает нейросеть (W2, промпт `n8n/w2-score/build-prompt.js`; 07.10.2026):** решения по спорным случаям (Vue, fullstack, AI на JS/TS, React Native), теневой режим и провайдер (Gemini/Claude) — настройки бота (⚙️ → 🤖 Нейросеть, `docs/settings.md`); ниже — значения по умолчанию.
 - skip: основной стек не React и не Vue (React «плюсом» при таком стеке — тоже skip), кроме разработки на AI на JS/TS; AI на Python, Go, Java и т. п.; ML и Data Science (обучение моделей, MLOps, исследования); мобильная разработка, в том числе React Native; английский C1+ или общение только на английском; нужно жить в определённой стране (не только РФ) или ездить в офис; работа ночью по Таиланду (часы США);
 - maybe: основной стек Vue / Nuxt без React (07.10.2026: пользователь готов работать на Vue, решает сам); любой fullstack (бэкенд на любом языке, включая Node.js), кроме разработки на AI; английский B2; мягкие требования к стране/офису («желательно»); мало данных;
 - apply: React/Next.js — основной стек (в том числе вместе с Vue: «React, Vue»), удалёнка без привязки к стране; разработка на AI на JS/TS (07.10.2026: интеграции LLM, AI-агенты, RAG, AI-first/AI-native — главное в роли; Node.js, NestJS, TypeScript, в том числе бэкенд без React), если удалёнка без привязки и нет других причин для skip/maybe. AI как инструмент («используем ChatGPT») — не разработка на AI. Если в названии или навыках есть AI, W2 добавляет к вакансии подсказку с этим правилом (Flash-Lite иначе держится за «чистый бэкенд → skip»);
