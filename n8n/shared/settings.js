@@ -40,6 +40,14 @@ const SETTINGS = {
       'tutor', 'instructor', "o'qituvchi", 'oqituvchi', 'преподавател*', 'тестировщик*', 'наставник*'],
     words: true,
   },
+  // Нейросеть (W2, W5): провайдер; теневой режим — карточки и на skip (выкл — skip только в сводке);
+  // решения по спорным правилам (n8n/w2-score/build-prompt.js: не по умолчанию — «Поправки кандидата»)
+  'llm.provider': { default: 'gemini', options: ['gemini', 'claude'] },
+  'llm.shadow': { default: true, options: [true, false] },
+  'llm.vue': { default: 'maybe', options: ['apply', 'maybe', 'skip'] },
+  'llm.fullstack': { default: 'maybe', options: ['apply', 'maybe', 'skip'] },
+  'llm.ai_js': { default: 'apply', options: ['apply', 'maybe', 'skip'] },
+  'llm.react_native': { default: 'skip', options: ['skip', 'maybe', 'apply'] },
 };
 
 // Слово списка: буквы, цифры, пробел и . + # ' - ; «*» в конце — любое окончание. Без скобок и кавычек:

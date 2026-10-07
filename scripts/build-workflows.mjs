@@ -406,6 +406,24 @@ const PANEL_LAYOUTS = [
       ],
     ],
   ],
+  [
+    'set llm',
+    [
+      [
+        [panelButton('provider.text'), panelButton('provider.cb')],
+        [panelButton('shadow.text'), panelButton('shadow.cb')],
+      ],
+      [
+        [panelButton('vue.text'), panelButton('vue.cb')],
+        [panelButton('fullstack.text'), panelButton('fullstack.cb')],
+      ],
+      [
+        [panelButton('ai.text'), panelButton('ai.cb')],
+        [panelButton('rn.text'), panelButton('rn.cb')],
+      ],
+      [['⬅️ Настройки', 's:root']],
+    ],
+  ],
 ];
 
 // W3: состояние после нажатия кнопки, которое посчитали ноды «Apply choice» и «Apply sent»
@@ -915,6 +933,8 @@ const workflows = {
         { credentials: { googlePalmApi: { id: IDS.geminiCredential, name: 'Gemini' } }, onError: 'continueRegularOutput' },
       ),
       code('W2', 'Parse verdict', 'n8n/w2-score/parse-verdict.js', [1760, 0]),
+      // Настройки бота: провайдер и правила (Build prompt), теневой режим (Format card, Quiet skips)
+      settingsNode('W2', [550, 150]),
       code('W2', 'Format card', 'n8n/w2-score/format-card.js', [1980, -100]),
       telegram('W2', 'Send card', [2200, -100], {
         markup: {
@@ -947,6 +967,16 @@ const workflows = {
       }),
       // Сообщения после запуска: о сборе («🔎 Сбор» из W1), итог оценки, тревоги. Своя ветка от триггера ниже ветки
       // карточек: n8n (execution order v1) выполняет её последней, даже если «Pending» пуст и карточек не было
+      // Теневой режим выключен: skip без карточки — строка сразу skipped (ветка ниже карточек)
+      code('W2', 'Quiet skips', 'n8n/w2-score/quiet-skips.js', [1980, 150]),
+      node('W2', 'Save quiet skips', 'dataTable', 1.1, [2200, 150], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        ...byId('={{ $json.id }}'),
+        columns: AUTO_MAP,
+        options: {},
+      }),
       code('W2', 'Summary', 'n8n/w2-score/summary.js', [1980, 300]),
       telegram('W2', 'Send summary', [2200, 300], {
         fields: { disable_notification: '={{ $json.silent }}' },
@@ -1021,7 +1051,8 @@ const workflows = {
       ['Release', 'Save release'],
       ...W2_RECOVERY.links,
       ['Pending', 'Claim'],
-      ['Claim', 'Resume'],
+      ['Claim', 'Settings'],
+      ['Settings', 'Resume'],
       ['Resume', 'Resume text'],
       ['Resume text', 'Build prompt'],
       ['Build prompt', 'Claude?'],
@@ -1030,6 +1061,8 @@ const workflows = {
       ['Claude', 'Parse verdict'],
       ['Gemini', 'Parse verdict'],
       ['Parse verdict', 'Format card'],
+      ['Parse verdict', 'Quiet skips'],
+      ['Quiet skips', 'Save quiet skips'],
       ['Format card', 'Send card'],
       ['Send card', 'Card sent'],
       ['Card sent', 'Save cards'],
@@ -1394,6 +1427,8 @@ const workflows = {
         destinationKey: 'example',
         options: {},
       }),
+      // Провайдер нейросети — из настроек бота (⚙️ → 🤖 Нейросеть)
+      settingsNode('W5', [770, 150]),
       code('W5', 'Build letter', 'n8n/w5-letter/build-letter.js', [1760, 0]),
       node('W5', 'Claude?', 'if', 2.3, [1980, 0], ifTrue('W5', "={{ $json.provider === 'claude' }}")),
       node(
@@ -1477,7 +1512,8 @@ const workflows = {
       ['Manual', 'Approved'],
       ['Approved', 'Jobs'],
       ['Jobs', 'Vacancy'],
-      ['Vacancy', 'Resume'],
+      ['Vacancy', 'Settings'],
+      ['Settings', 'Resume'],
       ['Resume', 'Resume text'],
       ['Resume text', 'Example'],
       ['Example', 'Example text'],
