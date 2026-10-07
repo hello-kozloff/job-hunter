@@ -16,6 +16,9 @@
 //   node scripts/n8n-api.mjs requeue <days> [--dry]    вернуть в обработку вакансии бэкфилла (seen) за N дней:
 //                                                      удалить их строки, следующий запуск W1 примет их как новые
 //                                                      (--dry — только показать, что удалится)
+//   node scripts/n8n-api.mjs recheck <правило> [--dry]  правило фильтра поменялось: удалить строки, отсеянные
+//                                                      им (rejected, правило в reasons, например «Vue/Angular»),
+//                                                      следующий запуск W1 оценит их по текущим правилам
 //
 // Вход — N8N_OWNER_EMAIL / N8N_OWNER_PASSWORD из .env.
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -244,11 +247,8 @@ async function blacklistSeed() {
   console.log(`blacklist: добавлено ${add.length}, уже было ${seed.length - add.length}`);
 }
 
-// Удаляются только строки, чьи вакансии есть в выдаче последнего успешного запуска W1:
-// обычный запуск W1 читает одну страницу поиска, и всё, чего на ней нет, пропало бы из таблицы
-async function requeue(days, flag) {
-  if (!Number(days)) throw new Error('usage: requeue <days>');
-  const cookie = await login();
+// Выдача последнего успешного запуска W1 (нода «Split vacancies»): external_id и dup_key вакансий
+async function lastSearch(cookie) {
   const filter = encodeURIComponent(JSON.stringify({ workflowId: 'jobHunterW1Colle', status: ['success'] }));
   const { json: list } = await api(`/executions?filter=${filter}&limit=1`, { cookie });
   const last = list.results?.[0];
@@ -256,27 +256,53 @@ async function requeue(days, flag) {
   const { json: execution } = await api(`/executions/${last.id}`, { cookie });
   const data = typeof execution.data === 'string' ? unflatten(execution.data) : execution.data;
   const search = (data.resultData.runData['Split vacancies']?.[0]?.data?.main?.[0] ?? []).map((i) => i.json);
-  const inSearch = new Set(search.flatMap((v) => [v.external_id, v.dup_key]));
+  return { runId: last.id, has: (r) => search.some((v) => v.external_id === r.external_id || v.dup_key === r.dup_key) };
+}
 
+// Удалить строки таблицы vacancies, чьи вакансии есть в выдаче последнего успешного запуска W1:
+// следующий запуск W1 примет их как новые и прогонит через текущие правила. Вакансии не из выдачи
+// не трогаем — обычный запуск W1 читает одну страницу поиска, и они пропали бы из таблицы насовсем
+async function forgetRows(pick, { dry, nothing, done }) {
+  const cookie = await login();
+  const search = await lastSearch(cookie);
   const personal = await personalProject(cookie);
   const base = `/projects/${personal.id}/data-tables`;
   const { json: tables } = await api(base, { cookie });
   const table = (tables.data ?? tables).find((t) => t.name === 'vacancies');
-  const { json: content } = await api(`${base}/${table.id}/rows?take=1000&skip=0`, { cookie });
-  const since = Date.now() - Number(days) * 24 * 3600 * 1000;
-  const rows = (content.data ?? []).filter(
-    (r) => r.status === 'seen' && Date.parse(r.published_at) >= since && (inSearch.has(r.external_id) || inSearch.has(r.dup_key)),
-  );
-  if (!rows.length) return console.log(`Нечего возвращать: seen за ${days} дн. в выдаче запуска ${last.id} нет`);
-  if (flag === '--dry') {
-    console.log(`Удалилось бы ${rows.length} строк (выдача запуска ${last.id}):`);
-    for (const r of rows) console.log(`  ${r.published_at.slice(0, 10)}  ${r.company} — ${r.title}`);
-    return;
+  const { json: content } = await api(`${base}/${table.id}/rows?take=5000&skip=0`, { cookie });
+  const rows = (content.data ?? []).filter((r) => pick(r) && search.has(r));
+  const list = () => rows.forEach((r) => console.log(`  ${r.published_at.slice(0, 10)}  ${r.company} — ${r.title}`));
+  if (!rows.length) return console.log(`${nothing} (выдача запуска ${search.runId})`);
+  if (dry) {
+    console.log(`Удалилось бы ${rows.length} строк (выдача запуска ${search.runId}):`);
+    return list();
   }
   const conditions = { type: 'or', filters: rows.map((r) => ({ columnName: 'id', condition: 'eq', value: r.id })) };
   await api(`${base}/${table.id}/rows?filter=${encodeURIComponent(JSON.stringify(conditions))}`, { method: 'DELETE', cookie });
-  console.log(`Удалено ${rows.length} строк (выдача запуска ${last.id}). Теперь: node scripts/n8n-api.mjs run jobHunterW1Colle`);
-  for (const r of rows) console.log(`  ${r.published_at.slice(0, 10)}  ${r.company} — ${r.title}`);
+  console.log(`Удалено ${rows.length} строк (выдача запуска ${search.runId}). ${done}`);
+  list();
+}
+
+// Бэкфилл (seen) за N дней — в обработку
+async function requeue(days, flag) {
+  if (!Number(days)) throw new Error('usage: requeue <days>');
+  const since = Date.now() - Number(days) * 24 * 3600 * 1000;
+  await forgetRows((r) => r.status === 'seen' && Date.parse(r.published_at) >= since, {
+    dry: flag === '--dry',
+    nothing: `Нечего возвращать: seen за ${days} дн. в выдаче нет`,
+    done: 'Теперь: node scripts/n8n-api.mjs run jobHunterW1Colle',
+  });
+}
+
+// Правило фильтра поменялось — перепроверить вакансии, которые оно отсеяло (rejected, правило в reasons)
+async function recheck(rule, flag) {
+  if (!rule) throw new Error('usage: recheck <правило из reasons, например Vue/Angular> [--dry]');
+  const hasRule = (r) => String(r.reasons ?? '').split(', ').some((reason) => reason.replace(/:.*$/, '') === rule);
+  await forgetRows((r) => r.status === 'rejected' && hasRule(r), {
+    dry: flag === '--dry',
+    nothing: `Нечего перепроверять: отсеянных правилом «${rule}» в выдаче нет`,
+    done: 'Следующий запуск W1 оценит их заново: node scripts/n8n-api.mjs run jobHunterW1Colle',
+  });
 }
 
 // Ключ публичного API n8n (W6 читает запуски за сутки). Старый ключ с той же меткой удаляется.
@@ -336,10 +362,10 @@ async function setupOwner(email) {
 }
 
 const [command, ...args] = process.argv.slice(2);
-const commands = { 'setup-owner': setupOwner, run, publish, unpublish, executions, rows, migrate, 'blacklist-seed': blacklistSeed, 'tunnel-env': tunnelEnv, requeue, 'api-key': apiKey };
+const commands = { 'setup-owner': setupOwner, run, publish, unpublish, executions, rows, migrate, 'blacklist-seed': blacklistSeed, 'tunnel-env': tunnelEnv, requeue, recheck, 'api-key': apiKey };
 if (!commands[command]) {
   console.error(
-    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> [node] | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate | blacklist-seed | tunnel-env | requeue <days> [--dry] | api-key',
+    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> [node] | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate | blacklist-seed | tunnel-env | requeue <days> [--dry] | recheck <rule> [--dry] | api-key',
   );
   process.exit(2);
 }
