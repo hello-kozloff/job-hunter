@@ -31,7 +31,7 @@
           "parameters": [
             {
               "name": "text",
-              "value": "NAME:(frontend OR front-end OR фронтенд OR react OR next.js OR nextjs OR typescript)"
+              "value": "NAME:(frontend OR front-end OR фронтенд OR react OR next.js OR nextjs OR typescript OR vue OR vue.js OR vuejs OR nuxt OR nuxt.js OR nuxtjs)"
             },
             {
               "name": "professional_role",

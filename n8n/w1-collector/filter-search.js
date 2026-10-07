@@ -27,7 +27,8 @@ const ru = (word) => new RegExp(`(^|[^а-яё])${word}([^а-яё]|$)`, 'i');
 const RULES = [
   ['без опыта', (r) => r.experience === 'noExperience'],
   ['junior/стажёр', (r) => /junior|\bintern|trainee/i.test(r.title) || ru('(стаж[её]р|младш[а-яё]*|джун[а-яё]*)').test(r.title)],
-  ['Vue/Angular', (r) => /vue|angular/i.test(r.title)],
+  // Vue не отсекаем (решение пользователя 07.10.2026): только Vue — нейросеть ставит maybe, React + Vue — как React
+  ['Angular', (r) => /angular/i.test(r.title)],
   [
     'Lead/архитектор',
     (r) =>
