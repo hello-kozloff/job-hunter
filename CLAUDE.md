@@ -21,9 +21,10 @@
 - **Формат работы (с 06.10.2026, по просьбе пользователя «продолжи дальше сам»):** workflow собирает и разворачивает Claude, пользователь смотрит результат в UI (логин — в `.env`).
   - код Code-нод — `n8n/<workflow>/*.js` (единственный источник правды);
   - `scripts/build-workflows.mjs` генерирует JSON workflow в `n8n/workflows/`;
-  - `scripts/deploy.sh` импортирует их в n8n и публикует рабочие (`--paused` — без сбора, оценки и сводки);
+  - `scripts/deploy.sh` импортирует их в n8n и публикует рабочие (`--paused` — без сбора, оценки и сводки); только с `develop` или `production`;
   - `scripts/n8n-api.mjs run <id>` запускает workflow и печатает сводку по нодам;
-  - `docs/stages/stage-N.md` — описание устройства и ручная сборка (для понимания).
+  - `docs/stages/stage-N.md` — описание устройства и ручная сборка (для понимания);
+  - изменения — git flow: `feature/*` от `develop` → PR в `develop` → деплой → проверка → релиз в `production` (§14). **Коммиты, PR и ветки — только по-английски.**
 - **На каждом этапе задавать максимум уточняющих вопросов** (просьба пользователя).
 - Структура: один инстанс n8n, внутри отдельные workflow на каждый участок. Связь между ними — через общую таблицу и статусы.
 
@@ -286,6 +287,7 @@ docker-compose.yml, .env.example   n8n локально (.env — не в git, �
 docs/resume.md                      резюме + «Дополнительно» со слов пользователя (не в git)
 docs/letter-example.md              образец письма пользователя (не в git)
 docs/stages/stage-N.md              устройство этапов и ручная сборка
+docs/git-flow.md                    ветки, PR, релизы, правила коммитов
 n8n/w0-check/*.js                   код Code-нод W0
 n8n/w1-collector/*.js               код Code-нод W1
 n8n/w2-score/*.js                   код Code-нод W2 (промпт, разбор ответа, карточки, сводка)
@@ -323,3 +325,21 @@ Workflow в n8n (постоянные id):
 | `jobHunterW6Summ1` | W6 Summary | утренняя сводка, устаревшие и закрытые карточки |
 
 Credentials: `jobHunterTgBot01` «Telegram bot», `jobHunterGemini1` «Gemini», `jobHunterClaude1` «Claude», `jobHunterN8nApi1` «n8n API» (ключ публичного API, создаёт `n8n-api.mjs api-key`).
+
+## 14. Git
+
+Решения пользователя (07.10.2026), подробно — `docs/git-flow.md`.
+
+- **Коммиты, PR и имена веток — только по-английски.** Формат — Conventional Commits: `feat(w1): collect every 30 min by day`. Типы: feat, fix, docs, refactor, perf, test, build, chore, revert. Scope — `w0`…`w6`, `shared`, `schema`, `deploy`, `scripts`, `stage-N`. Нужен ручной шаг после деплоя (migrate, `.env`, действие пользователя) — `!` и `BREAKING CHANGE:`.
+- **Ветки:**
+  - `production` — проверенное на живых запусках, точка отката;
+  - `develop` — интеграция, ветка по умолчанию на GitHub, **с неё деплой**;
+  - `feature/<kebab-name>` — от `develop`;
+  - `hotfix/<kebab-name>` — от `production`.
+  - Release-веток нет.
+- **Фича:** ветка от `develop` → коммиты → `gh pr create --base develop` → `gh pr merge --merge --delete-branch` (вливает Claude сам) → `develop` → `scripts/deploy.sh` → проверка на живых запусках.
+- **Релиз:** PR `develop` → `production` с заголовком `chore(release): vГГГГ.ММ.ДД` → merge → тег `vГГГГ.ММ.ДД` (второй за день — `.2`) на `production`.
+- **Hotfix:** `hotfix/*` от `production` → PR в `production` → деплой с `production` → тег → PR `production` → `develop` → снова деплой с `develop`.
+- **Защита в `deploy.sh`:** с другой ветки деплой не запустится без `--any-branch`. Если есть незакоммиченные изменения, скрипт предупредит.
+- **Откат:** `git switch production && scripts/deploy.sh`.
+- **Репозиторий:** `git@github.com:hello-kozloff/job-hunter.git`, приватный. До 07.10.2026 основная ветка называлась `main`.
