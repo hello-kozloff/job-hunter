@@ -7,8 +7,8 @@
 ## Как устроено
 
 ```
-W1 Collector (каждые 2 ч, :00)  … → Parse vacancy → Update: status = detailed
-W2 Score     (каждые 2 ч, :15)  Pending: строки detailed (до 40, старые первыми)
+W1 Collector (днём каждые 30 мин, ночью каждые 2 ч)  … → Parse vacancy → Update: status = detailed → Score job → W2
+W2 Score     (вызывает W1)     Pending: строки detailed (до 40, старые первыми)
                                 → Resume (docs/resume.md) → Build prompt
                                 → Claude? ─ да ─→ Claude ─┐
                                            └ нет → Gemini ─┴→ Parse verdict

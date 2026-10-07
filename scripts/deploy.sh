@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # Собрать workflow из n8n/**/*.js и залить в локальный n8n (docker compose).
 #
-#   scripts/deploy.sh            импорт всех workflow; расписания W1/W2 остаются выключенными
-#   scripts/deploy.sh --publish  то же + публикация W1 и W2 (расписания включены; W2 — если в .env есть ключ нейросети)
+#   scripts/deploy.sh           импорт всех workflow + публикация рабочих (расписания включены)
+#   scripts/deploy.sh --paused  то же, но W1, W2 и W6 остаются выключенными (сбор и сводка не работают)
+#   (--publish — прежнее название обычного деплоя, работает как без флага)
 #
-# Импорт снимает публикацию со всех workflow, поэтому:
-#   - W4 (тревоги) и W5 (письма) публикуются всегда — в n8n 2.42 неопубликованный Error workflow
+# Импорт снимает публикацию со всех workflow, поэтому после него публикуются заново:
+#   - W4 (тревоги) и W5 (письма) — всегда: в n8n 2.42 неопубликованный Error workflow
 #     и неопубликованный дочерний workflow (Execute Workflow) не запускаются;
-#   - W3 (кнопки Telegram) публикуется всегда, если настроен туннель (NGROK_DOMAIN в .env):
-#     при публикации n8n регистрирует вебхук бота https://<NGROK_DOMAIN>/webhook/…;
-#   - после изменений в W1/W2 деплоить с --publish.
+#   - W1 (сбор), W2 (оценка — её вызывает W1) и W6 (сводка) — если нет --paused;
+#   - W3 (кнопки Telegram) — если настроен туннель (NGROK_DOMAIN в .env):
+#     при публикации n8n регистрирует вебхук бота https://<NGROK_DOMAIN>/webhook/….
 # Публикацию из CLI запущенный n8n видит только после перезапуска — в конце n8n перезапускается.
 #
 # Credentials (Telegram, Gemini, Claude) создаются/обновляются из ключей в .env — см. scripts/credentials.mjs.
@@ -19,12 +20,9 @@ cd "$(dirname "$0")/.."
 CONTAINER=job-hunter-n8n
 # W5 (письма) вызывается из W3 через Execute Workflow: в n8n 2.42 вызвать можно только опубликованный
 WORKFLOWS_TO_PUBLISH=(jobHunterW4Error jobHunterW5Lettr)
-if [[ "${1:-}" == "--publish" ]]; then
-  WORKFLOWS_TO_PUBLISH+=(jobHunterW1Colle jobHunterW6Summ1)
-  # W2 без ключа нейросети каждый запуск слал бы тревогу — публикуем, когда ключ есть
-  if grep -qE '^(GEMINI_API_KEY|ANTHROPIC_API_KEY)=..*' .env 2>/dev/null; then
-    WORKFLOWS_TO_PUBLISH+=(jobHunterW2Score)
-  fi
+if [[ "${1:-}" != "--paused" ]]; then
+  # W2 вызывается из W1 тем же способом — публикуется вместе с ним
+  WORKFLOWS_TO_PUBLISH+=(jobHunterW1Colle jobHunterW2Score jobHunterW6Summ1)
 fi
 if grep -q '^NGROK_DOMAIN=..*' .env 2>/dev/null; then
   WORKFLOWS_TO_PUBLISH+=(jobHunterW3Teleg)

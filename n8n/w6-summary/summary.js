@@ -66,17 +66,41 @@ const NAMES = {
 };
 const executionsBody = $('Executions').first().json;
 const executions = (executionsBody.data ?? []).filter((e) => at(e.startedAt) >= since);
-const collected = count(executions, (e) => e.workflowId === 'jobHunterW1Colle' && e.status === 'success' && e.mode === 'trigger');
 const errors = executions.filter((e) => e.status === 'error' || e.status === 'crashed');
 const errorsBy = {};
 for (const e of errors) errorsBy[NAMES[e.workflowId] ?? e.workflowId] = (errorsBy[NAMES[e.workflowId] ?? e.workflowId] ?? 0) + 1;
-const pendingScore = count(rows, (r) => r.status === 'detailed');
+
+// Сборы W1 по расписанию (МСК, держать в синхроне с Schedule W1 в scripts/build-workflows.mjs):
+// днём 07:00–17:30 каждые 30 мин, ночью 18, 20, 22, 00, 02, 04, 06 — 29 в сутки.
+// Окно — сутки до «сейчас − 10 мин»: сбор в 06:00 идёт одновременно со сводкой и ещё не закончился
+const SLOT = 30 * 60 * 1000;
+const isCollectSlot = (t) => {
+  const msk = new Date(t + 3 * 3600 * 1000);
+  const h = msk.getUTCHours();
+  const m = msk.getUTCMinutes();
+  return h >= 7 && h < 18 ? m % 30 === 0 : m === 0 && h % 2 === 0;
+};
+const windowEnd = now - 10 * 60 * 1000;
+const windowStart = windowEnd - DAY;
+let expected = 0;
+for (let t = Math.floor(windowStart / SLOT) * SLOT + SLOT; t <= windowEnd; t += SLOT) if (isCollectSlot(t)) expected++;
+const collected = count(
+  executionsBody.data ?? [],
+  (e) =>
+    e.workflowId === 'jobHunterW1Colle' &&
+    e.status === 'success' &&
+    e.mode === 'trigger' &&
+    at(e.startedAt) > windowStart &&
+    at(e.startedAt) <= windowEnd,
+);
+// Ждут оценки дольше 30 мин: W2 запускается сразу после сбора, свежие строки detailed — норма
+const pendingScore = count(rows, (r) => r.status === 'detailed' && at(r.createdAt) < now - 30 * 60 * 1000);
 const tunnelCode = $input.first().json.statusCode;
 const tunnelOk = !$env.NGROK_DOMAIN || tunnelCode === 403; // 403 = туннель жив, политика не пускает чужих
 
 const problems = [];
 if (executionsBody.error || !executionsBody.data) problems.push('нет данных о запусках n8n');
-if (collected < 7) problems.push(`сборов ${collected} из 7`);
+if (collected < expected) problems.push(`сборов ${collected} из ${expected}`);
 if (errors.length)
   problems.push(
     `ошибок ${errors.length} (${Object.entries(errorsBy)
@@ -97,7 +121,7 @@ const lines = [
   shadow.length >= 50
     ? `🧪 Теневой режим: ${shadow.length}/50, совпало ${agree} (${Math.round((agree / shadow.length) * 100)}%) — пора разбирать, напиши Claude`
     : `🧪 Теневой режим: ${shadow.length}/50${shadow.length ? `, совпало ${agree} (${Math.round((agree / shadow.length) * 100)}%)` : ''}`,
-  problems.length ? `⚠️ Сбои: ${problems.join(' · ')}` : `⚙️ Сборов ${collected} из 7, ошибок нет, туннель работает`,
+  problems.length ? `⚠️ Сбои: ${problems.join(' · ')}` : `⚙️ Сборов ${collected} из ${expected}, ошибок нет, туннель работает`,
 ];
 
 return [{ json: { text: lines.filter(Boolean).join('\n'), silent: problems.length === 0 } }];

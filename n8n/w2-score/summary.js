@@ -18,7 +18,8 @@ const thaiHour = (new Date().getUTCHours() + 7) % 24;
 const silent = thaiHour >= 23 || thaiHour < 9;
 const messages = [];
 
-// Сводка: решения нейросети + что отсеял фильтр W1 за последний запуск (W1 — каждые 2 ч, W2 — через 15 мин)
+// Сводка: решения нейросети + что отсеял фильтр W1 за последний запуск
+// (W1 вызывает W2 сразу после сбора; сборы — не чаще раза в 30 мин → окно 15 мин)
 const scored = results.filter((r) => r.outcome === 'scored');
 if (scored.length) {
   const count = (d) => scored.filter((r) => r.decision === d).length;
@@ -26,7 +27,7 @@ if (scored.length) {
   if (count('error')) parts.push(`⚠️ ${count('error')}`);
   let text = `📊 Оценено ${scored.length}: ${parts.join(' · ')}`;
 
-  const since = Date.now() - 100 * 60 * 1000;
+  const since = Date.now() - 15 * 60 * 1000;
   const rejects = $input
     .all()
     .map((i) => i.json)

@@ -384,10 +384,19 @@ const workflows = {
     IDS.collector,
     'W1 Collector',
     [
+      // МСК: днём 07:00–17:30 каждые 30 мин, ночью 18, 20, 22, 00, 02, 04, 06 — 29 сборов в сутки
+      // (решение пользователя 07.10.2026). Меняешь расписание — поправь isCollectSlot в n8n/w6-summary/summary.js
       node('W1', 'Schedule', 'scheduleTrigger', 1.4, [0, -100], {
-        rule: { interval: [{ field: 'cronExpression', expression: '0 9-21/2 * * *' }] },
-        // Mac спал во время запуска → после пробуждения выполнить последний пропущенный
-        misfirePolicy: 'coalesce',
+        rule: {
+          interval: [
+            { field: 'cronExpression', expression: '0,30 7-17 * * *' },
+            { field: 'cronExpression', expression: '0 0,2,4,6,18,20,22 * * *' },
+          ],
+        },
+        // Mac спал во время запуска → после пробуждения выполнить последний пропущенный.
+        // coalesce_owner — один догоняющий запуск на всю ноду: с coalesce (на каждое правило) сон через 18:00
+        // запустил бы W1 дважды параллельно → дубли строк и карточек
+        misfirePolicy: 'coalesce_owner',
       }),
       node('W1', 'Manual', 'manualTrigger', 1, [0, 100], {}),
       node(
@@ -482,6 +491,10 @@ const workflows = {
         columns: AUTO_MAP,
         options: {},
       }),
+      // Оценка сразу после сбора. Ниже ветки вакансий: n8n (execution order v1) выполняет её последней,
+      // когда новые вакансии уже detailed. Вызывается на каждом успешном сборе — так дооцениваются и хвосты после сбоев
+      code('W1', 'Score job', 'n8n/w1-collector/score-job.js', [1320, 0]),
+      runWorkflow('W1', 'Score', [1540, 0], IDS.score),
       node('W1', 'To file', 'convertToFile', 1.1, [1320, 100], {
         operation: 'toText',
         sourceProperty: 'html',
@@ -517,6 +530,8 @@ const workflows = {
       ['Is candidate', 'Vacancy page', 0],
       ['Vacancy page', 'Parse vacancy'],
       ['Parse vacancy', 'Update'],
+      ['OK?', 'Score job', 0],
+      ['Score job', 'Score'],
       ['OK?', 'To file', 1],
       ['To file', 'Save fixture'],
       ['Save fixture', 'Stop'],
@@ -528,11 +543,8 @@ const workflows = {
     IDS.score,
     'W2 Score',
     [
-      node('W2', 'Schedule', 'scheduleTrigger', 1.4, [0, -100], {
-        // Через 15 минут после W1: новые вакансии уже прошли фильтр и лежат со status = detailed
-        rule: { interval: [{ field: 'cronExpression', expression: '15 9-21/2 * * *' }] },
-        misfirePolicy: 'coalesce',
-      }),
+      // Вызов из W1 после каждого успешного сбора: новые вакансии уже прошли фильтр и лежат со status = detailed
+      node('W2', 'Called by W1', 'executeWorkflowTrigger', 1.1, [0, -100], { inputSource: 'passthrough' }),
       node('W2', 'Manual', 'manualTrigger', 1, [0, 100], {}),
       node('W2', 'Pending', 'dataTable', 1.1, [220, 0], {
         resource: 'row',
@@ -643,7 +655,7 @@ const workflows = {
       telegram('W2', 'Send summary', [2200, 150], { fields: { disable_notification: '={{ $json.silent }}' } }),
     ],
     [
-      ['Schedule', 'Pending'],
+      ['Called by W1', 'Pending'],
       ['Manual', 'Pending'],
       ['Pending', 'Resume'],
       ['Resume', 'Resume text'],
@@ -995,7 +1007,7 @@ const workflows = {
     'W6 Summary',
     [
       node('W6', 'Schedule', 'scheduleTrigger', 1.4, [0, -100], {
-        // 06:00 МСК = 10:00 по Таиланду: итог прошедшего дня сбора (9–21 МСК)
+        // 06:00 МСК = 10:00 по Таиланду: итог прошедших суток
         rule: { interval: [{ field: 'cronExpression', expression: '0 6 * * *' }] },
         misfirePolicy: 'coalesce',
       }),

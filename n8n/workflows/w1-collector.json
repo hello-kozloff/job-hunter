@@ -16,11 +16,15 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "0 9-21/2 * * *"
+              "expression": "0,30 7-17 * * *"
+            },
+            {
+              "field": "cronExpression",
+              "expression": "0 0,2,4,6,18,20,22 * * *"
             }
           ]
         },
-        "misfirePolicy": "coalesce"
+        "misfirePolicy": "coalesce_owner"
       }
     },
     {
@@ -68,7 +72,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// W1 · Plan — какие страницы поиска запрашивать.\n// Нода: Code, режим «Run Once for All Items».\n// Вход: нода «Any row» (Data Table → Get, Limit 1, Settings → Always Output Data = on).\n//       Если таблица пустая, приходит пустой item без id.\n// Первый запуск (таблица пустая) = бэкфилл: страницы 0 и 1, всё пишется со статусом seen.\n// Обычный запуск: только страница 0 — 100 последних вакансий с запасом покрывают 2 часа.\n\nconst firstRun = !$input.first().json.id;\nconst pages = firstRun ? [0, 1] : [0];\n\nreturn pages.map((page) => ({ json: { page, firstRun } }));\n"
+        "jsCode": "// W1 · Plan — какие страницы поиска запрашивать.\n// Нода: Code, режим «Run Once for All Items».\n// Вход: нода «Any row» (Data Table → Get, Limit 1, Settings → Always Output Data = on).\n//       Если таблица пустая, приходит пустой item без id.\n// Первый запуск (таблица пустая) = бэкфилл: страницы 0 и 1, всё пишется со статусом seen.\n// Обычный запуск: только страница 0 — 100 последних вакансий с запасом покрывают ночной интервал в 2 часа.\n\nconst firstRun = !$input.first().json.id;\nconst pages = firstRun ? [0, 1] : [0];\n\nreturn pages.map((page) => ({ json: { page, firstRun } }));\n"
       }
     },
     {
@@ -523,6 +527,43 @@
       }
     },
     {
+      "id": "a5465f4b-50e9-7ec0-8dce-6b33f8414ecb",
+      "name": "Score job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W1 · Score job — задание для W2 Score: оценить вакансии сразу после сбора.\n// Нода: Code, режим «Run Once for All Items». Стоит ниже ветки вакансий: n8n (execution order v1)\n// выполняет её последней, когда новые вакансии уже detailed.\n// Выход: один пустой item → «Score» (Execute Workflow, без ожидания). W2 сам берёт строки detailed\n// из таблицы, а без этой ноды в W2 ушёл бы весь результат поиска со 100 вакансиями.\n\nreturn [{ json: {} }];\n"
+      }
+    },
+    {
+      "id": "fa6a54e3-3b91-d136-6412-7b2c27ce7e35",
+      "name": "Score",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "jobHunterW2Score"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      }
+    },
+    {
       "id": "f1c742cc-b025-3f8b-b288-a05c8c57df32",
       "name": "To file",
       "type": "n8n-nodes-base.convertToFile",
@@ -650,6 +691,11 @@
             "node": "HC ping?",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Score job",
+            "type": "main",
+            "index": 0
           }
         ],
         [
@@ -754,6 +800,17 @@
         [
           {
             "node": "Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score job": {
+      "main": [
+        [
+          {
+            "node": "Score",
             "type": "main",
             "index": 0
           }

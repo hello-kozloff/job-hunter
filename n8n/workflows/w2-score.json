@@ -3,24 +3,16 @@
   "name": "W2 Score",
   "nodes": [
     {
-      "id": "880e26a7-a49a-3739-3ac6-7214f228ef5d",
-      "name": "Schedule",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.4,
+      "id": "57ec7777-0c2f-a525-eade-cc764822ddf4",
+      "name": "Called by W1",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
       "position": [
         0,
         -100
       ],
       "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "cronExpression",
-              "expression": "15 9-21/2 * * *"
-            }
-          ]
-        },
-        "misfirePolicy": "coalesce"
+        "inputSource": "passthrough"
       }
     },
     {
@@ -433,7 +425,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// W2 · Summary — итог запуска: сводка (ночью без звука) и тревоги (всегда со звуком).\n// Нода: Code, режим «Run Once for All Items». Выполняется после ветки карточек.\n// Вход: «Parse verdict» — все вакансии запуска; «Send card» — ответы Telegram (если карточки отправлялись);\n//       $input — «Recent rejects»: последние строки со status = rejected (W1 отсеял фильтром).\n// Выход: 0–2 сообщения { text, silent } → «Send summary».\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst results = $('Parse verdict').all().map((i) => i.json);\nlet sent = [];\ntry {\n  sent = $('Send card').all().map((i) => i.json);\n} catch {\n  // карточек в этом запуске не было — нода не выполнялась\n}\n\nconst thaiHour = (new Date().getUTCHours() + 7) % 24;\nconst silent = thaiHour >= 23 || thaiHour < 9;\nconst messages = [];\n\n// Сводка: решения нейросети + что отсеял фильтр W1 за последний запуск (W1 — каждые 2 ч, W2 — через 15 мин)\nconst scored = results.filter((r) => r.outcome === 'scored');\nif (scored.length) {\n  const count = (d) => scored.filter((r) => r.decision === d).length;\n  const parts = [`🟢 ${count('apply')}`, `🟡 ${count('maybe')}`, `🔴 ${count('skip')}`];\n  if (count('error')) parts.push(`⚠️ ${count('error')}`);\n  let text = `📊 Оценено ${scored.length}: ${parts.join(' · ')}`;\n\n  const since = Date.now() - 100 * 60 * 1000;\n  const rejects = $input\n    .all()\n    .map((i) => i.json)\n    .filter((r) => r.status === 'rejected' && Date.parse(r.updatedAt) >= since);\n  if (rejects.length) {\n    const reasons = {};\n    for (const r of rejects) {\n      // «только из РФ: «цитата»» → «только из РФ»\n      for (const reason of String(r.reasons).split(', ').filter(Boolean)) {\n        const key = reason.replace(/:.*$/, '');\n        reasons[key] = (reasons[key] ?? 0) + 1;\n      }\n    }\n    const list = Object.entries(reasons)\n      .map(([k, n]) => `${esc(k)} ${n}`)\n      .join(' · ');\n    text += `\\n🚫 Фильтр отсеял ${rejects.length}: ${list}`;\n  }\n  messages.push({ text, silent });\n}\n\n// Тревоги\nconst alerts = [];\nconst quota = results.filter((r) => r.outcome === 'quota');\nif (quota.length) {\n  const provider = quota[0].llm_model?.startsWith('claude') ? 'Claude' : 'Gemini';\n  const perDay = quota.some((r) => r.problem === 'day');\n  alerts.push(\n    `⚠️ ${provider}: ${perDay ? 'исчерпан дневной лимит запросов' : 'превышен лимит запросов в минуту'} (HTTP 429). ` +\n      `Не оценено ${quota.length} — оценятся в следующий запуск.` +\n      (perDay && provider === 'Gemini' ? '\\nЕсли повторяется каждый день — переключить на Claude: LLM_PROVIDER=claude в .env.' : ''),\n  );\n}\nconst problems = {};\nfor (const r of results.filter((x) => x.outcome === 'retry')) problems[r.problem] = (problems[r.problem] ?? 0) + 1;\nfor (const [problem, n] of Object.entries(problems)) {\n  alerts.push(`⚠️ Нейросеть: ${esc(problem)}. Не оценено ${n} — повторю в следующий запуск.`);\n}\nconst failed = sent.filter((s) => !s.result?.message_id);\nif (failed.length) {\n  alerts.push(`⚠️ Telegram: не отправлено карточек ${failed.length} — ${esc(failed[0].error ?? 'нет ответа')}. Повторю в следующий запуск.`);\n}\nif (alerts.length) messages.push({ text: alerts.join('\\n\\n'), silent: false });\n\nreturn messages.map((m) => ({ json: m }));\n"
+        "jsCode": "// W2 · Summary — итог запуска: сводка (ночью без звука) и тревоги (всегда со звуком).\n// Нода: Code, режим «Run Once for All Items». Выполняется после ветки карточек.\n// Вход: «Parse verdict» — все вакансии запуска; «Send card» — ответы Telegram (если карточки отправлялись);\n//       $input — «Recent rejects»: последние строки со status = rejected (W1 отсеял фильтром).\n// Выход: 0–2 сообщения { text, silent } → «Send summary».\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst results = $('Parse verdict').all().map((i) => i.json);\nlet sent = [];\ntry {\n  sent = $('Send card').all().map((i) => i.json);\n} catch {\n  // карточек в этом запуске не было — нода не выполнялась\n}\n\nconst thaiHour = (new Date().getUTCHours() + 7) % 24;\nconst silent = thaiHour >= 23 || thaiHour < 9;\nconst messages = [];\n\n// Сводка: решения нейросети + что отсеял фильтр W1 за последний запуск\n// (W1 вызывает W2 сразу после сбора; сборы — не чаще раза в 30 мин → окно 15 мин)\nconst scored = results.filter((r) => r.outcome === 'scored');\nif (scored.length) {\n  const count = (d) => scored.filter((r) => r.decision === d).length;\n  const parts = [`🟢 ${count('apply')}`, `🟡 ${count('maybe')}`, `🔴 ${count('skip')}`];\n  if (count('error')) parts.push(`⚠️ ${count('error')}`);\n  let text = `📊 Оценено ${scored.length}: ${parts.join(' · ')}`;\n\n  const since = Date.now() - 15 * 60 * 1000;\n  const rejects = $input\n    .all()\n    .map((i) => i.json)\n    .filter((r) => r.status === 'rejected' && Date.parse(r.updatedAt) >= since);\n  if (rejects.length) {\n    const reasons = {};\n    for (const r of rejects) {\n      // «только из РФ: «цитата»» → «только из РФ»\n      for (const reason of String(r.reasons).split(', ').filter(Boolean)) {\n        const key = reason.replace(/:.*$/, '');\n        reasons[key] = (reasons[key] ?? 0) + 1;\n      }\n    }\n    const list = Object.entries(reasons)\n      .map(([k, n]) => `${esc(k)} ${n}`)\n      .join(' · ');\n    text += `\\n🚫 Фильтр отсеял ${rejects.length}: ${list}`;\n  }\n  messages.push({ text, silent });\n}\n\n// Тревоги\nconst alerts = [];\nconst quota = results.filter((r) => r.outcome === 'quota');\nif (quota.length) {\n  const provider = quota[0].llm_model?.startsWith('claude') ? 'Claude' : 'Gemini';\n  const perDay = quota.some((r) => r.problem === 'day');\n  alerts.push(\n    `⚠️ ${provider}: ${perDay ? 'исчерпан дневной лимит запросов' : 'превышен лимит запросов в минуту'} (HTTP 429). ` +\n      `Не оценено ${quota.length} — оценятся в следующий запуск.` +\n      (perDay && provider === 'Gemini' ? '\\nЕсли повторяется каждый день — переключить на Claude: LLM_PROVIDER=claude в .env.' : ''),\n  );\n}\nconst problems = {};\nfor (const r of results.filter((x) => x.outcome === 'retry')) problems[r.problem] = (problems[r.problem] ?? 0) + 1;\nfor (const [problem, n] of Object.entries(problems)) {\n  alerts.push(`⚠️ Нейросеть: ${esc(problem)}. Не оценено ${n} — повторю в следующий запуск.`);\n}\nconst failed = sent.filter((s) => !s.result?.message_id);\nif (failed.length) {\n  alerts.push(`⚠️ Telegram: не отправлено карточек ${failed.length} — ${esc(failed[0].error ?? 'нет ответа')}. Повторю в следующий запуск.`);\n}\nif (alerts.length) messages.push({ text: alerts.join('\\n\\n'), silent: false });\n\nreturn messages.map((m) => ({ json: m }));\n"
       }
     },
     {
@@ -466,7 +458,7 @@
     }
   ],
   "connections": {
-    "Schedule": {
+    "Called by W1": {
       "main": [
         [
           {
