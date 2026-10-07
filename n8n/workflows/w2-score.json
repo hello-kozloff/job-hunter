@@ -391,53 +391,18 @@
       }
     },
     {
-      "id": "6ab46116-2a8e-b575-dd95-731c76a1b51a",
-      "name": "Recent rejects",
-      "type": "n8n-nodes-base.dataTable",
-      "typeVersion": 1.1,
-      "position": [
-        1760,
-        150
-      ],
-      "parameters": {
-        "resource": "row",
-        "operation": "get",
-        "dataTableId": {
-          "__rl": true,
-          "mode": "name",
-          "value": "vacancies"
-        },
-        "matchType": "allConditions",
-        "filters": {
-          "conditions": [
-            {
-              "keyName": "status",
-              "keyValue": "rejected"
-            }
-          ]
-        },
-        "returnAll": false,
-        "limit": 100,
-        "orderBy": true,
-        "orderByColumn": "updatedAt",
-        "orderByDirection": "DESC"
-      },
-      "executeOnce": true,
-      "alwaysOutputData": true
-    },
-    {
       "id": "8c15c8f1-a38a-6ad8-7ccd-0828102c5fc0",
       "name": "Summary",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1980,
-        150
+        1760,
+        300
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// W2 · Summary — итог запуска: сводка (ночью без звука) и тревоги (всегда со звуком).\n// Нода: Code, режим «Run Once for All Items». Выполняется после ветки карточек.\n// Вход: «Parse verdict» — все вакансии запуска; «Send card» — ответы Telegram (если карточки отправлялись);\n//       $input — «Recent rejects»: последние строки со status = rejected (W1 отсеял фильтром).\n// Выход: 0–2 сообщения { text, silent } → «Send summary».\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst results = $('Parse verdict').all().map((i) => i.json);\nlet sent = [];\ntry {\n  sent = $('Send card').all().map((i) => i.json);\n} catch {\n  // карточек в этом запуске не было — нода не выполнялась\n}\n\nconst thaiHour = (new Date().getUTCHours() + 7) % 24;\nconst silent = thaiHour >= 23 || thaiHour < 9;\nconst messages = [];\n\n// Сводка: решения нейросети + что отсеял фильтр W1 за последний запуск\n// (W1 вызывает W2 сразу после сбора; сборы — не чаще раза в 30 мин → окно 15 мин)\nconst scored = results.filter((r) => r.outcome === 'scored');\nif (scored.length) {\n  const count = (d) => scored.filter((r) => r.decision === d).length;\n  const parts = [`🟢 ${count('apply')}`, `🟡 ${count('maybe')}`, `🔴 ${count('skip')}`];\n  if (count('error')) parts.push(`⚠️ ${count('error')}`);\n  let text = `📊 Оценено ${scored.length}: ${parts.join(' · ')}`;\n\n  const since = Date.now() - 15 * 60 * 1000;\n  const rejects = $input\n    .all()\n    .map((i) => i.json)\n    .filter((r) => r.status === 'rejected' && Date.parse(r.updatedAt) >= since);\n  if (rejects.length) {\n    const reasons = {};\n    for (const r of rejects) {\n      // «только из РФ: «цитата»» → «только из РФ»\n      for (const reason of String(r.reasons).split(', ').filter(Boolean)) {\n        const key = reason.replace(/:.*$/, '');\n        reasons[key] = (reasons[key] ?? 0) + 1;\n      }\n    }\n    const list = Object.entries(reasons)\n      .map(([k, n]) => `${esc(k)} ${n}`)\n      .join(' · ');\n    text += `\\n🚫 Фильтр отсеял ${rejects.length}: ${list}`;\n  }\n  messages.push({ text, silent });\n}\n\n// Тревоги\nconst alerts = [];\nconst quota = results.filter((r) => r.outcome === 'quota');\nif (quota.length) {\n  const provider = quota[0].llm_model?.startsWith('claude') ? 'Claude' : 'Gemini';\n  const perDay = quota.some((r) => r.problem === 'day');\n  alerts.push(\n    `⚠️ ${provider}: ${perDay ? 'исчерпан дневной лимит запросов' : 'превышен лимит запросов в минуту'} (HTTP 429). ` +\n      `Не оценено ${quota.length} — оценятся в следующий запуск.` +\n      (perDay && provider === 'Gemini' ? '\\nЕсли повторяется каждый день — переключить на Claude: LLM_PROVIDER=claude в .env.' : ''),\n  );\n}\nconst problems = {};\nfor (const r of results.filter((x) => x.outcome === 'retry')) problems[r.problem] = (problems[r.problem] ?? 0) + 1;\nfor (const [problem, n] of Object.entries(problems)) {\n  alerts.push(`⚠️ Нейросеть: ${esc(problem)}. Не оценено ${n} — повторю в следующий запуск.`);\n}\nconst failed = sent.filter((s) => !s.result?.message_id);\nif (failed.length) {\n  alerts.push(`⚠️ Telegram: не отправлено карточек ${failed.length} — ${esc(failed[0].error ?? 'нет ответа')}. Повторю в следующий запуск.`);\n}\nif (alerts.length) messages.push({ text: alerts.join('\\n\\n'), silent: false });\n\nreturn messages.map((m) => ({ json: m }));\n"
+        "jsCode": "// W2 · Summary — сообщения после запуска: о сборе, итог оценки (ночью без звука) и тревоги (всегда со звуком).\n// Нода: Code, режим «Run Once for All Items». Своя ветка от триггера, ниже ветки карточек: n8n (execution\n// order v1) выполняет её последней — и тогда, когда оценивать было нечего (ветка карточек встала на «Pending»).\n// Вход: $input — item триггера: от W1 { report } — блок «🔎 Сбор» (n8n/w1-collector/score-job.js),\n//       у ручного запуска пустой; «Parse verdict» — все вакансии запуска; «Send card» — ответы Telegram\n//       (обе ноды выполняются, только если были вакансии на оценку).\n// Выход: 0–2 сообщения { text, silent, report, live } → «Send summary» → «Live report» (решения пользователя 07.10.2026):\n//   были оценки — «🔎 Сбор» сверху итога «📊 Оценено N» (live = false — остаётся в чате);\n//   оценок нет  — «🔎 Сбор» одним живым сообщением без звука (live = true — следующее сообщение о сборе его заменит);\n//   тревоги     — отдельным сообщением.\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst all = (name) => {\n  try {\n    return $(name)\n      .all()\n      .map((i) => i.json);\n  } catch {\n    return []; // нода в этом запуске не выполнялась\n  }\n};\n\nconst report = String($input.first()?.json?.report ?? '');\nconst results = all('Parse verdict');\nconst sent = all('Send card');\n\nconst thaiHour = (new Date().getUTCHours() + 7) % 24;\nconst quiet = thaiHour >= 23 || thaiHour < 9;\nconst messages = [];\n\n// Итог оценки; что отсеял фильтр W1 — в блоке «🔎 Сбор»\nconst scored = results.filter((r) => r.outcome === 'scored');\nif (scored.length) {\n  const count = (d) => scored.filter((r) => r.decision === d).length;\n  const parts = [`🟢 ${count('apply')}`, `🟡 ${count('maybe')}`, `🔴 ${count('skip')}`];\n  if (count('error')) parts.push(`⚠️ ${count('error')}`);\n  const text = `📊 Оценено ${scored.length}: ${parts.join(' · ')}`;\n  messages.push({ text: report ? `${report}\\n\\n${text}` : text, silent: quiet, report: Boolean(report), live: false });\n} else if (report) {\n  messages.push({ text: report, silent: true, report: true, live: true });\n}\n\n// Тревоги\nconst alerts = [];\nconst quota = results.filter((r) => r.outcome === 'quota');\nif (quota.length) {\n  const provider = quota[0].llm_model?.startsWith('claude') ? 'Claude' : 'Gemini';\n  const perDay = quota.some((r) => r.problem === 'day');\n  alerts.push(\n    `⚠️ ${provider}: ${perDay ? 'исчерпан дневной лимит запросов' : 'превышен лимит запросов в минуту'} (HTTP 429). ` +\n      `Не оценено ${quota.length} — оценятся в следующий запуск.` +\n      (perDay && provider === 'Gemini' ? '\\nЕсли повторяется каждый день — переключить на Claude: LLM_PROVIDER=claude в .env.' : ''),\n  );\n}\nconst problems = {};\nfor (const r of results.filter((x) => x.outcome === 'retry')) problems[r.problem] = (problems[r.problem] ?? 0) + 1;\nfor (const [problem, n] of Object.entries(problems)) {\n  alerts.push(`⚠️ Нейросеть: ${esc(problem)}. Не оценено ${n} — повторю в следующий запуск.`);\n}\nconst failed = sent.filter((s) => !s.result?.message_id);\nif (failed.length) {\n  alerts.push(`⚠️ Telegram: не отправлено карточек ${failed.length} — ${esc(failed[0].error ?? 'нет ответа')}. Повторю в следующий запуск.`);\n}\nif (alerts.length) messages.push({ text: alerts.join('\\n\\n'), silent: false, report: false, live: false });\n\nreturn messages.map((m) => ({ json: m }));\n"
       }
     },
     {
@@ -446,8 +411,8 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        2200,
-        150
+        1980,
+        300
       ],
       "parameters": {
         "resource": "message",
@@ -487,6 +452,44 @@
           "name": "Telegram bot"
         }
       }
+    },
+    {
+      "id": "ea68dc1c-2317-8474-91be-058f07064437",
+      "name": "Live report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W2 · Live report — сообщение о сборе в чате одно: когда пришло новое, прошлое удаляется\n// (решение пользователя 07.10.2026).\n// Нода: Code, режим «Run Once for All Items».\n// Вход: ответы «Send summary» — по одному на сообщение «Summary», в том же порядке.\n// Static data: liveId — живое сообщение «🔎 Сбор» в чате. Итог «📊 Оценено» с блоком сбора сверху живым не считается\n//   (остаётся вместе с карточками), но прошлое живое сообщение после него тоже удаляется — оно устарело.\n// Выход: [{ messageId }] → «Delete report» или [] — удалять нечего.\n// Сначала отправка, потом удаление: клавиатура меню едет с новым сообщением. Новое не отправилось — прошлое не трогаем.\n\nconst state = $getWorkflowStaticData('global');\nconst messages = $('Summary')\n  .all()\n  .map((i) => i.json);\nconst index = messages.findIndex((m) => m.report);\nif (index < 0) return []; // ручной запуск W2 — сбора не было\n\nconst id = $input.all()[index]?.json?.result?.message_id;\nif (!id) return [];\n\nconst old = state.liveId;\nstate.liveId = messages[index].live ? id : null;\nreturn old && old !== id ? [{ json: { messageId: old } }] : [];\n"
+      }
+    },
+    {
+      "id": "93f5fb65-401d-96fd-813f-24120d2d63d1",
+      "name": "Delete report",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2420,
+        300
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "deleteMessage",
+        "chatId": "={{ $env.TG_CHAT_ID }}",
+        "messageId": "={{ $json.messageId }}"
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterTgBot01",
+          "name": "Telegram bot"
+        }
+      },
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -495,6 +498,11 @@
         [
           {
             "node": "Pending",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Summary",
             "type": "main",
             "index": 0
           }
@@ -506,6 +514,11 @@
         [
           {
             "node": "Pending",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Summary",
             "type": "main",
             "index": 0
           }
@@ -603,11 +616,6 @@
             "node": "Format card",
             "type": "main",
             "index": 0
-          },
-          {
-            "node": "Recent rejects",
-            "type": "main",
-            "index": 0
           }
         ]
       ]
@@ -645,22 +653,33 @@
         ]
       ]
     },
-    "Recent rejects": {
+    "Summary": {
       "main": [
         [
           {
-            "node": "Summary",
+            "node": "Send summary",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Summary": {
+    "Send summary": {
       "main": [
         [
           {
-            "node": "Send summary",
+            "node": "Live report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Live report": {
+      "main": [
+        [
+          {
+            "node": "Delete report",
             "type": "main",
             "index": 0
           }

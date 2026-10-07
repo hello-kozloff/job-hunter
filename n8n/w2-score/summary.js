@@ -1,52 +1,43 @@
-// W2 · Summary — итог запуска: сводка (ночью без звука) и тревоги (всегда со звуком).
-// Нода: Code, режим «Run Once for All Items». Выполняется после ветки карточек.
-// Вход: «Parse verdict» — все вакансии запуска; «Send card» — ответы Telegram (если карточки отправлялись);
-//       $input — «Recent rejects»: последние строки со status = rejected (W1 отсеял фильтром).
-// Выход: 0–2 сообщения { text, silent } → «Send summary».
+// W2 · Summary — сообщения после запуска: о сборе, итог оценки (ночью без звука) и тревоги (всегда со звуком).
+// Нода: Code, режим «Run Once for All Items». Своя ветка от триггера, ниже ветки карточек: n8n (execution
+// order v1) выполняет её последней — и тогда, когда оценивать было нечего (ветка карточек встала на «Pending»).
+// Вход: $input — item триггера: от W1 { report } — блок «🔎 Сбор» (n8n/w1-collector/score-job.js),
+//       у ручного запуска пустой; «Parse verdict» — все вакансии запуска; «Send card» — ответы Telegram
+//       (обе ноды выполняются, только если были вакансии на оценку).
+// Выход: 0–2 сообщения { text, silent, report, live } → «Send summary» → «Live report» (решения пользователя 07.10.2026):
+//   были оценки — «🔎 Сбор» сверху итога «📊 Оценено N» (live = false — остаётся в чате);
+//   оценок нет  — «🔎 Сбор» одним живым сообщением без звука (live = true — следующее сообщение о сборе его заменит);
+//   тревоги     — отдельным сообщением.
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const all = (name) => {
+  try {
+    return $(name)
+      .all()
+      .map((i) => i.json);
+  } catch {
+    return []; // нода в этом запуске не выполнялась
+  }
+};
 
-const results = $('Parse verdict').all().map((i) => i.json);
-let sent = [];
-try {
-  sent = $('Send card').all().map((i) => i.json);
-} catch {
-  // карточек в этом запуске не было — нода не выполнялась
-}
+const report = String($input.first()?.json?.report ?? '');
+const results = all('Parse verdict');
+const sent = all('Send card');
 
 const thaiHour = (new Date().getUTCHours() + 7) % 24;
-const silent = thaiHour >= 23 || thaiHour < 9;
+const quiet = thaiHour >= 23 || thaiHour < 9;
 const messages = [];
 
-// Сводка: решения нейросети + что отсеял фильтр W1 за последний запуск
-// (W1 вызывает W2 сразу после сбора; сборы — не чаще раза в 30 мин → окно 15 мин)
+// Итог оценки; что отсеял фильтр W1 — в блоке «🔎 Сбор»
 const scored = results.filter((r) => r.outcome === 'scored');
 if (scored.length) {
   const count = (d) => scored.filter((r) => r.decision === d).length;
   const parts = [`🟢 ${count('apply')}`, `🟡 ${count('maybe')}`, `🔴 ${count('skip')}`];
   if (count('error')) parts.push(`⚠️ ${count('error')}`);
-  let text = `📊 Оценено ${scored.length}: ${parts.join(' · ')}`;
-
-  const since = Date.now() - 15 * 60 * 1000;
-  const rejects = $input
-    .all()
-    .map((i) => i.json)
-    .filter((r) => r.status === 'rejected' && Date.parse(r.updatedAt) >= since);
-  if (rejects.length) {
-    const reasons = {};
-    for (const r of rejects) {
-      // «только из РФ: «цитата»» → «только из РФ»
-      for (const reason of String(r.reasons).split(', ').filter(Boolean)) {
-        const key = reason.replace(/:.*$/, '');
-        reasons[key] = (reasons[key] ?? 0) + 1;
-      }
-    }
-    const list = Object.entries(reasons)
-      .map(([k, n]) => `${esc(k)} ${n}`)
-      .join(' · ');
-    text += `\n🚫 Фильтр отсеял ${rejects.length}: ${list}`;
-  }
-  messages.push({ text, silent });
+  const text = `📊 Оценено ${scored.length}: ${parts.join(' · ')}`;
+  messages.push({ text: report ? `${report}\n\n${text}` : text, silent: quiet, report: Boolean(report), live: false });
+} else if (report) {
+  messages.push({ text: report, silent: true, report: true, live: true });
 }
 
 // Тревоги
@@ -70,6 +61,6 @@ const failed = sent.filter((s) => !s.result?.message_id);
 if (failed.length) {
   alerts.push(`⚠️ Telegram: не отправлено карточек ${failed.length} — ${esc(failed[0].error ?? 'нет ответа')}. Повторю в следующий запуск.`);
 }
-if (alerts.length) messages.push({ text: alerts.join('\n\n'), silent: false });
+if (alerts.length) messages.push({ text: alerts.join('\n\n'), silent: false, report: false, live: false });
 
 return messages.map((m) => ({ json: m }));
