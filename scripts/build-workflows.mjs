@@ -413,14 +413,8 @@ const PANEL_LAYOUTS = [
         [panelButton('provider.text'), panelButton('provider.cb')],
         [panelButton('shadow.text'), panelButton('shadow.cb')],
       ],
-      [
-        [panelButton('vue.text'), panelButton('vue.cb')],
-        [panelButton('fullstack.text'), panelButton('fullstack.cb')],
-      ],
-      [
-        [panelButton('ai.text'), panelButton('ai.cb')],
-        [panelButton('rn.text'), panelButton('rn.cb')],
-      ],
+      // Спорные случаи — списком «случай: решение» (решение пользователя 07.10.2026: текстом, а не кнопками)
+      [['✏️ Спорные случаи', 'sw:llm.cases']],
       [['⬅️ Настройки', 's:root']],
     ],
   ],
