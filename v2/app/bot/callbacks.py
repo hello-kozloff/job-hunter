@@ -35,3 +35,12 @@ class Prof(CallbackData, prefix="pf"):
     action: str
     pid: int = 0
     arg: str = ""
+
+
+class Card(CallbackData, prefix="c"):
+    """Карточка вакансии: id — строка user_vacancies (проверяется владелец); action — apply|maybe|skip|earlier|ban|edit;
+    arg — id резюме, когда ✅ или «🚫 В ЧС» надо отнести к одному из нескольких резюме («all» — во все)."""
+
+    action: str
+    id: int
+    arg: str = ""
