@@ -81,7 +81,7 @@
 
 ## 5. Поисковый запрос
 
-Рабочий запрос (W0, W1):
+Рабочий запрос (W0, W1; источник правды — `n8n/shared/search.js`, его же показывает сообщение о сборе):
 
 ```
 https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтенд OR react OR next.js OR nextjs OR typescript OR vue OR vue.js OR vuejs OR nuxt OR nuxt.js OR nuxtjs)&professional_role=96&work_format=REMOTE&education=not_required_or_not_specified&order_by=publication_time&items_on_page=100&enable_snippets=true&page=0
@@ -106,9 +106,12 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
                  → поиск hh → разбор InitialState → склейка дублей
                  → только новые (нет ни external_id, ни dup_key) → Blacklist + Filter search (правила по выдаче)
                  → Insert (new | rejected) → для new: страница вакансии → Parse vacancy (правила по описанию)
-                 → Update (detailed | rejected) → Score job → W2 (Execute Workflow, без ожидания)
+                 → Update (detailed | rejected) → Score job (блок «🔎 Сбор»: запросы к hh, что искали, новые и отсеянные
+                 с причинами, следующий сбор) → W2 (Execute Workflow, без ожидания)
 [W2 Score]     вызов из W1 после каждого сбора | Manual → detailed → резюме + промпт → Gemini | Claude → apply/maybe/skip + причина
-                 → карточка в Telegram с кнопками ✅/🤔/❌ → status = waiting → сводка + тревоги (429 и т. п.)
+                 → карточка в Telegram с кнопками ✅/🤔/❌ → status = waiting → сообщение о сборе + тревоги (429 и т. п.):
+                 были карточки — «🔎 Сбор» сверху итога «📊 Оценено N»; нет — «🔎 Сбор» одним живым сообщением без звука
+                 (прошлое удаляется, static data W2 `liveId`; решение пользователя 07.10.2026)
 [W3 Telegram]  Telegram Trigger (вебхук через ngrok) → кнопка: my_decision, status, перерисовать карточку,
                  при расхождении с нейросетью «Почему?» → ответ (reply) → my_reason;
                  меню бота (кнопки под полем ввода, /v<id>, кнопки панели) → W7
@@ -306,7 +309,8 @@ n8n/w3-telegram/*.js                код Code-нод W3 (кнопки, «По�
 n8n/w5-letter/*.js                  код Code-нод W5 (промпт письма, разбор, сообщение)
 n8n/w6-summary/*.js                 код Code-нод W6 (устаревшие, закрытые на hh, сводка)
 n8n/w7-menu/*.js                    код Code-нод W7 (меню бота: список, карточка, статистика)
-n8n/shared/*.js                     общий код Code-нод (карточка, письмо, разбор страницы hh, меню, расписание W1),
+n8n/shared/*.js                     общий код Code-нод (карточка, письмо, разбор страницы hh, меню, расписание W1,
+                                    поисковый запрос hh),
                                     подключается строкой // @include
 n8n/w4-errors/*.js                  код Code-нод W4
 n8n/schema.mjs                      схема таблиц vacancies и blacklist
