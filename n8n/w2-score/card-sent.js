@@ -21,6 +21,7 @@ return $input.all().flatMap((item, i) => {
         decision: card.decision,
         llm_reason: card.llm_reason,
         llm_model: card.llm_model,
+        prompt_v: card.prompt_v,
         tg_message_id: messageId,
         status: 'waiting',
         card_at: now,

@@ -1,7 +1,7 @@
 // W7 · Render — раздел «⚙️ Настройки» панели меню (07.10.2026). Подключается в render.js строкой
 // «// @include n8n/w7-menu/settings-view.js», после помощников времени (thaiMsk, hhmm).
 // Значения — из таблицы settings плюс изменение этого нажатия: «Setting change» выполнилась раньше (ветка выше).
-// Раскладки: settings (корень), set_collect, set_search, set_filter, set_rules, set_blacklist, set_confirm.
+// Раскладки: settings (корень), set_collect, set_search, set_filter, set_rules, set_blacklist, set_confirm, set_llm.
 // Кнопки «▸» — следующее значение по кругу, «✏️» — вопрос со списком (ответ — сообщением).
 
 const ranNode = (name) => {
@@ -27,6 +27,8 @@ const everyText = (m) => (m % 60 ? `${m} мин` : `${m / 60} ч`);
 const pad2 = (n) => String(n).padStart(2, '0');
 const periodText = (days) => SEARCH_LABELS.search_period[days] ?? `за ${days} дн.`;
 const responsesText = (n) => (n ? `больше ${n}` : 'не отсекать');
+const VERDICT_TEXT = { apply: '🟢 apply', maybe: '🟡 maybe', skip: '🔴 skip' };
+const providerText = (p) => (p === 'claude' ? 'Claude' : 'Gemini');
 const rulesOn = () => Object.keys(FILTER_RULES).filter((id) => !settings['filter.rules_off'].includes(id));
 const companies = (n) => {
   const d = n % 10;
@@ -54,7 +56,7 @@ function settingsRootView(note) {
     `🕐 <b>Сбор</b>: ${describeSchedule(sch)} · ${collectsPerDay(sch)} в сутки${sch.paused ? ' · ⏸ <b>пауза</b>' : ''}`,
     `🔎 <b>Поиск</b>: ${periodText(settings['search.period'])} · везде — ${settings['search.anywhere'].length} сл., в названии — ${settings['search.in_name'].length}`,
     `🧹 <b>Фильтр</b>: правил ${rulesOn().length} из ${Object.keys(FILTER_RULES).length} · отклики — ${responsesText(settings['filter.max_responses'])} · стоп-слов ${settings['filter.stop_words'].length} · ЧС ${blacklist.length}`,
-    '🤖 Нейросеть — в следующем обновлении',
+    `🤖 <b>Нейросеть</b>: ${providerText(settings['llm.provider'])} · теневой режим ${settings['llm.shadow'] ? 'вкл' : 'выкл'} · Vue ${VERDICT_ICON[settings['llm.vue']]} · fullstack ${VERDICT_ICON[settings['llm.fullstack']]} · AI на JS/TS ${VERDICT_ICON[settings['llm.ai_js']]} · React Native ${VERDICT_ICON[settings['llm.react_native']]}`,
   ];
   if (note) lines.push('', note);
   return {
@@ -195,7 +197,47 @@ function settingsConfirmView(id) {
   };
 }
 
+function settingsLlmView() {
+  const provider = settings['llm.provider'];
+  const model = provider === 'claude' ? $env.CLAUDE_MODEL || 'claude-haiku-4-5' : $env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+  const lines = [
+    '🤖 <b>Нейросеть</b>',
+    '',
+    `Модель: ${providerText(provider)} (${esc(model)}) — оценка вакансий и письма`,
+    settings['llm.shadow']
+      ? 'Теневой режим: вкл — карточки на все оценки, включая 🔴'
+      : 'Теневой режим: выкл — 🔴 без карточек: только в итоге после сбора и в меню на вкладке ❌',
+    '',
+    'Спорные случаи:',
+    `• Vue без React — ${VERDICT_TEXT[settings['llm.vue']]}`,
+    `• fullstack (React и бэкенд) — ${VERDICT_TEXT[settings['llm.fullstack']]}`,
+    `• разработка на AI на JS/TS — ${VERDICT_TEXT[settings['llm.ai_js']]}`,
+    `• React Native — основная работа — ${VERDICT_TEXT[settings['llm.react_native']]}`,
+    '',
+    'Изменённое решение уходит в промпт «поправкой кандидата»; по умолчанию промпт прежний.',
+  ];
+  if (provider === 'claude') {
+    lines.push('', '⚠️ Для Claude нужен ключ ANTHROPIC_API_KEY в .env и деплой — без него оценка встанет с ошибкой.');
+  }
+  const notes = changeNotes();
+  if (notes.length) lines.push('', ...notes);
+  const cycle = (name, label) => ({ text: `${label}: ${VERDICT_ICON[settings[name]]} ▸`, cb: `sc:${name}` });
+  return {
+    layout: 'set_llm',
+    text: lines.join('\n'),
+    b: {
+      provider: { text: `Модель: ${providerText(provider)} ▸`, cb: 'sc:llm.provider' },
+      shadow: { text: `Теневой: ${settings['llm.shadow'] ? 'вкл' : 'выкл'} ▸`, cb: 'sc:llm.shadow' },
+      vue: cycle('llm.vue', 'Vue'),
+      fullstack: cycle('llm.fullstack', 'Fullstack'),
+      ai: cycle('llm.ai_js', 'AI на JS/TS'),
+      rn: cycle('llm.react_native', 'React Native'),
+    },
+  };
+}
+
 function settingsView(section) {
+  if (section === 'llm') return settingsLlmView();
   if (section === 'collect') return settingsCollectView();
   if (section === 'search') return settingsSearchView();
   if (section === 'filter') return settingsFilterView();

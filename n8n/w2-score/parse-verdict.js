@@ -39,7 +39,7 @@ function answerText(provider, b) {
 
 return $input.all().map((item, i) => {
   const prompt = prompts[i];
-  const base = { ...rows.get(prompt.id), llm_model: prompt.model };
+  const base = { ...rows.get(prompt.id), llm_model: prompt.model, prompt_v: prompt.prompt_v };
   const res = item.json;
   const code = res.statusCode;
 

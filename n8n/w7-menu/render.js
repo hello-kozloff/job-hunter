@@ -47,6 +47,7 @@ const LAYOUTS = [
   'set_rules',
   'set_blacklist',
   'set_confirm',
+  'set_llm',
 ];
 // Выходы «Layout» после раскладок: приветствие, вопрос ⚙️ со списком (ForceReply)
 const ROUTE_START = LAYOUTS.length * 2;
