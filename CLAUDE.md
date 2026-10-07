@@ -389,3 +389,7 @@ Credentials: `jobHunterTgBot01` «Telegram bot», `jobHunterGemini1` «Gemini»,
 - **Защита в `deploy.sh`:** с другой ветки деплой не запустится без `--any-branch`. Если есть незакоммиченные изменения, скрипт предупредит.
 - **Откат:** `git switch production && scripts/deploy.sh`.
 - **Репозиторий:** `git@github.com:hello-kozloff/job-hunter.git`, приватный. До 07.10.2026 основная ветка называлась `main`.
+
+## 15. v2 — много пользователей и резюме
+
+С 08.10.2026 строится рядом с v1, v1 не затрагивает: папка `v2/` (Python FastAPI + Postgres + бот на aiogram + свой n8n на `127.0.0.1:5679`, compose project `job-hunter-v2`, **новый бот**). Архитектура и решения пользователя — `docs/v2/architecture.md`, ход работ и команды — `v2/CLAUDE.md`. Корневой `scripts/deploy.sh` деплоит только v1; v2 — `v2/scripts/deploy.sh`.
