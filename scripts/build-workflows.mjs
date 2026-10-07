@@ -699,29 +699,45 @@ const workflows = {
         orderByColumn: 'createdAt',
         orderByDirection: 'ASC',
       }),
+      // Захват (07.10.2026): detailed → scoring одним UPDATE с условием — второй запуск W2 эти строки уже не возьмёт
+      // (Update отдаёт только обновлённые строки). Карточка не ушла — «Release» вернёт строку в detailed
+      node('W2', 'Claim', 'dataTable', 1.1, [440, 0], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        matchType: 'allConditions',
+        filters: {
+          conditions: [
+            { keyName: 'id', keyValue: '={{ $json.id }}' },
+            { keyName: 'status', keyValue: 'detailed' },
+          ],
+        },
+        columns: setColumns({ status: 'scoring' }),
+        options: {},
+      }),
       node(
         'W2',
         'Resume',
         'readWriteFile',
         1.1,
-        [440, 0],
+        [660, 0],
         { operation: 'read', fileSelector: '/home/node/.n8n-files/docs/resume.md', options: {} },
         { executeOnce: true },
       ),
-      node('W2', 'Resume text', 'extractFromFile', 1.1, [660, 0], {
+      node('W2', 'Resume text', 'extractFromFile', 1.1, [880, 0], {
         operation: 'text',
         binaryPropertyName: 'data',
         destinationKey: 'resume',
         options: {},
       }),
-      code('W2', 'Build prompt', 'n8n/w2-score/build-prompt.js', [880, 0]),
-      node('W2', 'Claude?', 'if', 2.3, [1100, 0], ifTrue('W2', "={{ $json.provider === 'claude' }}")),
+      code('W2', 'Build prompt', 'n8n/w2-score/build-prompt.js', [1100, 0]),
+      node('W2', 'Claude?', 'if', 2.3, [1320, 0], ifTrue('W2', "={{ $json.provider === 'claude' }}")),
       node(
         'W2',
         'Claude',
         'httpRequest',
         4.5,
-        [1320, -100],
+        [1540, -100],
         llmRequest({
           url: 'https://api.anthropic.com/v1/messages',
           credential: 'anthropicApi',
@@ -735,7 +751,7 @@ const workflows = {
         'Gemini',
         'httpRequest',
         4.5,
-        [1320, 100],
+        [1540, 100],
         llmRequest({
           url: '=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.model }}:generateContent',
           credential: 'googlePalmApi',
@@ -744,9 +760,9 @@ const workflows = {
         }),
         { credentials: { googlePalmApi: { id: IDS.geminiCredential, name: 'Gemini' } }, onError: 'continueRegularOutput' },
       ),
-      code('W2', 'Parse verdict', 'n8n/w2-score/parse-verdict.js', [1540, 0]),
-      code('W2', 'Format card', 'n8n/w2-score/format-card.js', [1760, -100]),
-      telegram('W2', 'Send card', [1980, -100], {
+      code('W2', 'Parse verdict', 'n8n/w2-score/parse-verdict.js', [1760, 0]),
+      code('W2', 'Format card', 'n8n/w2-score/format-card.js', [1980, -100]),
+      telegram('W2', 'Send card', [2200, -100], {
         markup: {
           replyMarkup: 'inlineKeyboard',
           inlineKeyboard: keyboard([
@@ -763,8 +779,8 @@ const workflows = {
         // Ошибка одной карточки не должна терять остальные: Card sent запишет только отправленные
         extra: { onError: 'continueRegularOutput' },
       }),
-      code('W2', 'Card sent', 'n8n/w2-score/card-sent.js', [2200, -100]),
-      node('W2', 'Save cards', 'dataTable', 1.1, [2420, -100], {
+      code('W2', 'Card sent', 'n8n/w2-score/card-sent.js', [2420, -100]),
+      node('W2', 'Save cards', 'dataTable', 1.1, [2640, -100], {
         resource: 'row',
         operation: 'update',
         dataTableId: VACANCIES,
@@ -774,31 +790,55 @@ const workflows = {
       }),
       // Сообщения после запуска: о сборе («🔎 Сбор» из W1), итог оценки, тревоги. Своя ветка от триггера ниже ветки
       // карточек: n8n (execution order v1) выполняет её последней, даже если «Pending» пуст и карточек не было
-      code('W2', 'Summary', 'n8n/w2-score/summary.js', [1760, 300]),
-      telegram('W2', 'Send summary', [1980, 300], {
+      code('W2', 'Summary', 'n8n/w2-score/summary.js', [1980, 300]),
+      telegram('W2', 'Send summary', [2200, 300], {
         fields: { disable_notification: '={{ $json.silent }}' },
         markup: MENU_KEYBOARD,
       }),
       // Сообщение о сборе одно: прошлое удаляется (решение пользователя 07.10.2026)
-      code('W2', 'Live report', 'n8n/w2-score/live-report.js', [2200, 300]),
+      code('W2', 'Live report', 'n8n/w2-score/live-report.js', [2420, 300]),
       node(
         'W2',
         'Delete report',
         'telegram',
         1.2,
-        [2420, 300],
+        [2640, 300],
         { resource: 'message', operation: 'deleteMessage', chatId: '={{ $env.TG_CHAT_ID }}', messageId: '={{ $json.messageId }}' },
         // Сообщение старше 48 ч Telegram не удалит — это не ошибка
         { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
       ),
+      // Захваченные строки без отправленной карточки → снова detailed (самая нижняя ветка — выполняется последней)
+      code('W2', 'Release', 'n8n/w2-score/release.js', [1980, 700]),
+      node(
+        'W2',
+        'Save release',
+        'dataTable',
+        1.1,
+        [2200, 700],
+        {
+          resource: 'row',
+          operation: 'update',
+          dataTableId: VACANCIES,
+          matchType: 'allConditions',
+          filters: {
+            conditions: [
+              { keyName: 'id', keyValue: '={{ $json.id }}' },
+              { keyName: 'status', keyValue: 'scoring' },
+            ],
+          },
+          columns: setColumns({ status: 'detailed' }),
+          options: {},
+        },
+        { onError: 'continueRegularOutput' },
+      ),
       // Журнал сборов: число карточек этого сбора (ниже «Summary» — выполняется последней)
-      code('W2', 'Run stats', 'n8n/w2-score/run-stats.js', [1760, 500]),
+      code('W2', 'Run stats', 'n8n/w2-score/run-stats.js', [1980, 500]),
       node(
         'W2',
         'Save run stats',
         'dataTable',
         1.1,
-        [1980, 500],
+        [2200, 500],
         {
           resource: 'row',
           operation: 'update',
@@ -817,7 +857,11 @@ const workflows = {
       ['Manual', 'Summary'],
       ['Called by W1', 'Run stats'],
       ['Run stats', 'Save run stats'],
-      ['Pending', 'Resume'],
+      ['Called by W1', 'Release'],
+      ['Manual', 'Release'],
+      ['Release', 'Save release'],
+      ['Pending', 'Claim'],
+      ['Claim', 'Resume'],
       ['Resume', 'Resume text'],
       ['Resume text', 'Build prompt'],
       ['Build prompt', 'Claude?'],
@@ -1005,7 +1049,50 @@ const workflows = {
       runWorkflow('W3', 'Panel refresh', [1980, 150], IDS.menu),
       // Письмо: одна нода на три ветки (✅, «🔄 Переписать», ответ на письмо) → W5 Letter
       code('W3', 'Letter job', 'n8n/w3-telegram/letter-job.js', [2200, 100]),
-      runWorkflow('W3', 'Write letter', [2420, 100], IDS.letter),
+      // Письмо уже пишется (07.10.2026): второе нажатие ✅ или «🔄» не запускает второй W5. Блокировка — letter_lock,
+      // захват — UPDATE «где пусто». Зависшая блокировка (W5 упал, не дойдя до «Unlock») старше 3 мин снимается
+      node(
+        'W3',
+        'Unlock stale',
+        'dataTable',
+        1.1,
+        [2420, 100],
+        {
+          resource: 'row',
+          operation: 'update',
+          dataTableId: VACANCIES,
+          matchType: 'allConditions',
+          filters: {
+            conditions: [
+              { keyName: 'id', keyValue: '={{ $json.id }}' },
+              {
+                keyName: 'letter_lock',
+                condition: 'lt',
+                keyValue: '={{ new Date(Date.now() - 3 * 60 * 1000).toISOString() }}',
+              },
+            ],
+          },
+          columns: setColumns({ letter_lock: '' }),
+          options: {},
+        },
+        { alwaysOutputData: true },
+      ),
+      node('W3', 'Letter lock', 'dataTable', 1.1, [2640, 100], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        matchType: 'allConditions',
+        filters: {
+          conditions: [
+            { keyName: 'id', keyValue: "={{ $('Letter job').first().json.id }}" },
+            { keyName: 'letter_lock', condition: 'isEmpty' },
+          ],
+        },
+        columns: setColumns({ letter_lock: '={{ new Date().toISOString() }}' }),
+        options: {},
+      }),
+      code('W3', 'Locked job', 'n8n/w3-telegram/locked-job.js', [2860, 100]),
+      runWorkflow('W3', 'Write letter', [3080, 100], IDS.letter),
     ],
     [
       ['Telegram Trigger', 'Route'],
@@ -1050,7 +1137,10 @@ const workflows = {
       ['Revise?', 'Letter job', 0],
       ['Revise?', 'Save reason', 1],
       ['Save reason', 'Confirm'],
-      ['Letter job', 'Write letter'],
+      ['Letter job', 'Unlock stale'],
+      ['Unlock stale', 'Letter lock'],
+      ['Letter lock', 'Locked job'],
+      ['Locked job', 'Write letter'],
     ],
     { errorWorkflow: IDS.errors },
   ),
@@ -1174,9 +1264,27 @@ const workflows = {
         { resource: 'message', operation: 'deleteMessage', chatId: '={{ $env.TG_CHAT_ID }}', messageId: '={{ $json.messageId }}' },
         { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
       ),
+      // Письмо готово или не получилось — снять блокировку W3 «Letter lock». Ветка ниже — выполняется последней
+      node(
+        'W5',
+        'Unlock',
+        'dataTable',
+        1.1,
+        [440, 600],
+        {
+          resource: 'row',
+          operation: 'update',
+          dataTableId: VACANCIES,
+          ...byId('={{ $json.id }}'),
+          columns: setColumns({ letter_lock: '' }),
+          options: {},
+        },
+        { onError: 'continueRegularOutput' },
+      ),
     ],
     [
       ['Called by W3', 'Jobs'],
+      ['Called by W3', 'Unlock'],
       ['Manual', 'Approved'],
       ['Approved', 'Jobs'],
       ['Jobs', 'Vacancy'],
@@ -1328,6 +1436,21 @@ const workflows = {
         columns: setColumns({ description: '', snippet: '' }),
         options: {},
       }),
+      code('W6', 'Unstick', 'n8n/w6-summary/unstick.js', [660, 1000]),
+      node('W6', 'Save unstuck', 'dataTable', 1.1, [880, 1000], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        matchType: 'allConditions',
+        filters: {
+          conditions: [
+            { keyName: 'id', keyValue: '={{ $json.id }}' },
+            { keyName: 'status', keyValue: 'scoring' },
+          ],
+        },
+        columns: setColumns({ status: 'detailed' }),
+        options: {},
+      }),
       node(
         'W6',
         'Delete old runs',
@@ -1377,6 +1500,8 @@ const workflows = {
       ['Plan', 'Cleanup'],
       ['Cleanup', 'Save stripped'],
       ['Plan', 'Delete old runs'],
+      ['Plan', 'Unstick'],
+      ['Unstick', 'Save unstuck'],
     ],
     { timezone: 'Europe/Moscow', errorWorkflow: IDS.errors },
   ),

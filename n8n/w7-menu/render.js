@@ -223,7 +223,7 @@ function statsView() {
     `• за сутки: ${collected} из ${expected} по расписанию`,
     '',
     `📥 <b>Вакансии</b>: найдено ${found.length}, за сутки +${count(found, (r) => at(r.createdAt) >= now - DAY)}`,
-    `• 🚫 отсеяно фильтром: ${status('rejected')} · ⚙️ ждут нейросети: ${status('new') + status('detailed')}`,
+    `• 🚫 отсеяно фильтром: ${status('rejected')} · ⚙️ ждут нейросети: ${status('new') + status('detailed') + status('scoring')}`,
     `• 🤖 оценено ${scored.length}: 🟢 ${count(scored, (r) => r.decision === 'apply')} · 🟡 ${count(scored, (r) => r.decision === 'maybe')} · 🔴 ${count(scored, (r) => r.decision === 'skip')}${errors ? ` · ⚠️ ${errors}` : ''}`,
     '',
     `👤 <b>Рассмотрено тобой</b>: ${reviewed} из ${cards.length} (${pct(reviewed, cards.length)}%)`,

@@ -504,6 +504,57 @@
         }
       },
       "onError": "continueRegularOutput"
+    },
+    {
+      "id": "9b5e6299-d74f-1324-9b06-d89e477dd1bd",
+      "name": "Unlock",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        600
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "vacancies"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "letter_lock": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "letter_lock",
+              "displayName": "letter_lock",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -512,6 +563,11 @@
         [
           {
             "node": "Jobs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Unlock",
             "type": "main",
             "index": 0
           }

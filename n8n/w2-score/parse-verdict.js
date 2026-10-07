@@ -5,11 +5,11 @@
 //       ответы сопоставляются с items «Build prompt» по порядку.
 // Выход: строка вакансии + decision, llm_reason, llm_model и outcome:
 //   scored — решение есть. decision = error, если ответ пустой или не по схеме: карточка с ⚠️, решает пользователь;
-//   quota  — HTTP 429, лимит запросов: строка остаётся detailed и оценится в следующий запуск;
-//   retry  — 5xx, таймаут, ошибка ключа или доступа: строка остаётся detailed, problem → тревога в «Summary».
+//   quota  — HTTP 429, лимит запросов: «Release» вернёт строку в detailed, она оценится в следующий запуск;
+//   retry  — 5xx, таймаут, ошибка ключа или доступа: «Release» вернёт строку в detailed, problem → тревога в «Summary».
 
 const prompts = $('Build prompt').all().map((i) => i.json);
-const rows = new Map($('Pending').all().map((i) => [i.json.id, i.json]));
+const rows = new Map($('Claim').all().map((i) => [i.json.id, i.json]));
 const DECISIONS = new Set(['apply', 'maybe', 'skip']);
 
 function bodyOf(res) {

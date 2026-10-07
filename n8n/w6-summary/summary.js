@@ -91,7 +91,11 @@ const collected = count(
     at(r.started_at) <= windowEnd,
 );
 // Ждут оценки дольше 30 мин: W2 запускается сразу после сбора, свежие строки detailed — норма
-const pendingScore = count(rows, (r) => r.status === 'detailed' && at(r.createdAt) < now - 30 * 60 * 1000);
+// (scoring — W2 сейчас оценивает; застрявшие в scoring вернёт ветка «Unstick»)
+const pendingScore = count(
+  rows,
+  (r) => ['detailed', 'scoring'].includes(r.status) && at(r.createdAt) < now - 30 * 60 * 1000,
+);
 const tunnelCode = $input.first().json.statusCode;
 const tunnelOk = !$env.NGROK_DOMAIN || tunnelCode === 403; // 403 = туннель жив, политика не пускает чужих
 
