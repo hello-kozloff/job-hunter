@@ -24,6 +24,9 @@ curl localhost:8100/health
 - Autogenerate кладёт ключи с `use_alter=True` (циклы `users ↔ invites`, `profiles ↔ profile_configs`) внутрь `create_table` → такие ключи переносить в `op.create_foreign_key` в конце `upgrade` (см. первую миграцию).
 - `INSERT … RETURNING` через ORM отдаёт объект из identity map со старыми полями → `.execution_options(populate_existing=True)`.
 - `tests/test_migrations.py` падает, если модели разошлись с миграциями.
+- Не делать `session.rollback()`, если UPDATE ничего не изменил: rollback «протухает» все объекты сессии, следующий доступ к их полям → `MissingGreenlet`.
+- `docker logs` фильтрует rtk — смотреть через `rtk proxy docker logs job-hunter-v2-bot`.
+- Меню команд админа (`/admin`) ставится по chat id: пока админ не написал боту, Telegram отвечает «chat not found» → `app/bot/commands.py` это глотает и повторяет при `/start` админа.
 
 ## Окружение
 
@@ -35,6 +38,7 @@ curl localhost:8100/health
 
 | Этап | Статус |
 |---|---|
-| v2.0 Каркас | ✅ 08.10.2026: compose (postgres, api, bot, n8n v2), вся схема БД (17 таблиц, `app/db/models.py`), Alembic, `/health`, `/internal/*` с токеном, `/start` (админ из `.env`, остальным «по приглашениям»), тесты 6/6, деплой. v1 не перезапускался. **Ждёт от пользователя:** новый бот в @BotFather → `TG_BOT_TOKEN` в `v2/.env` → деплой |
-| v2.1 Доступ | ← следующий: инвайты, заявки, онбординг до TZ, `/admin` (инвайты, пользователи, рассылка) |
-| v2.2 Резюме … v2.7 Переезд | см. `docs/v2/architecture.md` → «Этапы» |
+| v2.0 Каркас | ✅ 08.10.2026: compose (postgres, api, bot, n8n v2), вся схема БД (17 таблиц, `app/db/models.py`), Alembic, `/health`, `/internal/*` с токеном, `/start` (админ из `.env`, остальным «по приглашениям»), тесты 6/6, деплой. v1 не перезапускался. Бот v2 — `@dead_serfs_bot` |
+| v2.1 Доступ | ✅ 08.10.2026: инвайты `t.me/<бот>?start=i_<код>` (число входов, срок, отзыв; активация — один UPDATE), «🙋 Запросить доступ» → заявка всем админам с ✅/❌, онбординг: часовой пояс кнопкой или текстом (`app/domain/timezones.py`), `/tz`; `/admin`: сводка, приглашения, заявки, пользователи (блок/разблок), рассылка (`copy_message` всем активным). Тесты 34/34. FSM — в памяти (сброс при перезапуске бота). **Живая проверка пользователем:** второй аккаунт по инвайту и через заявку |
+| v2.2 Резюме | ← следующий |
+| v2.3 Сбор … v2.7 Переезд | см. `docs/v2/architecture.md` → «Этапы» |
