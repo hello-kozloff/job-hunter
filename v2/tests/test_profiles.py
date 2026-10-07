@@ -110,3 +110,12 @@ def test_llm_schemas_have_no_recursion() -> None:
         s = schema.model_json_schema()
         for name, d in s.get("$defs", {}).items():
             assert f'"#/$defs/{name}"' not in json.dumps(d), name
+
+
+def test_roles_catalog_covers_all_industries() -> None:
+    from app.domain.hh import roles
+
+    assert roles.ROLES[124] == "Тестировщик" and roles.ROLES[8] == "Администратор"
+    assert len(roles.ROLES) > 150
+    assert roles.known_roles([124, 99999, 124, 8]) == [124, 8]
+    assert "Административный персонал:" in roles.catalog()

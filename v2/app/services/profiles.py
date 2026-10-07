@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Profile, ProfileConfig as ConfigRow, Resume, User
 from app.domain import resume_text
 from app.domain.filter.engine import validate_patterns
+from app.domain.hh.roles import known_roles
 from app.domain.llm import draft as prompts
 from app.domain.profile_config import LetterConfig, ProfileConfig, Rule
 from app.services import llm
@@ -60,6 +61,7 @@ def _unique_rule_ids(rules: list[Rule]) -> list[Rule]:
 
 
 def _check(config: ProfileConfig) -> ProfileConfig:
+    config.search.roles = known_roles(config.search.roles)
     config.filter.rules = _unique_rule_ids(config.filter.rules)
     errors = validate_patterns(config.filter.rules)
     if errors:

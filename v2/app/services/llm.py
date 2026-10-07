@@ -46,6 +46,8 @@ async def _gemini(system: str, prompt: str, schema: type[T]) -> tuple[T, Usage]:
             temperature=0.2,
             response_mime_type="application/json",
             response_json_schema=schema.model_json_schema(),
+            # Инструментов нет — автовызов функций SDK не нужен (и пишет предупреждение в лог)
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         ),
     )
     meta = response.usage_metadata
