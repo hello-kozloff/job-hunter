@@ -44,6 +44,7 @@ W6 Summary  Schedule 0 6 * * * МСК (+ Manual) → All rows → Plan
   ├ Cleanup → Save stripped        описания отработанных вакансий старше 30 дней (строка остаётся для дедупа)
   └ Delete old runs                журнал сборов старше 90 дней
 W1 Collector  OK? → HC ping? → HC ping (GET $env.HC_PING_URL) — сигнал стражу после успешного поиска
+W7 Bot menu   ⚙️ → 🕐 Сбор: расписание поменялось → HC sync (API healthchecks: новый OnCalendar и grace, пауза)
 ```
 
 - Код: `n8n/w6-summary/*.js`; разбор страницы hh — общий с W1: `n8n/shared/hh.js`.
@@ -65,7 +66,8 @@ W1 Collector  OK? → HC ping? → HC ping (GET $env.HC_PING_URL) — сигна
      ```
      Grace Time **50 минут** (нет на слайдере — 45; ровно 60 не ставить: тревога совпадёт со следующим сбором). Предпросмотр должен показать днём каждые 30 минут по МСК (13:00, 13:30, 14:00…). Настроено пользователем 07.10.2026. До 07.10.2026 было Cron `0 9-21/2 * * *`, grace 30 минут;
    - **Integrations → Telegram** → @HealthchecksBot → Start;
-   - Ping URL → `.env`: `HC_PING_URL=https://hc-ping.com/…`.
+   - Ping URL → `.env`: `HC_PING_URL=https://hc-ping.com/…`;
+   - с 07.10.2026 расписание меняется в боте (⚙️ → 🕐 Сбор), и страж обновляется сам через API. Для этого **Settings → API Access → Create API key** (read-write) → `.env`: `HC_API_KEY=…` → деплой (`docs/settings.md`).
 3. Деплой: `node scripts/n8n-api.mjs migrate && scripts/deploy.sh --publish`.
 
 ## Проверка

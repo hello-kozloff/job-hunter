@@ -104,7 +104,10 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 
 ```
 [W0 Check hh]  ручная проверка «жив ли hh» (этап 0)
-[W1 Collector] Schedule, МСК: днём 0,30 7-17 (каждые 30 мин), ночью 0 0,2,4,6,18,20,22 (каждые 2 ч) — 29 в сутки
+[W8 Clock]     Schedule каждые 15 мин → Settings → Due (слот по расписанию из настроек бота прошёл с прошлой отправки?
+                 static data dispatchedAt; после сна — один догоняющий) → W1. По умолчанию, МСК: днём 07:00–17:30 каждые
+                 30 мин, ночью 18, 20, 22, 00, 02, 04, 06 — 29 в сутки (docs/settings.md)
+[W1 Collector] вызов из W8 (kind schedule | catchup) или W7 «🔄 Собрать сейчас» (kind bot) | Manual
                  → Busy + Start: журнал runs (идёт другой сбор — запись running моложе 10 мин — этот пропускаем)
                  → Start run (запись running) → поиск hh → разбор InitialState → склейка дублей
                  → только новые (нет ни external_id, ни dup_key) → Blacklist + Filter search (правила по выдаче)
@@ -119,7 +122,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
                  (прошлое удаляется, static data W2 `liveId`; решение пользователя 07.10.2026); число карточек → runs
 [W3 Telegram]  Telegram Trigger (вебхук через ngrok) → кнопка: my_decision, status, перерисовать карточку,
                  при расхождении с нейросетью «Почему?» → ответ (reply) → my_reason;
-                 меню бота (кнопки под полем ввода, /v<id>, кнопки панели) → W7
+                 меню бота (кнопки под полем ввода, /v<id>, кнопки панели, ⚙️ Настройки) → W7
 [W5 Letter]    вызов из W3 (✅ / «🔄 Переписать» / ответ на письмо; W3 сначала ставит letter_lock — UPDATE «где пусто»,
                  повторное нажатие письмо не запускает; W5 снимает блокировку в конце, зависшую — W3 через 3 мин)
                  | Manual → профиль + образец → Gemini | Claude
@@ -132,9 +135,10 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
                  сводка: воронка, хвосты, теневой режим, сбои (сборы — по runs, ошибки — публичный API n8n, туннель);
                  без звука, если сбоев нет; чистка: описания отработанных вакансий старше 30 дней, runs старше 90 дней
 [W7 Bot menu]  вызов из W3 | Manual (приветствие с кнопками) → вся таблица + журнал runs → панель: список по вкладкам
-                 (8 на странице, /v<id> — карточка с решением), статистика; одна живая панель (docs/bot-menu.md)
-[Страж]        healthchecks.io (OnCalendar = расписание W1, grace 50 мин): W1 шлёт сигнал после поиска; нет сигнала
-                 (днём 2 пропуска подряд, ночью 1) → их бот пишет в Telegram
+                 (8 на странице, /v<id> — карточка с решением), статистика, ⚙️ настройки (сбор: интервалы, «день»,
+                 пауза, «собрать сейчас»; смена расписания → API healthchecks); одна живая панель (docs/bot-menu.md)
+[Страж]        healthchecks.io (OnCalendar = расписание сбора, grace = интервал днём + 20 мин; бот обновляет его через API
+                 при смене расписания): W1 шлёт сигнал после поиска; нет сигнала → их бот пишет в Telegram
 ```
 
 **Статусы:** `seen` (бэкфилл, не обрабатывается) | `new` (прошла выдачу) → `detailed` (прошла все правила; если `error` — страница не открылась, оценка по фрагменту) | `rejected` (+ `reasons`) → `scoring` (W2 оценивает; карточка не ушла — «Release» вернёт в `detailed`, застрявшие дольше 30 мин вернёт W6) → `waiting` (W2: решение нейросети, карточка отправлена) → `approved` (✅) | `maybe` (🤔) | `skipped` (❌); `approved` + письмо (W5) → «📨 Отправил» → `applied` (+ `applied_at`); W6: `waiting` 3 дня → `expired`, закрыта на hh → `archived`; этап 6+: `failed | needs_human`.
@@ -186,6 +190,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - CLI `n8n execute` не грузит модули → Data Table в нём не работает («module is disabled»). Workflow с таблицами запускать через REST `POST /rest/workflows/:id/run` (`scripts/n8n-api.mjs run`); второй CLI-процесс — с `N8N_RUNNERS_BROKER_PORT=5681`;
 - Telegram-нода без `parse_mode` шлёт Markdown (символ `_` ломает отправку) → всегда `parse_mode: HTML` + экранирование;
 - Data Table: таблицу можно указать по имени (`mode: name`), Insert «Map Automatically» пишет все поля item → поля должны совпадать с колонками;
+- Cron у Schedule Trigger зашит в workflow — из таблицы его не прочитать. Расписание из настроек бота → «часы» W8 Clock тикают каждые 15 мин и сами решают, пора ли собирать (07.10.2026);
 - Schedule Trigger 1.4: `misfirePolicy: coalesce` — после сна Mac выполняется последний пропущенный запуск, но **на каждое правило (rule)**; `coalesce_owner` — один на всю ноду. У W1 два правила (день/ночь) → `coalesce_owner`, иначе сон через 18:00 дал бы два параллельных W1 и дубли (проверено по исходникам 2.42.3: `@n8n/scheduler` → `coalesce-group.js`). Деплой сразу после пробуждения пересоздаёт задания — догоняющий запуск теряется;
 - `import:credentials` принимает данные открытым текстом и сам шифрует их ключом из `.env`;
 - вход в REST ограничен по частоте (429 после нескольких логинов подряд) → `n8n-api.mjs` хранит cookie сессии в `.n8n-session` (права 600, не в git);
@@ -320,13 +325,15 @@ docs/letter-example.md              образец письма пользова
 docs/stages/stage-N.md              устройство этапов и ручная сборка
 docs/git-flow.md                    ветки, PR, релизы, правила коммитов
 docs/bot-menu.md                    меню бота: кнопки, панель, вкладки, callback_data, ограничения
+docs/settings.md                    настройки из бота: таблица settings, схема, «часы» W8, страж через API
 n8n/w0-check/*.js                   код Code-нод W0
 n8n/w1-collector/*.js               код Code-нод W1
 n8n/w2-score/*.js                   код Code-нод W2 (промпт, разбор ответа, карточки, сводка)
 n8n/w3-telegram/*.js                код Code-нод W3 (кнопки, «Почему?», кнопки письма)
 n8n/w5-letter/*.js                  код Code-нод W5 (промпт письма, разбор, сообщение)
 n8n/w6-summary/*.js                 код Code-нод W6 (устаревшие, закрытые на hh, сводка)
-n8n/w7-menu/*.js                    код Code-нод W7 (меню бота: список, карточка, статистика)
+n8n/w7-menu/*.js                    код Code-нод W7 (меню бота: список, карточка, статистика, настройки)
+n8n/w8-clock/*.js                   код Code-нод W8 («часы» сбора)
 n8n/shared/*.js                     общий код Code-нод (карточка, письмо, разбор страницы hh, меню, расписание W1,
                                     поисковый запрос hh, признак AI-вакансии),
                                     подключается строкой // @include
@@ -353,15 +360,16 @@ Workflow в n8n (постоянные id):
 | `jobHunterS0Setup` | S0 Setup | создать таблицы `vacancies` и `blacklist` (если нет) |
 | `jobHunterS1TgTst` | S1 Telegram test | проверочное сообщение в Telegram |
 | `jobHunterW0Check` | W0 Check hh | ручная проверка «жив ли hh» |
-| `jobHunterW1Colle` | W1 Collector | сбор: днём каждые 30 мин (07:00–17:30 МСК), ночью каждые 2 ч |
+| `jobHunterW1Colle` | W1 Collector | сбор (запускают W8 Clock и «🔄 Собрать сейчас» в боте) |
 | `jobHunterW2Score` | W2 Score | оценка нейросетью и карточки (вызывает W1 после каждого сбора) |
 | `jobHunterW3Teleg` | W3 Telegram | кнопки и ответы «Почему?» (вебхук) |
 | `jobHunterW4Error` | W4 Errors | тревоги |
 | `jobHunterW5Lettr` | W5 Letter | сопроводительные письма (вызывает W3; Manual — письма ко всем ✅ без письма) |
 | `jobHunterW6Summ1` | W6 Summary | утренняя сводка, устаревшие и закрытые карточки |
 | `jobHunterW7Menu1` | W7 Bot menu | меню бота: список вакансий, карточка с решением, статистика (вызывает W3; Manual — приветствие с кнопками) |
+| `jobHunterW8Clock` | W8 Clock | «часы» сбора: каждые 15 мин решают по настройкам бота, пора ли запускать W1 |
 
-Credentials: `jobHunterTgBot01` «Telegram bot», `jobHunterGemini1` «Gemini», `jobHunterClaude1` «Claude», `jobHunterN8nApi1` «n8n API» (ключ публичного API, создаёт `n8n-api.mjs api-key`).
+Credentials: `jobHunterTgBot01` «Telegram bot», `jobHunterGemini1` «Gemini», `jobHunterClaude1` «Claude», `jobHunterN8nApi1` «n8n API» (ключ публичного API, создаёт `n8n-api.mjs api-key`), `jobHunterHcApi01` «healthchecks API» (`HC_API_KEY`, если есть в `.env`).
 
 ## 14. Git
 
