@@ -546,6 +546,140 @@
       "onError": "continueRegularOutput"
     },
     {
+      "id": "ddb424b5-9815-b9a4-b986-911bca830563",
+      "name": "Open alerts",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        900
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "alerts"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "workflow",
+              "keyValue": "W2 Score"
+            },
+            {
+              "keyName": "is_open",
+              "condition": "isTrue"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "43db03c7-2459-239d-4e97-bb87ca4ab89a",
+      "name": "Recovered",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        900
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Recovered — открытые тревоги workflow → «✅ снова работает» (07.10.2026). Код одной ноды в W1 и W2:\n// успешный запуск закрывает тревоги своего workflow («Close alerts»).\n// Нода: Code, режим «Run Once for All Items». Вход: «Open alerts» — открытые тревоги этого workflow\n// (Always Output Data: пустой item, если их нет). Выход: одно сообщение { text } или [] — закрывать нечего.\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst rows = $input\n  .all()\n  .map((i) => i.json)\n  .filter((r) => r.id);\nif (!rows.length) return [];\n\nconst thai = (ms) => new Date(ms + 7 * 3600 * 1000).toISOString().slice(11, 16);\nconst hits = rows.reduce((n, r) => n + (Number(r.hits) || 1), 0);\nconst first = Math.min(...rows.map((r) => Date.parse(r.first_at) || Date.now()));\nconst last = Math.max(...rows.map((r) => Date.parse(r.last_at) || Date.now()));\nconst span = thai(first) === thai(last) ? thai(first) : `${thai(first)}–${thai(last)}`;\nreturn [{ json: { text: `✅ <b>${esc(rows[0].workflow)}</b> снова работает: ошибок было ${hits} (${span} по Таиланду)` } }];\n"
+      }
+    },
+    {
+      "id": "86268ef6-a415-b109-3b34-d65c7889a36e",
+      "name": "Send recovered",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2420,
+        900
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $env.TG_CHAT_ID }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true,
+          "disable_notification": true
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterTgBot01",
+          "name": "Telegram bot"
+        }
+      }
+    },
+    {
+      "id": "93ac2a11-a261-27ca-83e1-ff91764c26e7",
+      "name": "Close alerts",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2640,
+        900
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "alerts"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "workflow",
+              "keyValue": "W2 Score"
+            },
+            {
+              "keyName": "is_open",
+              "condition": "isTrue"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "is_open": "={{ false }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "is_open",
+              "displayName": "is_open",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
       "id": "d5e3f0ae-0d39-540f-956a-e327f32135ad",
       "name": "Release",
       "type": "n8n-nodes-base.code",
@@ -705,6 +839,11 @@
             "node": "Release",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Open alerts",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -746,6 +885,39 @@
         [
           {
             "node": "Save release",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Open alerts": {
+      "main": [
+        [
+          {
+            "node": "Recovered",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recovered": {
+      "main": [
+        [
+          {
+            "node": "Send recovered",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send recovered": {
+      "main": [
+        [
+          {
+            "node": "Close alerts",
             "type": "main",
             "index": 0
           }

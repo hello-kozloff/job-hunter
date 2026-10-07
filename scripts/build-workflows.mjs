@@ -194,6 +194,7 @@ const ifTrue = (wf, expression) => ({
 const VACANCIES = { __rl: true, mode: 'name', value: 'vacancies' };
 const BLACKLIST = { __rl: true, mode: 'name', value: 'blacklist' };
 const RUNS = { __rl: true, mode: 'name', value: 'runs' };
+const ALERTS = { __rl: true, mode: 'name', value: 'alerts' };
 
 // Insert/Update пишут все поля item в одноимённые колонки
 const AUTO_MAP = {
@@ -332,6 +333,59 @@ const telegramEdit = (wf, name, position, { messageId, text }) =>
     },
     { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
   );
+
+// Успешный запуск закрывает тревоги своего workflow (07.10.2026): «Open alerts» → «Recovered» («✅ снова работает»)
+// → «Send recovered» → «Close alerts». Возвращает ноды и связи; from — нода, после которой идёт цепочка
+const recoveryChain = (wf, workflowName, from, [x, y]) => {
+  const openFilter = {
+    matchType: 'allConditions',
+    filters: {
+      conditions: [
+        { keyName: 'workflow', keyValue: workflowName },
+        { keyName: 'is_open', condition: 'isTrue' },
+      ],
+    },
+  };
+  return {
+    nodes: [
+      node(
+        wf,
+        'Open alerts',
+        'dataTable',
+        1.1,
+        [x, y],
+        { resource: 'row', operation: 'get', dataTableId: ALERTS, ...openFilter, returnAll: true },
+        { executeOnce: true, alwaysOutputData: true, onError: 'continueRegularOutput' },
+      ),
+      code(wf, 'Recovered', 'n8n/w4-errors/recovered.js', [x + 220, y]),
+      telegram(wf, 'Send recovered', [x + 440, y], { fields: { disable_notification: true } }),
+      node(
+        wf,
+        'Close alerts',
+        'dataTable',
+        1.1,
+        [x + 660, y],
+        {
+          resource: 'row',
+          operation: 'update',
+          dataTableId: ALERTS,
+          ...openFilter,
+          columns: setColumns({ is_open: '={{ false }}' }),
+          options: {},
+        },
+        { onError: 'continueRegularOutput' },
+      ),
+    ],
+    links: [
+      [from, 'Open alerts'],
+      ['Open alerts', 'Recovered'],
+      ['Recovered', 'Send recovered'],
+      ['Send recovered', 'Close alerts'],
+    ],
+  };
+};
+const W1_RECOVERY = recoveryChain('W1', 'W1 Collector', 'Finish run', [2420, 0]);
+const W2_RECOVERY = recoveryChain('W2', 'W2 Score', 'Called by W1', [1980, 900]);
 
 // Перерисовать сообщение — текст и кнопки (rows = null — убрать все кнопки). По умолчанию — нода W3
 const editMessage = (name, position, { chatId, messageId, text, rows }, wf = 'W3', extra = {}) =>
@@ -606,6 +660,7 @@ const workflows = {
         }),
         options: {},
       }),
+      ...W1_RECOVERY.nodes,
       runWorkflow('W1', 'Score', [2200, 150], IDS.score),
       node('W1', 'To file', 'convertToFile', 1.1, [1980, 300], {
         operation: 'toText',
@@ -668,6 +723,7 @@ const workflows = {
       ['Parse vacancy', 'Update'],
       ['OK?', 'Score job', 0],
       ['Score job', 'Finish run'],
+      ...W1_RECOVERY.links,
       ['Score job', 'Score'],
       ['OK?', 'To file', 1],
       ['To file', 'Save fixture'],
@@ -807,7 +863,9 @@ const workflows = {
         // Сообщение старше 48 ч Telegram не удалит — это не ошибка
         { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
       ),
-      // Захваченные строки без отправленной карточки → снова detailed (самая нижняя ветка — выполняется последней)
+      // Успешный запуск закрывает тревоги W2 (самая нижняя ветка)
+      ...W2_RECOVERY.nodes,
+      // Захваченные строки без отправленной карточки → снова detailed
       code('W2', 'Release', 'n8n/w2-score/release.js', [1980, 700]),
       node(
         'W2',
@@ -860,6 +918,7 @@ const workflows = {
       ['Called by W1', 'Release'],
       ['Manual', 'Release'],
       ['Release', 'Save release'],
+      ...W2_RECOVERY.links,
       ['Pending', 'Claim'],
       ['Claim', 'Resume'],
       ['Resume', 'Resume text'],
@@ -1436,6 +1495,30 @@ const workflows = {
         columns: setColumns({ description: '', snippet: '' }),
         options: {},
       }),
+      node(
+        'W6',
+        'Delete old alerts',
+        'dataTable',
+        1.1,
+        [660, 1200],
+        {
+          resource: 'row',
+          operation: 'deleteRows',
+          dataTableId: ALERTS,
+          matchType: 'allConditions',
+          filters: {
+            conditions: [
+              {
+                keyName: 'last_at',
+                condition: 'lt',
+                keyValue: '={{ new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString() }}',
+              },
+            ],
+          },
+          options: {},
+        },
+        { executeOnce: true, onError: 'continueRegularOutput' },
+      ),
       code('W6', 'Unstick', 'n8n/w6-summary/unstick.js', [660, 1000]),
       node('W6', 'Save unstuck', 'dataTable', 1.1, [880, 1000], {
         resource: 'row',
@@ -1501,6 +1584,7 @@ const workflows = {
       ['Cleanup', 'Save stripped'],
       ['Plan', 'Delete old runs'],
       ['Plan', 'Unstick'],
+      ['Plan', 'Delete old alerts'],
       ['Unstick', 'Save unstuck'],
     ],
     { timezone: 'Europe/Moscow', errorWorkflow: IDS.errors },
@@ -1624,11 +1708,91 @@ const workflows = {
     [
       node('W4', 'Error Trigger', 'errorTrigger', 1, [0, 0], {}),
       code('W4', 'Format error', 'n8n/w4-errors/format-error.js', [220, 0]),
-      telegram('W4', 'Telegram', [440, 0]),
+      // Открытая тревога с тем же ключом — повтор той же проблемы (07.10.2026). Таблица не ответила —
+      // тревога уходит как новая: лучше лишняя тревога, чем потерянная
+      node(
+        'W4',
+        'Find alert',
+        'dataTable',
+        1.1,
+        [440, 0],
+        {
+          resource: 'row',
+          operation: 'get',
+          dataTableId: ALERTS,
+          matchType: 'allConditions',
+          filters: {
+            conditions: [
+              { keyName: 'alert_key', keyValue: '={{ $json.key }}' },
+              { keyName: 'is_open', condition: 'isTrue' },
+            ],
+          },
+          returnAll: false,
+          limit: 1,
+          orderBy: true,
+          orderByColumn: 'createdAt',
+          orderByDirection: 'DESC',
+        },
+        { alwaysOutputData: true, onError: 'continueRegularOutput' },
+      ),
+      code('W4', 'Alert plan', 'n8n/w4-errors/alert-plan.js', [660, 0]),
+      node('W4', 'Repeat?', 'if', 2.3, [880, 0], ifTrue('W4', '={{ $json.repeat }}')),
+      // Повтор: правка той же тревоги — без звука, счётчик и время
+      telegramEdit('W4', 'Edit alert', [1100, -100], { messageId: '={{ $json.tg_message_id }}', text: '={{ $json.text }}' }),
+      node(
+        'W4',
+        'Save repeat',
+        'dataTable',
+        1.1,
+        [1320, -100],
+        {
+          resource: 'row',
+          operation: 'update',
+          dataTableId: ALERTS,
+          ...byId("={{ $('Alert plan').first().json.id }}"),
+          columns: setColumns({
+            hits: "={{ $('Alert plan').first().json.hits }}",
+            last_at: "={{ $('Alert plan').first().json.now }}",
+          }),
+          options: {},
+        },
+        { onError: 'continueRegularOutput' },
+      ),
+      telegram('W4', 'Send alert', [1100, 100]),
+      node(
+        'W4',
+        'Save alert',
+        'dataTable',
+        1.1,
+        [1320, 100],
+        {
+          resource: 'row',
+          operation: 'insert',
+          dataTableId: ALERTS,
+          columns: setColumns({
+            alert_key: "={{ $('Alert plan').first().json.key }}",
+            workflow: "={{ $('Alert plan').first().json.workflow }}",
+            message: "={{ $('Alert plan').first().json.message }}",
+            first_at: "={{ $('Alert plan').first().json.now }}",
+            last_at: "={{ $('Alert plan').first().json.now }}",
+            hits: '={{ 1 }}',
+            is_open: '={{ true }}',
+            tg_message_id: '={{ $json.result.message_id }}',
+          }),
+          options: {},
+        },
+        { onError: 'continueRegularOutput' },
+      ),
     ],
     [
       ['Error Trigger', 'Format error'],
-      ['Format error', 'Telegram'],
+      ['Format error', 'Find alert'],
+      ['Find alert', 'Alert plan'],
+      ['Alert plan', 'Repeat?'],
+      ['Repeat?', 'Edit alert', 0],
+      ['Edit alert', 'Save repeat'],
+      ['Repeat?', 'Send alert', 1],
+      ['Send alert', 'Save alert'],
     ],
   ),
 };
