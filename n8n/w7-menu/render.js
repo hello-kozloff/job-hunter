@@ -7,7 +7,8 @@
 //           10 — приветствие с кнопками под полем ввода;
 //   b — подписи и callback_data кнопок: раскладки фиксированные (Telegram-нода не умеет менять число кнопок);
 //   deleteIds — что удалить после отправки: нажатие пользователя и прошлую панель (одна живая панель в чате).
-// Static data (global): panel = { messageId, tab, page } — текущая панель и вкладка, куда вернёт «⬅️ К списку»;
+// Static data (global): panel = { messageId, view, id, tab, page } — текущая панель: что на ней (list | open | stats,
+//                       id — открытая вакансия) и вкладка, куда вернут «⬅️ К списку» и «📋 К вакансиям»;
 //                       greetingId — приветствие (при новом /start старое удаляется).
 
 // @include n8n/shared/card.js
@@ -28,8 +29,14 @@ const DAY = 24 * 3600 * 1000;
 const PAGE = 8;
 const LAYOUTS = ['list', 'open_choose', 'open_decided', 'open_plain', 'stats'];
 const chatId = String(job.chatId || $env.TG_CHAT_ID);
-// Кнопка в панели или перерисовка после решения — правим ту же панель; кнопка меню или /v… — новая панель
-const edit = Boolean(job.messageId);
+// sync — после «📨 Отправил» / «↩️ Отменить» под письмом (W3 «Sync job»): перерисовать панель,
+// только если на ней открыта эта вакансия — иначе на ней нечего обновлять
+if (job.view === 'sync' && !(panel.view === 'open' && Number(panel.id) === Number(job.id) && panel.messageId)) {
+  return [];
+}
+// Кнопка в панели, перерисовка после решения, sync — правим панель; кнопка меню, /v…, «📋 К вакансиям» — новая
+const target = job.view === 'sync' ? panel.messageId : job.messageId;
+const edit = Boolean(target);
 const at = (s) => Date.parse(s) || 0;
 const count = (list, f) => list.filter(f).length;
 const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
@@ -251,21 +258,30 @@ if (job.view === 'start') {
   ];
 }
 
-const view =
-  job.view === 'open' ? openView(Number(job.id)) : job.view === 'stats' ? statsView() : listView(job.tab, job.page);
+const view = ['open', 'sync'].includes(job.view)
+  ? openView(Number(job.id))
+  : job.view === 'stats'
+    ? statsView()
+    : // resume — «📋 К вакансиям»: та вкладка и страница, что была на панели
+      listView(job.resume ? panel.tab : job.tab, job.resume ? panel.page : job.page);
+const shown = view.layout.startsWith('open') ? 'open' : view.layout;
+const id = shown === 'open' ? Number(job.id) : 0;
 
-// Панель, которую правим, становится текущей: «⬅️ К списку» и /v… вернут на её вкладку
-if (edit) state.panel = { messageId: job.messageId, tab: view.tab ?? panel.tab, page: view.page ?? panel.page };
+// Панель, которую правим, становится текущей: «⬅️ К списку», /v… и «📋 К вакансиям» вернут на её вкладку
+if (edit) {
+  state.panel = { messageId: target, view: shown, id, tab: view.tab ?? panel.tab, page: view.page ?? panel.page };
+}
 
 return [
   {
     json: {
       route: LAYOUTS.indexOf(view.layout) * 2 + (edit ? 1 : 0),
-      view: job.view,
+      view: shown,
+      id,
       layout: view.layout,
       edit,
       chatId,
-      messageId: job.messageId || 0,
+      messageId: target || 0,
       text: view.text,
       b: view.b,
       deleteIds: edit ? [] : [job.userMessageId, panel.messageId].filter(Boolean),

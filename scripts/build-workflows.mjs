@@ -844,7 +844,8 @@ const workflows = {
         chatId: `={{ ${SENT}.chatId }}`,
         messageId: `={{ ${SENT}.letterMessageId }}`,
         text: `={{ ${SENT}.letterText }}`,
-        rows: [[['↩️ Отменить', `=l:{{ ${SENT}.id }}:unsent`]]],
+        // «📋 К вакансиям» — новая панель со списком там, где был (p:n → W7)
+        rows: [[['↩️ Отменить', `=l:{{ ${SENT}.id }}:unsent`]], [['📋 К вакансиям', 'p:n']]],
       }),
       editMessage('Card: sent', [2420, 250], {
         chatId: `={{ ${SENT}.chatId }}`,
@@ -865,6 +866,9 @@ const workflows = {
         text: `={{ ${SENT}.cardText }}`,
         rows: [[['↩️ Изменить', `=v:{{ ${SENT}.id }}:edit`]]],
       }),
+      // Отклик отправлен или отменён — обновить панель меню, если на ней открыта эта вакансия (W7)
+      code('W3', 'Sync job', 'n8n/w3-telegram/sync-job.js', [2640, 325]),
+      runWorkflow('W3', 'Panel sync', [2860, 325], IDS.menu),
       // Ответ (reply): на письмо — правка письма, на вопрос «почему?» или карточку — причина
       node('W3', 'Reply row', 'dataTable', 1.1, [880, 500], {
         resource: 'row',
@@ -937,6 +941,9 @@ const workflows = {
       ['Letter: sent', 'Card: sent'],
       ['Sent?', 'Letter: restore', 1],
       ['Letter: restore', 'Card: restore'],
+      ['Card: sent', 'Sync job'],
+      ['Card: restore', 'Sync job'],
+      ['Sync job', 'Panel sync'],
       ['Letter button?', 'Reply row', 1],
       ['Reply row', 'Reply kind'],
       ['Reply kind', 'Revise?'],
@@ -1056,6 +1063,17 @@ const workflows = {
         columns: AUTO_MAP,
         options: {},
       }),
+      // Новое письмо отправлено и записано — прошлое письмо (и ответ с пожеланием) удалить: в ленте только актуальное
+      code('W5', 'Old letters', 'n8n/w5-letter/old-letters.js', [3520, 0]),
+      node(
+        'W5',
+        'Delete old letter',
+        'telegram',
+        1.2,
+        [3740, 0],
+        { resource: 'message', operation: 'deleteMessage', chatId: '={{ $env.TG_CHAT_ID }}', messageId: '={{ $json.messageId }}' },
+        { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
+      ),
     ],
     [
       ['Called by W3', 'Jobs'],
@@ -1076,6 +1094,8 @@ const workflows = {
       ['Format letter', 'Send letter'],
       ['Send letter', 'Letter sent'],
       ['Letter sent', 'Save letter'],
+      ['Save letter', 'Old letters'],
+      ['Old letters', 'Delete old letter'],
     ],
     { errorWorkflow: IDS.errors },
   ),
