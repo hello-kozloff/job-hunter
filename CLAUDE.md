@@ -112,14 +112,17 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
                  → Update (detailed | rejected) → Score job (блок «🔎 Сбор»: запросы к hh, что искали, новые и отсеянные
                  с причинами, следующий сбор) → Finish run (итог в runs) → W2 (Execute Workflow, без ожидания);
                  поломка → Fail run (status error) → Stop. Успешные запуски W1 не хранятся (итог — в runs)
-[W2 Score]     вызов из W1 после каждого сбора | Manual → detailed → резюме + промпт → Gemini | Claude → apply/maybe/skip + причина
+[W2 Score]     вызов из W1 после каждого сбора | Manual → detailed → Claim (detailed → scoring одним UPDATE: второй запуск W2
+                 те же строки не возьмёт) → резюме + промпт → Gemini | Claude → apply/maybe/skip + причина
                  → карточка в Telegram с кнопками ✅/🤔/❌ → status = waiting → сообщение о сборе + тревоги (429 и т. п.):
                  были карточки — «🔎 Сбор» сверху итога «📊 Оценено N»; нет — «🔎 Сбор» одним живым сообщением без звука
                  (прошлое удаляется, static data W2 `liveId`; решение пользователя 07.10.2026); число карточек → runs
 [W3 Telegram]  Telegram Trigger (вебхук через ngrok) → кнопка: my_decision, status, перерисовать карточку,
                  при расхождении с нейросетью «Почему?» → ответ (reply) → my_reason;
                  меню бота (кнопки под полем ввода, /v<id>, кнопки панели) → W7
-[W5 Letter]    вызов из W3 (✅ / «🔄 Переписать» / ответ на письмо) | Manual → профиль + образец → Gemini | Claude
+[W5 Letter]    вызов из W3 (✅ / «🔄 Переписать» / ответ на письмо; W3 сначала ставит letter_lock — UPDATE «где пусто»,
+                 повторное нажатие письмо не запускает; W5 снимает блокировку в конце, зависшую — W3 через 3 мин)
+                 | Manual → профиль + образец → Gemini | Claude
                  → письмо ответом на карточку: [📝 Отклик на hh] [🔗 Вакансия] [🔄 Переписать] [📨 Отправил]
                  → прежнее письмо (и ответ с пожеланием) удаляется; после «📨 Отправил» — [↩️ Отменить] [📋 К вакансиям]
 [W4 Errors]    Error Trigger → Telegram (строится на этапе 1)
@@ -132,7 +135,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
                  (днём 2 пропуска подряд, ночью 1) → их бот пишет в Telegram
 ```
 
-**Статусы:** `seen` (бэкфилл, не обрабатывается) | `new` (прошла выдачу) → `detailed` (прошла все правила; если `error` — страница не открылась, оценка по фрагменту) | `rejected` (+ `reasons`) → `waiting` (W2: решение нейросети, карточка отправлена) → `approved` (✅) | `maybe` (🤔) | `skipped` (❌); `approved` + письмо (W5) → «📨 Отправил» → `applied` (+ `applied_at`); W6: `waiting` 3 дня → `expired`, закрыта на hh → `archived`; этап 6+: `failed | needs_human`.
+**Статусы:** `seen` (бэкфилл, не обрабатывается) | `new` (прошла выдачу) → `detailed` (прошла все правила; если `error` — страница не открылась, оценка по фрагменту) | `rejected` (+ `reasons`) → `scoring` (W2 оценивает; карточка не ушла — «Release» вернёт в `detailed`, застрявшие дольше 30 мин вернёт W6) → `waiting` (W2: решение нейросети, карточка отправлена) → `approved` (✅) | `maybe` (🤔) | `skipped` (❌); `approved` + письмо (W5) → «📨 Отправил» → `applied` (+ `applied_at`); W6: `waiting` 3 дня → `expired`, закрыта на hh → `archived`; этап 6+: `failed | needs_human`.
 
 **Хранилище:** n8n Data Tables, таблица `vacancies`.
 - Лимит поднят до 100 МБ env-переменной.
