@@ -31,7 +31,7 @@
           "parameters": [
             {
               "name": "text",
-              "value": "NAME:(frontend OR front-end OR фронтенд OR react OR next.js OR nextjs OR typescript OR vue OR vue.js OR vuejs OR nuxt OR nuxt.js OR nuxtjs)"
+              "value": "frontend OR NAME:(react OR next.js OR nextjs OR vue OR vue.js OR vuejs OR nuxt OR nuxt.js OR nuxtjs OR typescript OR AI OR ИИ OR LLM OR GenAI OR GPT OR нейросети OR нейросетей)"
             },
             {
               "name": "professional_role",
@@ -46,6 +46,10 @@
               "value": "not_required_or_not_specified"
             },
             {
+              "name": "search_period",
+              "value": "1"
+            },
+            {
               "name": "order_by",
               "value": "publication_time"
             },
@@ -55,6 +59,10 @@
             },
             {
               "name": "enable_snippets",
+              "value": "true"
+            },
+            {
+              "name": "ored_clusters",
               "value": "true"
             },
             {

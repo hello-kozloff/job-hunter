@@ -3,22 +3,54 @@
 // (сообщение о сборе): строка «// @include n8n/shared/search.js».
 
 const SEARCH_URL = 'https://hh.ru/search/vacancy';
+
+// Слова поиска (решения пользователя 07.10.2026). frontend — по всему тексту вакансии: «JavaScript-разработчик»,
+// fullstack и AI-вакансии с фронтендом в описании в названии слова frontend не несут; синонимы (фронтенд,
+// front-end) hh подставляет сам. Стек и AI — только в названии: по всему тексту они приносят чужой бэкенд
+// («React будет плюсом»). Замер за сутки: было 16 вакансий (всё в названии), стало 39
+const SEARCH_ANYWHERE = ['frontend'];
+const SEARCH_IN_NAME = [
+  'react',
+  'next.js',
+  'nextjs',
+  'vue',
+  'vue.js',
+  'vuejs',
+  'nuxt',
+  'nuxt.js',
+  'nuxtjs',
+  'typescript',
+  // AI-разработка — тоже в работу (07.10.2026)
+  'AI',
+  'ИИ',
+  'LLM',
+  'GenAI',
+  'GPT',
+  'нейросети',
+  'нейросетей',
+];
+
 const SEARCH_QUERY = [
-  // vue и nuxt — с 07.10.2026: Vue-вакансии без слов frontend/react в названии иначе не находятся
-  ['text', 'NAME:(frontend OR front-end OR фронтенд OR react OR next.js OR nextjs OR typescript OR vue OR vue.js OR vuejs OR nuxt OR nuxt.js OR nuxtjs)'],
+  ['text', `${SEARCH_ANYWHERE.join(' OR ')} OR NAME:(${SEARCH_IN_NAME.join(' OR ')})`],
   ['professional_role', '96'],
   ['work_format', 'REMOTE'],
   ['education', 'not_required_or_not_specified'],
+  // Только за сутки (решение пользователя 07.10.2026)
+  ['search_period', '1'],
   ['order_by', 'publication_time'],
   ['items_on_page', '100'],
   ['enable_snippets', 'true'],
+  // Как в выдаче на сайте; с одиночными значениями фильтров на результат не влияет
+  ['ored_clusters', 'true'],
 ];
 
-// Подписи параметров для сообщения о сборе, в порядке показа. Технические (items_on_page, enable_snippets) не показываем
+// Подписи параметров для сообщения о сборе, в порядке показа. Технические (items_on_page, enable_snippets,
+// ored_clusters) не показываем
 const SEARCH_LABELS = {
   work_format: { REMOTE: 'удалёнка' },
   professional_role: { 96: 'программист, разработчик' },
   education: { not_required_or_not_specified: 'образование не важно' },
+  search_period: { 1: 'за сутки' },
   order_by: { publication_time: 'сначала новые' },
 };
 
@@ -28,12 +60,13 @@ const searchUrl = (page = 0) =>
     .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
     .join('&')}`;
 
-// Что искали, по-человечески: «в названии: frontend · react · …» и строка фильтров
+// Что искали, по-человечески: где какие слова и строка фильтров
 function describeSearch() {
-  const text = SEARCH_QUERY.find(([key]) => key === 'text')?.[1] ?? '';
-  const words = text.match(/^NAME:\((.*)\)$/)?.[1].split(' OR ');
   const filters = Object.keys(SEARCH_LABELS).flatMap((key) =>
     SEARCH_QUERY.filter(([name]) => name === key).map(([, value]) => SEARCH_LABELS[key][value] ?? `${key}=${value}`),
   );
-  return { words: words ? `в названии: ${words.join(' · ')}` : text, filters: filters.join(' · ') };
+  return {
+    words: `везде в тексте: ${SEARCH_ANYWHERE.join(' · ')}\nв названии: ${SEARCH_IN_NAME.join(' · ')}`,
+    filters: filters.join(' · '),
+  };
 }
