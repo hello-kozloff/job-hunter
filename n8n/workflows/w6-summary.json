@@ -493,6 +493,26 @@
         "operation": "sendMessage",
         "chatId": "={{ $env.TG_CHAT_ID }}",
         "text": "={{ $json.text }}",
+        "replyMarkup": "replyKeyboard",
+        "replyKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "📋 Вакансии"
+                  },
+                  {
+                    "text": "📊 Статистика"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "replyKeyboardOptions": {
+          "resize_keyboard": true
+        },
         "additionalFields": {
           "appendAttribution": false,
           "parse_mode": "HTML",
