@@ -29,7 +29,7 @@
 ⚙️ Сборов 29 из 29, ошибок нет, туннель работает    ← или «⚠️ Сбои: …» (тогда со звуком)
 ```
 
-Сбои: сборов меньше, чем по расписанию W1 (29 за сутки; считаются запуски до «сейчас − 10 мин» — сбор в 06:00 идёт одновременно со сводкой), ошибки запусков (по workflow), туннель не отвечает 403 снаружи, вакансии ждут оценки нейросетью дольше 30 минут, нет данных о запусках.
+Сбои: сборов меньше, чем по расписанию W1 (29 за сутки; считаются записи журнала `runs` по расписанию до «сейчас − 10 мин» — сбор в 06:00 идёт одновременно со сводкой), ошибки запусков (по workflow), туннель не отвечает 403 снаружи, вакансии ждут оценки нейросетью дольше 30 минут, нет данных о запусках.
 
 ## Как устроено
 
@@ -39,7 +39,10 @@ W6 Summary  Schedule 0 6 * * * МСК (+ Manual) → All rows → Plan
   ├ Check candidates → Vacancy page (hh, 3 с) → Archive status
   │     ├ Card: archived → Archived done → Save archived                 (status = archived)
   │     └ Has letter? → Letter: archived
-  └ Executions (публичный API n8n) → Tunnel (https://<NGROK_DOMAIN>/ → 403) → Summary → Send summary
+  ├ Runs (журнал сборов) → Executions (публичный API n8n: ошибки) → Tunnel (https://<NGROK_DOMAIN>/ → 403)
+  │     → Summary → Send summary
+  ├ Cleanup → Save stripped        описания отработанных вакансий старше 30 дней (строка остаётся для дедупа)
+  └ Delete old runs                журнал сборов старше 90 дней
 W1 Collector  OK? → HC ping? → HC ping (GET $env.HC_PING_URL) — сигнал стражу после успешного поиска
 ```
 
@@ -70,7 +73,7 @@ W1 Collector  OK? → HC ping? → HC ping (GET $env.HC_PING_URL) — сигна
 ```bash
 node scripts/n8n-api.mjs run jobHunterW6Summ1          # сводка сейчас (устаревшие и закрытые — по-настоящему)
 node scripts/run-code-node.mjs n8n/w6-summary/summary.js <tunnel.json> --ref 'All rows=@<rows.json>' \
-  --ref 'Plan=@<plan.json>' --ref 'Executions=@<executions.json>' --env NGROK_DOMAIN=…
+  --ref 'Plan=@<plan.json>' --ref 'Runs=@<runs.json>' --ref 'Executions=@<executions.json>' --env NGROK_DOMAIN=…
 ```
 
 ## Готово, когда
