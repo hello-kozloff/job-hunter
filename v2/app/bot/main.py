@@ -7,7 +7,9 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from app.bot.routers import start
+from app.bot.commands import set_commands
+from app.bot.middlewares import DbUserMiddleware
+from app.bot.routers import admin, fallback, onboarding, start
 from app.config import get_settings
 
 log = logging.getLogger("bot")
@@ -22,7 +24,11 @@ async def main() -> None:
         await asyncio.Event().wait()
     bot = Bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
-    dp.include_router(start.router)
+    # Сессия базы и пользователь — во все обработчики; FSM пока в памяти (сбрасывается при перезапуске бота)
+    dp.update.outer_middleware(DbUserMiddleware())
+    # Порядок важен: fallback — последним
+    dp.include_routers(start.router, onboarding.router, admin.router, fallback.router)
+    await set_commands(bot)
     await bot.delete_webhook(drop_pending_updates=False)
     await dp.start_polling(bot)
 
