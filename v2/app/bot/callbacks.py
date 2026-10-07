@@ -20,7 +20,10 @@ class Decide(CallbackData, prefix="ar"):
 
 
 class Admin(CallbackData, prefix="adm"):
-    """Панель администратора: action — экран или действие, arg — параметр (номер страницы, id, …)."""
+    """Панель администратора: action — экран или действие, arg — параметр (номер страницы, id, …).
+
+    «:» внутри полей нельзя — это разделитель aiogram; составной arg склеивается через «-».
+    """
 
     action: str
     arg: str = ""
