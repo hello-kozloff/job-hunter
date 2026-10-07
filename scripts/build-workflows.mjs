@@ -25,6 +25,7 @@ const IDS = {
   errors: 'jobHunterW4Error',
   letter: 'jobHunterW5Lettr',
   summary: 'jobHunterW6Summ1',
+  menu: 'jobHunterW7Menu1',
   n8nApiCredential: 'jobHunterN8nApi1',
   telegramCredential: 'jobHunterTgBot01',
   geminiCredential: 'jobHunterGemini1',
@@ -122,8 +123,16 @@ const keyboard = (rows) => ({
   })),
 });
 
+// Клавиатура под полем ввода (reply keyboard): rows = [[текст, …], …]. Нажатие присылает текст сообщением
+const replyKeyboard = (rows) => ({
+  rows: rows.map((buttons) => ({ row: { buttons: buttons.map((text) => ({ text })) } })),
+});
+
+// Подписи кнопок меню — из n8n/shared/menu.js (по ним W3 «Route» узнаёт нажатие)
+const { MENU } = new Function(`${read('n8n/shared/menu.js')}\nreturn { MENU };`)();
+
 // Ответ на нажатие кнопки (убирает «часики» на кнопке, показывает всплывающий текст)
-const answerQuery = (wf, name, position, queryId, text) =>
+const answerQuery = (wf, name, position, queryId, text, extra = {}) =>
   node(
     wf,
     name,
@@ -131,7 +140,7 @@ const answerQuery = (wf, name, position, queryId, text) =>
     1.2,
     position,
     { resource: 'callback', operation: 'answerQuery', queryId, additionalFields: { text } },
-    { credentials: TELEGRAM_CREDENTIAL },
+    { credentials: TELEGRAM_CREDENTIAL, ...extra },
   );
 
 // Запуск другого workflow без ожидания (его ноде-триггеру «When Executed by Another Workflow»
@@ -238,6 +247,62 @@ const llmRequest = ({ url, credential, headers = [], interval }) => ({
   },
 });
 
+// W7: раскладки кнопок панели меню. Telegram-нода не умеет менять число кнопок на ходу, поэтому раскладки
+// фиксированные, а подписи и callback_data считает «Render» ($json.b). Порядок = номера выходов «Layout»
+const panelButton = (path) => `={{ $json.b.${path} }}`;
+const PANEL_LAYOUTS = [
+  [
+    'list',
+    [
+      [0, 1, 2].map((i) => [panelButton(`tabs[${i}].text`), panelButton(`tabs[${i}].cb`)]),
+      [3, 4, 5].map((i) => [panelButton(`tabs[${i}].text`), panelButton(`tabs[${i}].cb`)]),
+      ['prev', 'mid', 'next'].map((k) => [panelButton(`${k}.text`), panelButton(`${k}.cb`)]),
+    ],
+  ],
+  [
+    'open choose',
+    [
+      [
+        ['✅ Откликнусь', panelButton('apply')],
+        ['🤔 Возможно', panelButton('maybe')],
+        ['❌ Мимо', panelButton('skip')],
+      ],
+      [
+        ['🔗 На hh', { url: panelButton('url') }],
+        ['⬅️ К списку', panelButton('back')],
+      ],
+    ],
+  ],
+  [
+    'open decided',
+    [
+      [
+        ['↩️ Изменить', panelButton('edit')],
+        ['🔗 На hh', { url: panelButton('url') }],
+      ],
+      [['⬅️ К списку', panelButton('back')]],
+    ],
+  ],
+  [
+    'open plain',
+    [
+      [
+        ['🔗 На hh', { url: panelButton('url') }],
+        ['⬅️ К списку', panelButton('back')],
+      ],
+    ],
+  ],
+  [
+    'stats',
+    [
+      [
+        ['🔄 Обновить', 'p:s'],
+        [panelButton('wait.text'), panelButton('wait.cb')],
+      ],
+    ],
+  ],
+];
+
 // W3: состояние после нажатия кнопки, которое посчитали ноды «Apply choice» и «Apply sent»
 const CHOICE = "$('Apply choice').first().json";
 const SENT = "$('Apply sent').first().json";
@@ -264,10 +329,10 @@ const telegramEdit = (wf, name, position, { messageId, text }) =>
     { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
   );
 
-// W3: перерисовать сообщение — текст и кнопки (rows = null — убрать все кнопки)
-const editMessage = (name, position, { chatId, messageId, text, rows }) =>
+// Перерисовать сообщение — текст и кнопки (rows = null — убрать все кнопки). По умолчанию — нода W3
+const editMessage = (name, position, { chatId, messageId, text, rows }, wf = 'W3', extra = {}) =>
   node(
-    'W3',
+    wf,
     name,
     'telegram',
     1.2,
@@ -282,7 +347,7 @@ const editMessage = (name, position, { chatId, messageId, text, rows }) =>
       ...(rows ? { replyMarkup: 'inlineKeyboard', inlineKeyboard: keyboard(rows) } : { replyMarkup: 'none' }),
       additionalFields: { parse_mode: 'HTML', disable_web_page_preview: true },
     },
-    { credentials: TELEGRAM_CREDENTIAL },
+    { credentials: TELEGRAM_CREDENTIAL, ...extra },
   );
 
 // W3: перерисовать карточку после нажатия. src — нода с chatId / messageId / text
@@ -690,6 +755,9 @@ const workflows = {
         { webhookId: uuid('W3/telegram-trigger'), credentials: TELEGRAM_CREDENTIAL },
       ),
       code('W3', 'Route', 'n8n/w3-telegram/route.js', [220, 0]),
+      // Меню бота (кнопки под полем ввода, команды, кнопки панели) — в W7 Bot menu
+      node('W3', 'Panel?', 'if', 2.3, [440, -400], ifTrue('W3', "={{ $json.action === 'panel' }}")),
+      runWorkflow('W3', 'Menu', [660, -500], IDS.menu),
       node('W3', 'Button?', 'if', 2.3, [440, 0], ifTrue('W3', "={{ $json.action === 'choice' }}")),
       // Кнопка на карточке
       node('W3', 'Vacancy', 'dataTable', 1.1, [660, -100], {
@@ -827,18 +895,28 @@ const workflows = {
         text: '✍️ Записал причину',
         fields: { reply_to_message_id: "={{ $('Route').first().json.messageId }}", disable_notification: true },
       }),
+      // Решение принято в карточке на панели меню: после правки исходной карточки — перерисовать панель (W7).
+      // Ветка ниже «Decided?»: n8n (execution order v1) выполняет её последней
+      node('W3', 'From panel?', 'if', 2.3, [1540, 150], ifTrue('W3', `={{ Boolean(${CHOICE}.panel) }}`)),
+      code('W3', 'Panel job', 'n8n/w3-telegram/panel-job.js', [1760, 150]),
+      runWorkflow('W3', 'Panel refresh', [1980, 150], IDS.menu),
       // Письмо: одна нода на три ветки (✅, «🔄 Переписать», ответ на письмо) → W5 Letter
       code('W3', 'Letter job', 'n8n/w3-telegram/letter-job.js', [2200, 100]),
       runWorkflow('W3', 'Write letter', [2420, 100], IDS.letter),
     ],
     [
       ['Telegram Trigger', 'Route'],
-      ['Route', 'Button?'],
+      ['Route', 'Panel?'],
+      ['Panel?', 'Menu', 0],
+      ['Panel?', 'Button?', 1],
       ['Button?', 'Vacancy', 0],
       ['Vacancy', 'Apply choice'],
       ['Apply choice', 'Save choice'],
       ['Save choice', 'Answer'],
       ['Answer', 'Decided?'],
+      ['Answer', 'From panel?'],
+      ['From panel?', 'Panel job', 0],
+      ['Panel job', 'Panel refresh'],
       ['Decided?', 'Card: decided', 0],
       ['Decided?', 'Card: choose', 1],
       ['Card: decided', 'Ask?'],
@@ -1120,6 +1198,129 @@ const workflows = {
       ['Summary', 'Send summary'],
     ],
     { timezone: 'Europe/Moscow', errorWorkflow: IDS.errors },
+  ),
+
+  'w7-menu': workflow(
+    IDS.menu,
+    'W7 Bot menu',
+    [
+      // Вызов из W3: кнопки меню, команды и кнопки панели («Route») или перерисовка после решения («Panel job»)
+      node('W7', 'Called by W3', 'executeWorkflowTrigger', 1.1, [0, -100], { inputSource: 'passthrough' }),
+      // Ручной запуск — приветствие с кнопками меню под полем ввода (один раз после деплоя)
+      node('W7', 'Manual', 'manualTrigger', 1, [0, 100], {}),
+      code('W7', 'Manual job', 'n8n/w7-menu/manual-job.js', [220, 100]),
+      code('W7', 'Job', 'n8n/w7-menu/job.js', [440, 0]),
+      node('W7', 'Answer?', 'if', 2.3, [660, 0], ifTrue('W7', '={{ Boolean($json.queryId) }}')),
+      // Убрать «часики» на кнопке. Запрос старше ~15 мин Telegram не примет — это не ошибка
+      answerQuery('W7', 'Answer query', [880, -100], "={{ $('Job').first().json.queryId }}", '', {
+        onError: 'continueRegularOutput',
+      }),
+      // p:x — неактивная кнопка: только убрать «часики»
+      node('W7', 'Work?', 'if', 2.3, [1100, 0], ifTrue('W7', "={{ $('Job').first().json.view !== 'noop' }}")),
+      node(
+        'W7',
+        'Rows',
+        'dataTable',
+        1.1,
+        [1320, 0],
+        { resource: 'row', operation: 'get', dataTableId: VACANCIES, returnAll: true },
+        { executeOnce: true, alwaysOutputData: true },
+      ),
+      // Последние запуски W1 — для статистики (публичный API n8n, ключ в credential «n8n API»)
+      node(
+        'W7',
+        'Executions',
+        'httpRequest',
+        4.5,
+        [1540, 0],
+        {
+          method: 'GET',
+          url: 'http://localhost:5678/api/v1/executions',
+          authentication: 'predefinedCredentialType',
+          nodeCredentialType: 'n8nApi',
+          sendQuery: true,
+          specifyQuery: 'keypair',
+          queryParameters: pairs([
+            ['workflowId', IDS.collector],
+            ['limit', '60'],
+          ]),
+          options: { timeout: 15000 },
+        },
+        {
+          credentials: { n8nApi: { id: IDS.n8nApiCredential, name: 'n8n API' } },
+          onError: 'continueRegularOutput',
+          executeOnce: true,
+        },
+      ),
+      code('W7', 'Render', 'n8n/w7-menu/render.js', [1760, 0]),
+      // Выход = $json.route (render.js): раскладка × новое сообщение (чётный) / правка панели (нечётный), 10 — приветствие
+      node('W7', 'Layout', 'switch', 3.4, [1980, -300], {
+        mode: 'expression',
+        numberOutputs: PANEL_LAYOUTS.length * 2 + 1,
+        output: '={{ $json.route }}',
+        options: {},
+      }),
+      ...PANEL_LAYOUTS.flatMap(([layout, rows], i) => [
+        // Панель без звука: её вызывает сам пользователь
+        telegram('W7', `New: ${layout}`, [2200, -900 + i * 300], {
+          fields: { disable_notification: true },
+          markup: { replyMarkup: 'inlineKeyboard', inlineKeyboard: keyboard(rows) },
+        }),
+        // Правка панели: «message is not modified» (нажали то же самое) — не ошибка
+        editMessage(
+          `Edit: ${layout}`,
+          [2200, -750 + i * 300],
+          { chatId: '={{ $json.chatId }}', messageId: '={{ $json.messageId }}', text: '={{ $json.text }}', rows },
+          'W7',
+          { onError: 'continueRegularOutput' },
+        ),
+      ]),
+      telegram('W7', 'New: start', [2200, -900 + PANEL_LAYOUTS.length * 300], {
+        fields: { disable_notification: true },
+        markup: {
+          replyMarkup: 'replyKeyboard',
+          replyKeyboard: replyKeyboard([[MENU.list, MENU.stats]]),
+          replyKeyboardOptions: { resize_keyboard: true },
+        },
+      }),
+      code('W7', 'Remember', 'n8n/w7-menu/remember.js', [2420, -300]),
+      // Ветка ниже «Layout»: старая панель и нажатие пользователя удаляются после отправки новой
+      code('W7', 'Delete ids', 'n8n/w7-menu/delete-ids.js', [1980, 900]),
+      node(
+        'W7',
+        'Delete old',
+        'telegram',
+        1.2,
+        [2200, 900],
+        { resource: 'message', operation: 'deleteMessage', chatId: '={{ $json.chatId }}', messageId: '={{ $json.messageId }}' },
+        { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
+      ),
+    ],
+    [
+      ['Called by W3', 'Job'],
+      ['Manual', 'Manual job'],
+      ['Manual job', 'Job'],
+      ['Job', 'Answer?'],
+      ['Answer?', 'Answer query', 0],
+      ['Answer query', 'Work?'],
+      ['Answer?', 'Work?', 1],
+      ['Work?', 'Rows', 0],
+      ['Rows', 'Executions'],
+      ['Executions', 'Render'],
+      ['Render', 'Layout'],
+      ...PANEL_LAYOUTS.flatMap(([layout], i) => [
+        ['Layout', `New: ${layout}`, i * 2],
+        ['Layout', `Edit: ${layout}`, i * 2 + 1],
+        [`New: ${layout}`, 'Remember'],
+        [`Edit: ${layout}`, 'Remember'],
+      ]),
+      ['Layout', 'New: start', PANEL_LAYOUTS.length * 2],
+      ['New: start', 'Remember'],
+      ['Render', 'Delete ids'],
+      ['Delete ids', 'Delete old'],
+    ],
+    // Успешные запуски не храним: каждый тянет всю таблицу вакансий. Ошибки сохраняются (и идут в W4)
+    { errorWorkflow: IDS.errors, saveDataSuccessExecution: 'none' },
   ),
 
   'w4-errors': workflow(

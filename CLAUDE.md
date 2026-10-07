@@ -109,12 +109,15 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 [W2 Score]     вызов из W1 после каждого сбора | Manual → detailed → резюме + промпт → Gemini | Claude → apply/maybe/skip + причина
                  → карточка в Telegram с кнопками ✅/🤔/❌ → status = waiting → сводка + тревоги (429 и т. п.)
 [W3 Telegram]  Telegram Trigger (вебхук через ngrok) → кнопка: my_decision, status, перерисовать карточку,
-                 при расхождении с нейросетью «Почему?» → ответ (reply) → my_reason
+                 при расхождении с нейросетью «Почему?» → ответ (reply) → my_reason;
+                 меню бота (кнопки под полем ввода, /v<id>, кнопки панели) → W7
 [W5 Letter]    вызов из W3 (✅ / «🔄 Переписать» / ответ на письмо) | Manual → профиль + образец → Gemini | Claude
                  → письмо ответом на карточку: [📝 Отклик на hh] [🔗 Вакансия] [🔄 Переписать] [📨 Отправил]
 [W4 Errors]    Error Trigger → Telegram (строится на этапе 1)
 [W6 Summary]   06:00 МСК (10:00 Таиланд): «⌛ устарела» (3 дня без решения), хвосты → проверка на hh «🔒 закрыта»,
                  сводка: воронка, хвосты, теневой режим, сбои (публичный API n8n, туннель); без звука, если сбоев нет
+[W7 Bot menu]  вызов из W3 | Manual (приветствие с кнопками) → вся таблица + запуски W1 → панель: список по вкладкам
+                 (8 на странице, /v<id> — карточка с решением), статистика; одна живая панель (docs/bot-menu.md)
 [Страж]        healthchecks.io (OnCalendar = расписание W1, grace 50 мин): W1 шлёт сигнал после поиска; нет сигнала
                  (днём 2 пропуска подряд, ночью 1) → их бот пишет в Telegram
 ```
@@ -140,7 +143,8 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 - свой бот (токен в Credentials), один личный чат для всего;
 - chat_id — в `.env` как `TG_CHAT_ID`, в нодах `{{ $env.TG_CHAT_ID }}` (Variables в Community edition нет);
 - кнопки ловит W3 через Telegram Trigger (v1.5: проверяет секретный заголовок, Restrict to Chat IDs = TG_CHAT_ID). Публичный HTTPS → контейнер ngrok (`COMPOSE_PROFILES=tunnel`, `ngrok/policy.yml`), `WEBHOOK_URL=https://<NGROK_DOMAIN>/` (→ `N8N_WEBHOOK_URL`);
-- callback_data кнопок: `v:<id строки>:<apply|maybe|skip|edit>`;
+- callback_data кнопок: `v:<id строки>:<apply|maybe|skip|edit>` — карточка; `l:<id>:<redo|sent|unsent>` — письмо; панель меню (W7): `p:l:<tab>:<page>`, `p:s`, `p:x`, `pv:<id>:<choice>:<tab>:<page>`;
+- меню бота (07.10.2026, `docs/bot-menu.md`): кнопки под полем ввода `[📋 Вакансии] [📊 Статистика]` (ставит `/start`), одна живая панель — нажатие пользователя и прошлая панель удаляются, листание правит панель на месте;
 - тихие часы: 23:00–09:00 по Таиланду — карточки и сводка без звука (`disable_notification`), тревоги со звуком;
 - не использовать «Send and wait» на каждую вакансию.
 
@@ -172,6 +176,8 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 - HTTP Request с credential: `authentication: predefinedCredentialType` + `nodeCredentialType` (`googlePalmApi` кладёт ключ в `?key=`, `anthropicApi` — в `x-api-key`);
 - `N8N_WEBHOOK_URL` — актуальное имя (просто `WEBHOOK_URL` в 2.42 устарел);
 - execution order v1: ветки одной ноды выполняются по очереди сверху вниз (каждая целиком) — так W2 шлёт сводку после карточек, а W1 вызывает W2 после ветки вакансий.
+- Telegram-нода: число inline-кнопок задаётся при сборке (fixedCollection), выражениями — только подписи и callback_data; неизвестные ключи collection (`is_persistent`, `reply_markup` в Additional Fields) n8n отбрасывает при выполнении (`getNodeParameters`). Telegram-credential нельзя использовать в HTTP Request (токен — в пути URL) → меню W7 на фиксированных раскладках, вакансия открывается командой `/v<id>` в тексте;
+- `$getWorkflowStaticData` работает в Code-ноде (task runner возвращает изменения) и сохраняется у запусков не из редактора, в том числе integrated (дочерний workflow); Data Table Get не умеет skip — для страниц брать всю таблицу или публичный API `/api/v1/data-tables/{id}/rows` (limit + cursor);
 
 **ngrok (бесплатный тариф, проверено 07.10.2026):** действие `restrict-ips` платное (`ERR_NGROK_2263`, туннель не стартует) → то же через выражение `inCidrRanges(conn.client_ip, [...])` + `custom-response`; домен вида `*.ngrok-free.dev`; `--url` вместо устаревшего `--domain`; токен — `NGROK_AUTHTOKEN` в environment контейнера. Проверка снаружи: любой адрес не с IP Telegram → 403.
 
@@ -276,6 +282,7 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 - **Сейчас:** пользователь жмёт кнопки на карточках (теневой режим, цель — 50 оценок). Наблюдение за фильтром этапа 2 — не режет ли лишнего (особенно «только из РФ»).
 - **Пауза (решение пользователя 07.10.2026):** новых этапов не начинаем, пока утренняя сводка не покажет «🧪 50/50». Потом пользователь пишет «разбор теневого режима».
 - **После 50 оценок:** отчёт о совпадениях (decision vs my_decision, my_reason), правка промпта W2, выключать ли теневой режим; затем выбрать следующее: новые источники (рекомендация), робот-отклик на hh или внешние формы. Кандидат в правку: fullstack «с уклоном во фронтенд» — пользователь откликается на такие (Novakid: 🤖 maybe → 👤 ✅); решено не менять до отчёта.
+- **Меню бота (07.10.2026):** пользователь проверяет на живых нажатиях — список, вкладки, `/v<id>` с решением, статистика (`docs/bot-menu.md`).
 - **Этап 4:** пользователь проверяет письма на реальных ✅; пожелания копятся в `letter_notes` → правка промпта `n8n/w5-letter/build-letter.js`.
 - **Этап 5:** проверить по первым утренним сводкам, что цифры сходятся с таблицей («Сборов N из 29» — с 07.10.2026 сбор днём раз в 30 мин), а страж ловит простои; расписание стража в healthchecks.io пользователь меняет на OnCalendar (`docs/stages/stage-5.md`).
 - **Этап 6:** нужен ли VPS, если Mac с домашним IP справится сам.
@@ -288,13 +295,16 @@ docs/resume.md                      резюме + «Дополнительно�
 docs/letter-example.md              образец письма пользователя (не в git)
 docs/stages/stage-N.md              устройство этапов и ручная сборка
 docs/git-flow.md                    ветки, PR, релизы, правила коммитов
+docs/bot-menu.md                    меню бота: кнопки, панель, вкладки, callback_data, ограничения
 n8n/w0-check/*.js                   код Code-нод W0
 n8n/w1-collector/*.js               код Code-нод W1
 n8n/w2-score/*.js                   код Code-нод W2 (промпт, разбор ответа, карточки, сводка)
 n8n/w3-telegram/*.js                код Code-нод W3 (кнопки, «Почему?», кнопки письма)
 n8n/w5-letter/*.js                  код Code-нод W5 (промпт письма, разбор, сообщение)
 n8n/w6-summary/*.js                 код Code-нод W6 (устаревшие, закрытые на hh, сводка)
-n8n/shared/*.js                     общий код Code-нод (карточка, письмо, разбор страницы hh), подключается строкой // @include
+n8n/w7-menu/*.js                    код Code-нод W7 (меню бота: список, карточка, статистика)
+n8n/shared/*.js                     общий код Code-нод (карточка, письмо, разбор страницы hh, меню, расписание W1),
+                                    подключается строкой // @include
 n8n/w4-errors/*.js                  код Code-нод W4
 n8n/schema.mjs                      схема таблиц vacancies и blacklist
 n8n/blacklist.json                  стартовый чёрный список компаний
@@ -304,7 +314,7 @@ scripts/deploy.sh                   сборка + туннель + credentials 
 scripts/n8n-api.mjs                 владелец, запуск/публикация workflow, строки таблиц, migrate, blacklist-seed,
                                     tunnel-env, requeue, api-key
 scripts/credentials.mjs             JSON credentials Telegram / Gemini / Claude из .env (только через pipe)
-scripts/run-code-node.mjs           прогон Code-ноды на фикстурах без n8n (--ref, --env)
+scripts/run-code-node.mjs           прогон Code-ноды на фикстурах без n8n (--ref, --env, --static)
 scripts/lib/code.mjs                чтение кода Code-ноды с раскрытием // @include
 ngrok/policy.yml                    что туннель пускает внутрь: адреса Telegram, только /webhook/*
 fixtures/                           страницы hh (не в git, кроме synthetic-*)
@@ -323,6 +333,7 @@ Workflow в n8n (постоянные id):
 | `jobHunterW4Error` | W4 Errors | тревоги |
 | `jobHunterW5Lettr` | W5 Letter | сопроводительные письма (вызывает W3; Manual — письма ко всем ✅ без письма) |
 | `jobHunterW6Summ1` | W6 Summary | утренняя сводка, устаревшие и закрытые карточки |
+| `jobHunterW7Menu1` | W7 Bot menu | меню бота: список вакансий, карточка с решением, статистика (вызывает W3; Manual — приветствие с кнопками) |
 
 Credentials: `jobHunterTgBot01` «Telegram bot», `jobHunterGemini1` «Gemini», `jobHunterClaude1` «Claude», `jobHunterN8nApi1` «n8n API» (ключ публичного API, создаёт `n8n-api.mjs api-key`).
 
