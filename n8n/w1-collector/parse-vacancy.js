@@ -54,9 +54,12 @@ return rows.map((row, i) => {
   const rf = RF_ONLY.map((re) => description.match(re)).find(Boolean);
   if (rf) reasons.push(`только из РФ: «${rf[0].trim()}»`);
   // Vue (и Nuxt) — тоже наш стек с 07.10.2026: только Vue нейросеть оценит как maybe.
-  // AI-вакансии (разработка на LLM) берём на любом стеке — решение пользователя 07.10.2026
-  const ai = isAi(`${row.title} ${skills || row.key_skills}`);
-  if (!ai && !/react|next\.?js|vue|nuxt/i.test(`${row.title} ${skills} ${description}`)) reasons.push('нет React и Vue');
+  // AI-вакансии (разработка на LLM) без React и Vue берём, только если в них JS/TS (решения пользователя 07.10.2026)
+  const stack = `${row.title} ${skills} ${description}`;
+  if (!/react|next\.?js|vue|nuxt/i.test(stack)) {
+    if (!isAi(`${row.title} ${skills || row.key_skills}`)) reasons.push('нет React и Vue');
+    else if (!JS_STACK.test(stack)) reasons.push('AI не на JS/TS');
+  }
 
   return {
     json: {
