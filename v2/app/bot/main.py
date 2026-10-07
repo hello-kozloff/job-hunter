@@ -6,23 +6,13 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
 
+from app.bot.commands import set_commands
 from app.bot.middlewares import DbUserMiddleware
 from app.bot.routers import admin, fallback, onboarding, start
 from app.config import get_settings
 
 log = logging.getLogger("bot")
-
-
-async def set_commands(bot: Bot) -> None:
-    """Меню команд: всем — /start, /tz; администратору из .env — ещё /admin."""
-    common = [BotCommand(command="start", description="Главная"), BotCommand(command="tz", description="Часовой пояс")]
-    await bot.set_my_commands(common, scope=BotCommandScopeDefault())
-    admin_id = get_settings().admin_tg_id
-    if admin_id:
-        admin = [*common, BotCommand(command="admin", description="Администрирование")]
-        await bot.set_my_commands(admin, scope=BotCommandScopeChat(chat_id=admin_id))
 
 
 async def main() -> None:

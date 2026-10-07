@@ -11,6 +11,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.callbacks import Decide, RequestAccess
+from app.bot.commands import set_admin_commands
 from app.bot.filters import IsAdmin
 from app.bot.texts import t
 from app.bot.views import tz_keyboard, who
@@ -46,6 +47,9 @@ async def start(message: Message, command: CommandObject, session: AsyncSession,
     if sender is None:
         return
     if user is not None:
+        if user.role == "admin":
+            # Меню с /admin: при старте бота не ставится, пока администратор не написал ему
+            await set_admin_commands(bot, message.chat.id)
         if user.status == "blocked":
             await message.answer(t("start.blocked"))
         elif user.onboarded_at is None:
