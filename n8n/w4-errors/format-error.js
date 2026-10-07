@@ -14,11 +14,15 @@ const message = String(error.message ?? 'без текста').slice(0, 1500);
 const workflow = String(e.workflow?.name ?? 'workflow');
 const node = String(e.execution?.lastNodeExecuted ?? '');
 
+// n8n строит ссылку от WEBHOOK_URL (домен ngrok), а туннель пускает снаружи только /webhook/* —
+// открываем запуск в n8n на Mac
+const url = e.execution?.url ? String(e.execution.url).replace(/^https?:\/\/[^/]+/, 'http://localhost:5678') : '';
+
 const lines = [
   `❗️ <b>${esc(workflow)}</b>: ошибка`,
   node ? `Нода: ${esc(node)}` : null,
   esc(message),
-  e.execution?.url ? esc(e.execution.url) : null,
+  url ? esc(url) : null,
 ].filter(Boolean);
 
 const norm = message

@@ -13,6 +13,7 @@
 
 // @include n8n/shared/card.js
 // @include n8n/shared/menu.js
+// @include n8n/shared/settings.js
 // @include n8n/shared/schedule.js
 
 const job = $('Job').first().json;
@@ -31,7 +32,8 @@ const panel = state.panel ?? {};
 const now = Date.now();
 const DAY = 24 * 3600 * 1000;
 const PAGE = 8;
-const LAYOUTS = ['list', 'open_choose', 'open_decided', 'open_plain', 'stats'];
+// Порядок = PANEL_LAYOUTS в scripts/build-workflows.mjs (выходы «Layout»); после них — приветствие
+const LAYOUTS = ['list', 'open_choose', 'open_decided', 'open_plain', 'stats', 'settings', 'set_collect'];
 const chatId = String(job.chatId || $env.TG_CHAT_ID);
 // sync — после «📨 Отправил» / «↩️ Отменить» под письмом (W3 «Sync job»): перерисовать панель,
 // только если на ней открыта эта вакансия — иначе на ней нечего обновлять
@@ -168,12 +170,12 @@ function openView(id) {
 function statsView() {
   // Журнал сборов runs (W1 «Start run» / «Finish run»), свежие сверху
   const last = runs[0];
-  const next = nextCollect(now);
+  const next = nextCollect(now, collectSchedule);
 
   // За сутки — как в утренней сводке W6: окно до «сейчас − 10 мин», только сборы по расписанию
   const windowEnd = now - 10 * 60 * 1000;
   const windowStart = windowEnd - DAY;
-  const expected = countCollectSlots(windowStart, windowEnd);
+  const expected = countCollectSlots(windowStart, windowEnd, collectSchedule);
   const collected = count(
     runs,
     (r) =>
@@ -217,9 +219,9 @@ function statsView() {
   const lines = [
     `📊 <b>Статистика</b> · ${hhmm(now, 7)} по Таиланду`,
     '',
-    '🔎 <b>Сбор</b> · днём раз в 30 мин, ночью раз в 2 ч',
+    `🔎 <b>Сбор</b> · ${describeSchedule(collectSchedule)}`,
     lastLine,
-    `• следующий: ${thaiMsk(next)}, через ${span(next - now)}`,
+    next ? `• следующий: ${thaiMsk(next)}, через ${span(next - now)}` : '• ⏸ сбор на паузе (⚙️ Настройки → 🕐 Сбор)',
     `• за сутки: ${collected} из ${expected} по расписанию`,
     '',
     `📥 <b>Вакансии</b>: найдено ${found.length}, за сутки +${count(found, (r) => at(r.createdAt) >= now - DAY)}`,
@@ -242,6 +244,8 @@ function statsView() {
   };
 }
 
+// @include n8n/w7-menu/settings-view.js
+
 // ---------- Приветствие ----------
 
 const GREETING = [
@@ -250,6 +254,7 @@ const GREETING = [
   `${MENU.list} — база по вкладкам: ⏳ ждут решения · ✅ откликнусь и 🤔 · 📨 отправлено · ❌ мимо · 🚫 отсеяно фильтром · 📋 все. ` +
     'Команда вида <code>/v169</code> в строке открывает карточку — решение можно принять прямо там.',
   `${MENU.stats} — когда был и будет сбор, сколько вакансий рассмотрено.`,
+  `${MENU.settings} — расписание сбора, пауза и «собрать сейчас».`,
   '',
   'Новые вакансии по-прежнему приходят карточками.',
 ].join('\n');
@@ -260,7 +265,7 @@ if (job.view === 'start') {
   return [
     {
       json: {
-        route: 10,
+        route: LAYOUTS.length * 2,
         view: 'start',
         layout: 'start',
         edit: false,
@@ -276,10 +281,12 @@ if (job.view === 'start') {
 
 const view = ['open', 'sync'].includes(job.view)
   ? openView(Number(job.id))
-  : job.view === 'stats'
-    ? statsView()
-    : // resume — «📋 К вакансиям»: та вкладка и страница, что была на панели
-      listView(job.resume ? panel.tab : job.tab, job.resume ? panel.page : job.page);
+  : job.view === 'settings'
+    ? settingsView(job.section)
+    : job.view === 'stats'
+      ? statsView()
+      : // resume — «📋 К вакансиям»: та вкладка и страница, что была на панели
+        listView(job.resume ? panel.tab : job.tab, job.resume ? panel.page : job.page);
 const shown = view.layout.startsWith('open') ? 'open' : view.layout;
 const id = shown === 'open' ? Number(job.id) : 0;
 

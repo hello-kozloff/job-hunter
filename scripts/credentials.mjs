@@ -3,6 +3,7 @@
 //   TG_BOT_TOKEN   → «Telegram bot» (бот: сообщения, карточки, кнопки)
 //   GEMINI_API_KEY → «Gemini»       (оценка вакансий, W2)
 //   ANTHROPIC_API_KEY → «Claude»    (запасная нейросеть, LLM_PROVIDER=claude)
+//   HC_API_KEY     → «healthchecks API» (бот обновляет расписание стража при смене расписания сбора, W7)
 // n8n при импорте шифрует ключи N8N_ENCRYPTION_KEY. Используется только через pipe в scripts/deploy.sh —
 // на диск хоста ключи не пишутся.
 import { readFileSync } from 'node:fs';
@@ -35,6 +36,13 @@ const credentials = [
     name: 'Claude',
     type: 'anthropicApi',
     data: { apiKey: env.ANTHROPIC_API_KEY, url: 'https://api.anthropic.com' },
+  },
+  // Ключ проекта healthchecks.io (Settings → API Access → read-write key) — заголовок X-Api-Key
+  env.HC_API_KEY && {
+    id: 'jobHunterHcApi01',
+    name: 'healthchecks API',
+    type: 'httpHeaderAuth',
+    data: { name: 'X-Api-Key', value: env.HC_API_KEY },
   },
 ].filter(Boolean);
 

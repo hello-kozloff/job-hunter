@@ -1,0 +1,152 @@
+{
+  "id": "jobHunterW8Clock",
+  "name": "W8 Clock",
+  "nodes": [
+    {
+      "id": "73fbdd68-4a4a-6d80-1c6b-f3f14ecc1724",
+      "name": "Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        -100
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/15 * * * *"
+            }
+          ]
+        },
+        "misfirePolicy": "coalesce"
+      }
+    },
+    {
+      "id": "265c0076-94c3-c669-ee67-28154077f213",
+      "name": "Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        100
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a8fb29af-e628-f2ef-8a94-ff68f399abbc",
+      "name": "Settings",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "settings"
+        },
+        "returnAll": true
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "4498d02e-91e4-52fa-329c-daeaaa55f8df",
+      "name": "Due",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W8 · Due — пора ли собирать: «часы» тикают каждые 15 мин, расписание — из настроек бота (07.10.2026).\n// Нода: Code, режим «Run Once for All Items». Вход: «Settings» — строки таблицы settings.\n// Static data (global): dispatchedAt — когда «часы» последний раз запустили сбор.\n// Выход: [{ kind }] → «Collect» (W1, без ожидания):\n//   schedule — слот наступил вовремя;\n//   catchup  — слот пропущен (Mac спал): после пробуждения один догоняющий сбор, а не по одному на каждый слот;\n//   [] — не пора или сбор на паузе.\n\n// Настройки из бота (⚙️ Настройки, решения пользователя 07.10.2026): схема, значения по умолчанию, чтение.\n// В таблице settings (name, value_json) лежат только изменения пользователя: пустая таблица — значения по умолчанию,\n// то есть поведение до появления настроек. Значение, которое не проходит проверку схемы, заменяется значением\n// по умолчанию — битая строка в таблице не ломает сбор.\n// Общий код W1, W6, W7, W8: строка «// @include n8n/shared/settings.js» (перед n8n/shared/schedule.js).\n\nconst SETTINGS = {\n  // Сбор (W8 Clock): интервал днём и ночью (мин, 0 — ночью не собирать), «день» по Москве, пауза\n  'collect.day_every': { default: 30, options: [15, 30, 60] },\n  'collect.night_every': { default: 120, options: [60, 120, 240, 0] },\n  'collect.day_window': { default: '07-18', options: ['07-18', '08-20', '06-22', '09-18'] },\n  'collect.paused': { default: false, options: [false, true] },\n};\n\n// items — $('Settings').all() (строки таблицы settings) → { имя: значение }\nfunction loadSettings(items) {\n  const stored = {};\n  for (const item of items ?? []) {\n    const row = item?.json ?? item;\n    if (!row?.name || !(row.name in SETTINGS)) continue;\n    try {\n      stored[row.name] = JSON.parse(row.value_json);\n    } catch {\n      // битое значение — останется по умолчанию\n    }\n  }\n  const out = {};\n  for (const [name, spec] of Object.entries(SETTINGS)) {\n    const value = stored[name];\n    out[name] = value !== undefined && spec.options.some((o) => o === value) ? value : spec.default;\n  }\n  return out;\n}\n\n// Следующее значение по кругу — кнопка «▸»\nfunction nextSetting(name, current) {\n  const { options } = SETTINGS[name];\n  return options[(options.findIndex((o) => o === current) + 1) % options.length];\n}\n\n// Расписание сбора для n8n/shared/schedule.js\nfunction scheduleFrom(s) {\n  const [dayFrom, dayTo] = String(s['collect.day_window']).split('-').map(Number);\n  return {\n    dayFrom,\n    dayTo,\n    dayEvery: s['collect.day_every'],\n    nightEvery: s['collect.night_every'],\n    paused: s['collect.paused'],\n  };\n}\n\n// Расписание сбора W1 по Москве (UTC+3, без перехода на летнее время). С 07.10.2026 задаётся в боте\n// (⚙️ Настройки → 🕐 Сбор, n8n/shared/settings.js → scheduleFrom), сбор запускают «часы» W8 Clock.\n// sch = { dayFrom, dayTo, dayEvery, nightEvery, paused }: днём [dayFrom, dayTo) — каждые dayEvery мин, ночью — каждые\n// nightEvery мин (0 — ночью не собирать). Слоты выровнены по полуночи МСК, шаг сетки — 15 мин.\n// По умолчанию (решение пользователя 07.10.2026) — 29 сборов в сутки: днём 07:00–17:30 каждые 30 мин,\n// ночью 18, 20, 22, 00, 02, 04, 06.\n// Общий код W1 «Score job», W6 «Summary», W7 «Render», W8 «Due»: строка «// @include n8n/shared/schedule.js».\n\nconst COLLECT_STEP = 15 * 60 * 1000;\nconst DEFAULT_SCHEDULE = { dayFrom: 7, dayTo: 18, dayEvery: 30, nightEvery: 120, paused: false };\n\n// Момент t (мс, кратен 15 мин) — сбор по расписанию?\nfunction isCollectSlot(t, sch = DEFAULT_SCHEDULE) {\n  if (sch.paused) return false;\n  const msk = new Date(t + 3 * 3600 * 1000);\n  const hour = msk.getUTCHours();\n  const every = hour >= sch.dayFrom && hour < sch.dayTo ? sch.dayEvery : sch.nightEvery;\n  return every > 0 && (hour * 60 + msk.getUTCMinutes()) % every === 0;\n}\n\n// Сколько сборов по расписанию в промежутке (from, to]\nfunction countCollectSlots(from, to, sch = DEFAULT_SCHEDULE) {\n  let n = 0;\n  for (let t = Math.floor(from / COLLECT_STEP) * COLLECT_STEP + COLLECT_STEP; t <= to; t += COLLECT_STEP) {\n    if (isCollectSlot(t, sch)) n++;\n  }\n  return n;\n}\n\n// Ближайший сбор по расписанию после момента t; null — на паузе\nfunction nextCollect(t, sch = DEFAULT_SCHEDULE) {\n  if (sch.paused) return null;\n  let s = Math.floor(t / COLLECT_STEP) * COLLECT_STEP + COLLECT_STEP;\n  for (let i = 0; i < 2 * 96; i++, s += COLLECT_STEP) if (isCollectSlot(s, sch)) return s;\n  return null;\n}\n\n// Сборов в сутки по расписанию\nconst collectsPerDay = (sch = DEFAULT_SCHEDULE) => countCollectSlots(0, 24 * 3600 * 1000, { ...sch, paused: false });\n\n// Расписание словами: «днём 07–18 МСК каждые 30 мин, ночью каждые 2 ч»\nfunction describeSchedule(sch = DEFAULT_SCHEDULE) {\n  const every = (m) => (m % 60 ? `${m} мин` : `${m / 60} ч`);\n  const pad = (n) => String(n).padStart(2, '0');\n  const night = sch.nightEvery > 0 ? `ночью каждые ${every(sch.nightEvery)}` : 'ночью не собирать';\n  return `днём ${pad(sch.dayFrom)}–${pad(sch.dayTo)} МСК каждые ${every(sch.dayEvery)}, ${night}`;\n}\n\n// Расписание стража healthchecks.io: OnCalendar (строка дня и строка ночи) и запас (grace, с)\nfunction onCalendar(sch = DEFAULT_SCHEDULE) {\n  const pad = (n) => String(n).padStart(2, '0');\n  const minutes = [];\n  for (let m = 0; m < 60; m += Math.min(sch.dayEvery, 60)) minutes.push(pad(m));\n  const lines = [`${pad(sch.dayFrom)}..${pad(sch.dayTo - 1)}:${minutes.join(',')} Europe/Moscow`];\n  if (sch.nightEvery > 0) {\n    const hours = [];\n    for (let h = 0; h < 24; h++) {\n      if ((h < sch.dayFrom || h >= sch.dayTo) && (h * 60) % sch.nightEvery === 0) hours.push(pad(h));\n    }\n    if (hours.length) lines.push(`${hours.join(',')}:00 Europe/Moscow`);\n  }\n  return { schedule: lines.join('\\n'), grace: (sch.dayEvery + 20) * 60 };\n}\n\nconst sch = scheduleFrom(loadSettings($('Settings').all()));\nconst state = $getWorkflowStaticData('global');\nconst now = Date.now();\n// Первый тик после деплоя смотрит на шаг назад — слот этого тика не потеряется\nconst since = state.dispatchedAt ?? now - COLLECT_STEP;\nif (sch.paused || !countCollectSlots(since, now, sch)) return [];\n\nstate.dispatchedAt = now;\n// Тик опаздывает на секунды: слот этого тика — значит вовремя\nconst slot = Math.floor(now / COLLECT_STEP) * COLLECT_STEP;\nconst kind = isCollectSlot(slot, sch) && now - slot < 5 * 60 * 1000 ? 'schedule' : 'catchup';\nreturn [{ json: { kind } }];\n"
+      }
+    },
+    {
+      "id": "9d1c8225-7170-675c-6b85-86ccce9fec46",
+      "name": "Collect",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "jobHunterW1Colle"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Due",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Due": {
+      "main": [
+        [
+          {
+            "node": "Collect",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Moscow",
+    "errorWorkflow": "jobHunterW4Error",
+    "saveDataSuccessExecution": "none"
+  },
+  "pinData": {},
+  "active": false,
+  "tags": []
+}

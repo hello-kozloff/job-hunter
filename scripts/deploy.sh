@@ -2,21 +2,22 @@
 # Собрать workflow из n8n/**/*.js и залить в локальный n8n (docker compose).
 #
 #   scripts/deploy.sh               импорт всех workflow + публикация рабочих (расписания включены)
-#   scripts/deploy.sh --paused      то же, но W1, W2 и W6 остаются выключенными (сбор и сводка не работают)
+#   scripts/deploy.sh --paused      то же, но W8 Clock и W6 остаются выключенными (сбор и сводка не работают;
+#                                   паузу без деплоя ставит бот: ⚙️ Настройки → 🕐 Сбор → ⏸)
 #   scripts/deploy.sh --any-branch  деплой не с develop / production (осознанно, в обход git flow)
 #   (--publish — прежнее название обычного деплоя, работает как без флага)
 #
 # Git flow (docs/git-flow.md): в n8n уходит develop (проверка на живых запусках) или production (hotfix, откат).
 #
 # Импорт снимает публикацию со всех workflow, поэтому после него публикуются заново:
-#   - W4 (тревоги), W5 (письма) и W7 (меню бота) — всегда: в n8n 2.42 неопубликованный Error workflow
-#     и неопубликованный дочерний workflow (Execute Workflow) не запускаются;
-#   - W1 (сбор), W2 (оценка — её вызывает W1) и W6 (сводка) — если нет --paused;
+#   - W4 (тревоги), W5 (письма), W7 (меню бота), W1 (сбор) и W2 (оценка) — всегда: в n8n 2.42 неопубликованный
+#     Error workflow и неопубликованный дочерний workflow (Execute Workflow) не запускаются;
+#   - W8 Clock («часы» сбора) и W6 (сводка) — если нет --paused;
 #   - W3 (кнопки Telegram) — если настроен туннель (NGROK_DOMAIN в .env):
 #     при публикации n8n регистрирует вебхук бота https://<NGROK_DOMAIN>/webhook/….
 # Публикацию из CLI запущенный n8n видит только после перезапуска — в конце n8n перезапускается.
 #
-# Credentials (Telegram, Gemini, Claude) создаются/обновляются из ключей в .env — см. scripts/credentials.mjs.
+# Credentials (Telegram, Gemini, Claude, healthchecks) создаются/обновляются из ключей в .env — см. scripts/credentials.mjs.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -45,11 +46,12 @@ if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
 fi
 
 CONTAINER=job-hunter-n8n
-# W5 (письма) и W7 (меню бота) вызываются из W3 через Execute Workflow: в n8n 2.42 вызвать можно только опубликованный
-WORKFLOWS_TO_PUBLISH=(jobHunterW4Error jobHunterW5Lettr jobHunterW7Menu1)
+# Вызываемые через Execute Workflow публикуются всегда (в n8n 2.42 вызвать можно только опубликованный):
+# W5 (письма) и W7 (меню бота) — из W3, W1 (сбор) — из W8 Clock и W7 («🔄 Собрать сейчас»), W2 — из W1.
+# Своего расписания у W1 нет (07.10.2026): сбор запускают «часы» W8 — без них (--paused) сборов нет
+WORKFLOWS_TO_PUBLISH=(jobHunterW4Error jobHunterW5Lettr jobHunterW7Menu1 jobHunterW1Colle jobHunterW2Score)
 if [[ "$PAUSED" != true ]]; then
-  # W2 вызывается из W1 тем же способом — публикуется вместе с ним
-  WORKFLOWS_TO_PUBLISH+=(jobHunterW1Colle jobHunterW2Score jobHunterW6Summ1)
+  WORKFLOWS_TO_PUBLISH+=(jobHunterW8Clock jobHunterW6Summ1)
 fi
 if grep -q '^NGROK_DOMAIN=..*' .env 2>/dev/null; then
   WORKFLOWS_TO_PUBLISH+=(jobHunterW3Teleg)
