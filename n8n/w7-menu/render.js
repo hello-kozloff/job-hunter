@@ -69,6 +69,8 @@ function itemLines(r, n) {
     r.status === 'rejected' ? `🚫 ${esc(String(r.reasons ?? '').split(', ')[0].replace(/:.*$/, ''))}` : salary(r),
     r.status === 'applied' && r.applied_at
       ? `📨 ${thaiDate(r.applied_at)}`
+      : r.my_decision === 'earlier'
+        ? '📨 раньше'
       : age < DAY
         ? `${span(age)} назад`
         : thaiDate(r.createdAt),
@@ -131,7 +133,13 @@ function openView(id) {
   // Кнопки решения — только если есть исходная карточка в ленте: решение правит и её (W3, callback pv:…)
   let layout = 'open_plain';
   if (r.tg_message_id && (r.status === 'waiting' || job.choose)) layout = 'open_choose';
-  else if (r.tg_message_id && ['approved', 'maybe', 'skipped'].includes(r.status)) layout = 'open_decided';
+  // «📨 Откликался раньше» тоже можно отменить «↩️ Изменить» (отклик через бота — только «↩️ Отменить» под письмом)
+  else if (
+    r.tg_message_id &&
+    (['approved', 'maybe', 'skipped'].includes(r.status) || (r.status === 'applied' && r.my_decision === 'earlier'))
+  ) {
+    layout = 'open_decided';
+  }
 
   const choice = (c) => `pv:${r.id}:${c}:${tab}:${page}`;
   return {
@@ -143,6 +151,7 @@ function openView(id) {
       apply: choice('apply'),
       maybe: choice('maybe'),
       skip: choice('skip'),
+      earlier: choice('earlier'),
       edit: choice('edit'),
       url: r.url,
       back: `p:l:${tab}:${page}`,
@@ -194,7 +203,10 @@ function statsView() {
   const waiting = rows.filter((r) => r.status === 'waiting');
   const oldest = Math.min(...waiting.map((r) => at(r.card_at || r.createdAt)));
   const status = (s) => count(rows, (r) => r.status === s);
-  const shadow = rows.filter((r) => r.my_decision && ['apply', 'maybe', 'skip'].includes(r.decision));
+  // Теневой режим — только решения apply / maybe / skip («📨 откликался раньше» не сравниваем)
+  const DECISIONS = ['apply', 'maybe', 'skip'];
+  const shadow = rows.filter((r) => DECISIONS.includes(r.my_decision) && DECISIONS.includes(r.decision));
+  const earlier = count(rows, (r) => r.status === 'applied' && r.my_decision === 'earlier');
   const agree = count(shadow, (r) => r.my_decision === r.decision);
   const errors = count(scored, (r) => r.decision === 'error');
 
@@ -212,7 +224,7 @@ function statsView() {
     '',
     `👤 <b>Рассмотрено тобой</b>: ${reviewed} из ${cards.length} (${pct(reviewed, cards.length)}%)`,
     `• ⏳ ждут решения: ${waiting.length}${waiting.length ? `, старейшая — ${span(now - oldest)}` : ''}`,
-    `• ✅ ${status('approved')} · 🤔 ${status('maybe')} · ❌ ${status('skipped')} · 📨 отправлено ${status('applied')}`,
+    `• ✅ ${status('approved')} · 🤔 ${status('maybe')} · ❌ ${status('skipped')} · 📨 отправлено ${status('applied') - earlier}${earlier ? ` · 📨 раньше ${earlier}` : ''}`,
     `• ⌛ устарели ${status('expired')} · 🔒 закрылись ${status('archived')}`,
     '',
     `🧪 Теневой режим: ${shadow.length}/50${shadow.length ? `, совпало ${agree} (${pct(agree, shadow.length)}%)` : ''}`,

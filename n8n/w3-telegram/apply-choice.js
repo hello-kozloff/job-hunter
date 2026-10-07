@@ -8,6 +8,8 @@
 //   ✅ / 🤔 / ❌ — записать решение, кнопки сменить на «↩️ Изменить» (keyboard = decided).
 //     Решение расходится с нейросетью и причины ещё нет → ask: вопрос «почему?» ответом на карточку.
 //     ✅ и письма ещё нет → need_letter: W5 напишет письмо (этап 4).
+//   📨 Уже откликался (choice = earlier) — status = applied без письма; «почему?» не спрашиваем:
+//     отклик был до бота, в теневой режим не идёт.
 //   ↩️ Изменить (choice = edit) — вернуть кнопки выбора (keyboard = choose), решение не меняется.
 
 // @include n8n/shared/card.js
@@ -36,7 +38,7 @@ if (action.choice !== 'edit') {
   out.toast = `Записал: ${CHOICE[action.choice]}`;
   out.need_letter = action.choice === 'apply' && !row.letter;
   const known = ['apply', 'maybe', 'skip'].includes(row.decision);
-  if (known && row.decision !== action.choice && !row.my_reason) {
+  if (action.choice !== 'earlier' && known && row.decision !== action.choice && !row.my_reason) {
     out.ask =
       `🤖 ${VERDICT[row.decision]} · 👤 ${CHOICE[action.choice]}\n` +
       'Почему? Ответь на это сообщение одной фразой — по ответам поправлю правила.';
