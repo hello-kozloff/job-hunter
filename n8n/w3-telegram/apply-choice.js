@@ -1,10 +1,15 @@
 // W3 · Apply choice — нажатие кнопки на карточке → новое состояние строки и карточки.
 // Нода: Code, режим «Run Once for All Items».
 // Вход: строка вакансии из «Vacancy»; что нажато — из «Route».
-// Выход: { id, my_decision, status, text, keyboard, ask, toast, need_letter, chatId, messageId, queryId }
+// Выход: { id, my_decision, status, text, keyboard, ask, toast, need_letter, chatId, messageId, queryId, panel }
+//   messageId — исходная карточка в ленте: её перерисовывают «Card: …», на неё отвечает «Почему?».
+//   Решение из карточки на панели меню (panel, callback_data pv:…) — тоже правит исходную карточку
+//   (row.tg_message_id), а панель потом перерисует W7 («From panel?» → «Panel job»).
 //   ✅ / 🤔 / ❌ — записать решение, кнопки сменить на «↩️ Изменить» (keyboard = decided).
 //     Решение расходится с нейросетью и причины ещё нет → ask: вопрос «почему?» ответом на карточку.
 //     ✅ и письма ещё нет → need_letter: W5 напишет письмо (этап 4).
+//   📨 Уже откликался (choice = earlier) — status = applied без письма; «почему?» не спрашиваем:
+//     отклик был до бота, в теневой режим не идёт.
 //   ↩️ Изменить (choice = edit) — вернуть кнопки выбора (keyboard = choose), решение не меняется.
 
 // @include n8n/shared/card.js
@@ -21,8 +26,9 @@ const out = {
   toast: '',
   need_letter: false,
   chatId: action.chatId,
-  messageId: action.messageId,
+  messageId: action.panel ? row.tg_message_id : action.messageId,
   queryId: action.queryId,
+  panel: action.panel ?? null,
 };
 
 if (action.choice !== 'edit') {
@@ -32,7 +38,7 @@ if (action.choice !== 'edit') {
   out.toast = `Записал: ${CHOICE[action.choice]}`;
   out.need_letter = action.choice === 'apply' && !row.letter;
   const known = ['apply', 'maybe', 'skip'].includes(row.decision);
-  if (known && row.decision !== action.choice && !row.my_reason) {
+  if (action.choice !== 'earlier' && known && row.decision !== action.choice && !row.my_reason) {
     out.ask =
       `🤖 ${VERDICT[row.decision]} · 👤 ${CHOICE[action.choice]}\n` +
       'Почему? Ответь на это сообщение одной фразой — по ответам поправлю правила.';

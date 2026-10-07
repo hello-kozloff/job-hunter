@@ -9,7 +9,7 @@
 # Git flow (docs/git-flow.md): в n8n уходит develop (проверка на живых запусках) или production (hotfix, откат).
 #
 # Импорт снимает публикацию со всех workflow, поэтому после него публикуются заново:
-#   - W4 (тревоги) и W5 (письма) — всегда: в n8n 2.42 неопубликованный Error workflow
+#   - W4 (тревоги), W5 (письма) и W7 (меню бота) — всегда: в n8n 2.42 неопубликованный Error workflow
 #     и неопубликованный дочерний workflow (Execute Workflow) не запускаются;
 #   - W1 (сбор), W2 (оценка — её вызывает W1) и W6 (сводка) — если нет --paused;
 #   - W3 (кнопки Telegram) — если настроен туннель (NGROK_DOMAIN в .env):
@@ -45,8 +45,8 @@ if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
 fi
 
 CONTAINER=job-hunter-n8n
-# W5 (письма) вызывается из W3 через Execute Workflow: в n8n 2.42 вызвать можно только опубликованный
-WORKFLOWS_TO_PUBLISH=(jobHunterW4Error jobHunterW5Lettr)
+# W5 (письма) и W7 (меню бота) вызываются из W3 через Execute Workflow: в n8n 2.42 вызвать можно только опубликованный
+WORKFLOWS_TO_PUBLISH=(jobHunterW4Error jobHunterW5Lettr jobHunterW7Menu1)
 if [[ "$PAUSED" != true ]]; then
   # W2 вызывается из W1 тем же способом — публикуется вместе с ним
   WORKFLOWS_TO_PUBLISH+=(jobHunterW1Colle jobHunterW2Score jobHunterW6Summ1)
