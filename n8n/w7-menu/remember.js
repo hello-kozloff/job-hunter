@@ -10,6 +10,6 @@ const state = $getWorkflowStaticData('global');
 if (r.view === 'start') {
   if (id) state.greetingId = id;
 } else if (!r.edit && id) {
-  state.panel = { messageId: id, tab: r.tab, page: r.page };
+  state.panel = { messageId: id, view: r.view, id: r.id, tab: r.tab, page: r.page };
 }
 return [];

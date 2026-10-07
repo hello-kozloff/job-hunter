@@ -10,7 +10,8 @@
 //   { action: 'reply', replyTo, messageId, chatId, text } — ответ (reply) на вопрос «почему?», карточку или письмо.
 //   { action: 'panel', view, tab, page, id, chatId, queryId, messageId, userMessageId } — меню бота → W7 Bot menu:
 //      кнопки под полем ввода («📋 Вакансии», «📊 Статистика»), команды /start, /menu, /vacancies, /stats, /v<id>
-//      и кнопки панели (callback_data p:…). view = list | stats | start | open | noop;
+//      и кнопки панели (callback_data p:…). view = list | stats | start | open | noop | sync;
+//      resume = true — список там, где был (p:n — «📋 К вакансиям» под письмом: новая панель, не правка письма);
 //      messageId — панель, где нажали кнопку (правим её); userMessageId — сообщение пользователя (удалить).
 // Чужие чаты отсекает сам Telegram Trigger (Restrict to Chat IDs = TG_CHAT_ID); здесь — вторая проверка.
 
@@ -33,6 +34,7 @@ if (cb) {
   const list = data.match(/^p:l:([a-z]+):(\d+)$/);
   if (list && TABS[list[1]]) return panel({ ...pressed, view: 'list', tab: list[1], page: Number(list[2]) });
   if (data === 'p:s') return panel({ ...pressed, view: 'stats' });
+  if (data === 'p:n') return panel({ chatId, queryId: cb.id, view: 'list', resume: true });
   if (data === 'p:x') return panel({ ...pressed, view: 'noop' });
 
   const letter = data.match(/^l:(\d+):(redo|sent|unsent)$/);

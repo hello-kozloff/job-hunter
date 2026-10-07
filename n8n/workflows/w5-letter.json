@@ -71,7 +71,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// W5 · Jobs — какие письма писать.\n// Нода: Code, режим «Run Once for All Items».\n// Вход ($input):\n//   из W3 (Execute Workflow, «Accept all data») — { id, letter_mode, instruction }:\n//     letter_mode = new (нажата ✅) | redo («🔄 Переписать») | revise (ответ на письмо, instruction — пожелание);\n//   из Manual → «Approved» — строки status = approved без письма (письма к уже нажатым ✅).\n// Выход: { id, mode, instruction }\n\nreturn $input\n  .all()\n  .map((i) => i.json)\n  .filter((j) => j.id)\n  .map((j) => ({\n    json: {\n      id: Number(j.id),\n      mode: ['new', 'redo', 'revise'].includes(j.letter_mode) ? j.letter_mode : 'new',\n      instruction: String(j.instruction ?? '').trim(),\n    },\n  }));\n"
+        "jsCode": "// W5 · Jobs — какие письма писать.\n// Нода: Code, режим «Run Once for All Items».\n// Вход ($input):\n//   из W3 (Execute Workflow, «Accept all data») — { id, letter_mode, instruction, replace }:\n//     letter_mode = new (нажата ✅) | redo («🔄 Переписать») | revise (ответ на письмо, instruction — пожелание);\n//     replace — id сообщений, которые удалить, когда новое письмо отправлено («Old letters»);\n//   из Manual → «Approved» — строки status = approved без письма (письма к уже нажатым ✅).\n// Выход: { id, mode, instruction, replace }\n\nreturn $input\n  .all()\n  .map((i) => i.json)\n  .filter((j) => j.id)\n  .map((j) => ({\n    json: {\n      id: Number(j.id),\n      mode: ['new', 'redo', 'revise'].includes(j.letter_mode) ? j.letter_mode : 'new',\n      instruction: String(j.instruction ?? '').trim(),\n      replace: (Array.isArray(j.replace) ? j.replace : []).map(Number).filter(Boolean),\n    },\n  }));\n"
       }
     },
     {
@@ -466,6 +466,44 @@
         },
         "options": {}
       }
+    },
+    {
+      "id": "63a24e25-7e40-ed4d-48ea-c24b5dcb31d2",
+      "name": "Old letters",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W5 · Old letters — что удалить, когда новое письмо отправлено и записано: в ленте остаётся только актуальное\n// (решение пользователя 07.10.2026).\n// Нода: Code, режим «Run Once for All Items». Выполняется после «Save letter» — только если письма ушли:\n// новое письмо не получилось → «Letter sent» пуст → старое остаётся.\n// Вход: «Letter sent» — новые письма { id, tg_letter_id }; «Vacancy» — строки до записи (прошлый tg_letter_id);\n//       «Jobs» — replace из W3: сообщение, где нажали «🔄», или письмо и ответ с пожеланием.\n// Выход: item на сообщение { messageId } → «Delete old letter» (onError = continue: старше 48 ч Telegram\n// удалять не даёт — это не ошибка).\n\nconst rows = new Map($('Vacancy').all().map((i) => [i.json.id, i.json]));\nconst jobs = new Map($('Jobs').all().map((i) => [i.json.id, i.json]));\n\nreturn $('Letter sent')\n  .all()\n  .flatMap(({ json: sent }) => {\n    const ids = new Set([rows.get(sent.id)?.tg_letter_id, ...(jobs.get(sent.id)?.replace ?? [])].map(Number));\n    ids.delete(Number(sent.tg_letter_id));\n    ids.delete(0);\n    ids.delete(NaN);\n    return [...ids].map((messageId) => ({ json: { messageId } }));\n  });\n"
+      }
+    },
+    {
+      "id": "7de17d0c-6587-6342-c2d2-60e80a0c76dd",
+      "name": "Delete old letter",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3740,
+        0
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "deleteMessage",
+        "chatId": "={{ $env.TG_CHAT_ID }}",
+        "messageId": "={{ $json.messageId }}"
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterTgBot01",
+          "name": "Telegram bot"
+        }
+      },
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -657,6 +695,28 @@
         [
           {
             "node": "Save letter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save letter": {
+      "main": [
+        [
+          {
+            "node": "Old letters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Old letters": {
+      "main": [
+        [
+          {
+            "node": "Delete old letter",
             "type": "main",
             "index": 0
           }

@@ -40,7 +40,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// W3 · Route — разбор обновления от Telegram Trigger (callback_query и message).\n// Нода: Code, режим «Run Once for All Items».\n// Выход: один item или [] (не наше — игнорируем):\n//   { action: 'choice', id, choice, queryId, chatId, messageId, panel } — нажата кнопка решения.\n//      callback_data = v:<id строки>:<apply|maybe|skip|edit> — на карточке; messageId — id карточки, panel = null;\n//      callback_data = pv:<id>:<choice>:<tab>:<page> — в карточке на панели меню (W7):\n//      panel = { messageId, tab, page } — панель перерисуется после решения.\n//   { action: 'letter', id, op, queryId, chatId, messageId } — кнопка под письмом (W5):\n//      callback_data = l:<id строки>:<redo|sent|unsent>; messageId — сообщение с письмом.\n//   { action: 'reply', replyTo, messageId, chatId, text } — ответ (reply) на вопрос «почему?», карточку или письмо.\n//   { action: 'panel', view, tab, page, id, chatId, queryId, messageId, userMessageId } — меню бота → W7 Bot menu:\n//      кнопки под полем ввода («📋 Вакансии», «📊 Статистика»), команды /start, /menu, /vacancies, /stats, /v<id>\n//      и кнопки панели (callback_data p:…). view = list | stats | start | open | noop;\n//      messageId — панель, где нажали кнопку (правим её); userMessageId — сообщение пользователя (удалить).\n// Чужие чаты отсекает сам Telegram Trigger (Restrict to Chat IDs = TG_CHAT_ID); здесь — вторая проверка.\n\n// Меню бота: кнопки под полем ввода и вкладки списка вакансий (решения пользователя 07.10.2026).\n// Общий код W3 «Route» и W7 «Render»: строка «// @include n8n/shared/menu.js».\n//\n// callback_data кнопок панели (Telegram — не длиннее 64 байт):\n//   p:l:<tab>:<page>  — список: вкладка и страница;   p:s — статистика;   p:x — неактивная кнопка\n//   pv:<id>:<apply|maybe|skip|edit>:<tab>:<page> — решение в карточке на панели: W3 правит исходную карточку\n//   в ленте, потом W7 перерисовывает панель. <tab>:<page> — куда вернёт «⬅️ К списку».\n\n// Кнопки под полем ввода: Telegram присылает их текст обычным сообщением\nconst MENU = { list: '📋 Вакансии', stats: '📊 Статистика' };\n\n// Вкладки списка: статусы строк (statuses = null — всё, кроме бэкфилла seen), порядок кнопок — порядок ключей\nconst TABS = {\n  wait: { icon: '⏳', name: 'Ждут решения', statuses: ['waiting'] },\n  todo: { icon: '✅', name: 'Откликнусь и 🤔', statuses: ['approved', 'maybe'] },\n  sent: { icon: '📨', name: 'Отправлено', statuses: ['applied'] },\n  skip: { icon: '❌', name: 'Мимо и устаревшие', statuses: ['skipped', 'expired', 'archived'] },\n  rej: { icon: '🚫', name: 'Отсеяно фильтром', statuses: ['rejected'] },\n  all: { icon: '📋', name: 'Все', statuses: null },\n};\n\n// Значки строки списка: решение нейросети + статус\nconst VERDICT_ICON = { apply: '🟢', maybe: '🟡', skip: '🔴', error: '⚠️' };\nconst STATUS_ICON = {\n  new: '⚙️',\n  detailed: '⚙️',\n  waiting: '⏳',\n  approved: '✅',\n  maybe: '🤔',\n  skipped: '❌',\n  applied: '📨',\n  expired: '⌛',\n  archived: '🔒',\n  rejected: '🚫',\n};\n\nconst update = $input.first().json;\nconst allowed = String($env.TG_CHAT_ID ?? '');\nconst ours = (chatId) => !allowed || String(chatId) === allowed;\nconst panel = (fields) => [\n  { json: { action: 'panel', tab: '', page: 1, id: 0, queryId: '', messageId: 0, userMessageId: 0, ...fields } },\n];\n\nconst cb = update.callback_query;\nif (cb) {\n  if (!ours(cb.message?.chat?.id)) return [];\n  const data = String(cb.data ?? '');\n  const chatId = String(cb.message.chat.id);\n  const pressed = { chatId, queryId: cb.id, messageId: cb.message.message_id };\n\n  const list = data.match(/^p:l:([a-z]+):(\\d+)$/);\n  if (list && TABS[list[1]]) return panel({ ...pressed, view: 'list', tab: list[1], page: Number(list[2]) });\n  if (data === 'p:s') return panel({ ...pressed, view: 'stats' });\n  if (data === 'p:x') return panel({ ...pressed, view: 'noop' });\n\n  const letter = data.match(/^l:(\\d+):(redo|sent|unsent)$/);\n  if (letter) {\n    return [{ json: { action: 'letter', id: Number(letter[1]), op: letter[2], ...pressed } }];\n  }\n  const fromPanel = data.match(/^pv:(\\d+):(apply|maybe|skip|edit):([a-z]+):(\\d+)$/);\n  if (fromPanel) {\n    const tab = TABS[fromPanel[3]] ? fromPanel[3] : 'all';\n    return [\n      {\n        json: {\n          action: 'choice',\n          id: Number(fromPanel[1]),\n          choice: fromPanel[2],\n          ...pressed,\n          panel: { messageId: cb.message.message_id, tab, page: Number(fromPanel[4]) },\n        },\n      },\n    ];\n  }\n  const match = data.match(/^v:(\\d+):(apply|maybe|skip|edit)$/);\n  if (!match) return [];\n  return [{ json: { action: 'choice', id: Number(match[1]), choice: match[2], ...pressed, panel: null } }];\n}\n\nconst msg = update.message;\nif (!msg || !ours(msg.chat?.id)) return [];\nconst text = String(msg.text ?? '').trim();\nconst typed = { chatId: String(msg.chat.id), userMessageId: msg.message_id };\n\n// Кнопки под полем ввода и команды: /v169 → [v, 169], /stats@bot → [stats, '']\nconst command = text.match(/^\\/([a-z]+)(\\d*)(?:@\\w+)?(?:\\s|$)/i);\nconst name = command?.[1].toLowerCase();\nif (text === MENU.list || name === 'vacancies') return panel({ ...typed, view: 'list' });\nif (text === MENU.stats || name === 'stats') return panel({ ...typed, view: 'stats' });\nif (name === 'start' || name === 'menu') return panel({ ...typed, view: 'start' });\nif (name === 'v' && command[2]) return panel({ ...typed, view: 'open', id: Number(command[2]) });\n\n// Остальные команды и сообщения без reply не обрабатываем\nif (msg.reply_to_message && text && !text.startsWith('/')) {\n  return [\n    {\n      json: {\n        action: 'reply',\n        replyTo: msg.reply_to_message.message_id,\n        messageId: msg.message_id,\n        chatId: typed.chatId,\n        text: text.slice(0, 500),\n      },\n    },\n  ];\n}\nreturn [];\n"
+        "jsCode": "// W3 · Route — разбор обновления от Telegram Trigger (callback_query и message).\n// Нода: Code, режим «Run Once for All Items».\n// Выход: один item или [] (не наше — игнорируем):\n//   { action: 'choice', id, choice, queryId, chatId, messageId, panel } — нажата кнопка решения.\n//      callback_data = v:<id строки>:<apply|maybe|skip|edit> — на карточке; messageId — id карточки, panel = null;\n//      callback_data = pv:<id>:<choice>:<tab>:<page> — в карточке на панели меню (W7):\n//      panel = { messageId, tab, page } — панель перерисуется после решения.\n//   { action: 'letter', id, op, queryId, chatId, messageId } — кнопка под письмом (W5):\n//      callback_data = l:<id строки>:<redo|sent|unsent>; messageId — сообщение с письмом.\n//   { action: 'reply', replyTo, messageId, chatId, text } — ответ (reply) на вопрос «почему?», карточку или письмо.\n//   { action: 'panel', view, tab, page, id, chatId, queryId, messageId, userMessageId } — меню бота → W7 Bot menu:\n//      кнопки под полем ввода («📋 Вакансии», «📊 Статистика»), команды /start, /menu, /vacancies, /stats, /v<id>\n//      и кнопки панели (callback_data p:…). view = list | stats | start | open | noop | sync;\n//      resume = true — список там, где был (p:n — «📋 К вакансиям» под письмом: новая панель, не правка письма);\n//      messageId — панель, где нажали кнопку (правим её); userMessageId — сообщение пользователя (удалить).\n// Чужие чаты отсекает сам Telegram Trigger (Restrict to Chat IDs = TG_CHAT_ID); здесь — вторая проверка.\n\n// Меню бота: кнопки под полем ввода и вкладки списка вакансий (решения пользователя 07.10.2026).\n// Общий код W3 «Route» и W7 «Render»: строка «// @include n8n/shared/menu.js».\n//\n// callback_data кнопок панели (Telegram — не длиннее 64 байт):\n//   p:l:<tab>:<page>  — список: вкладка и страница;   p:s — статистика;   p:x — неактивная кнопка\n//   p:n — новая панель со списком там, где был (кнопка «📋 К вакансиям» под отправленным письмом)\n//   pv:<id>:<apply|maybe|skip|edit>:<tab>:<page> — решение в карточке на панели: W3 правит исходную карточку\n//   в ленте, потом W7 перерисовывает панель. <tab>:<page> — куда вернёт «⬅️ К списку».\n\n// Кнопки под полем ввода: Telegram присылает их текст обычным сообщением\nconst MENU = { list: '📋 Вакансии', stats: '📊 Статистика' };\n\n// Вкладки списка: статусы строк (statuses = null — всё, кроме бэкфилла seen), порядок кнопок — порядок ключей\nconst TABS = {\n  wait: { icon: '⏳', name: 'Ждут решения', statuses: ['waiting'] },\n  todo: { icon: '✅', name: 'Откликнусь и 🤔', statuses: ['approved', 'maybe'] },\n  sent: { icon: '📨', name: 'Отправлено', statuses: ['applied'] },\n  skip: { icon: '❌', name: 'Мимо и устаревшие', statuses: ['skipped', 'expired', 'archived'] },\n  rej: { icon: '🚫', name: 'Отсеяно фильтром', statuses: ['rejected'] },\n  all: { icon: '📋', name: 'Все', statuses: null },\n};\n\n// Значки строки списка: решение нейросети + статус\nconst VERDICT_ICON = { apply: '🟢', maybe: '🟡', skip: '🔴', error: '⚠️' };\nconst STATUS_ICON = {\n  new: '⚙️',\n  detailed: '⚙️',\n  waiting: '⏳',\n  approved: '✅',\n  maybe: '🤔',\n  skipped: '❌',\n  applied: '📨',\n  expired: '⌛',\n  archived: '🔒',\n  rejected: '🚫',\n};\n\nconst update = $input.first().json;\nconst allowed = String($env.TG_CHAT_ID ?? '');\nconst ours = (chatId) => !allowed || String(chatId) === allowed;\nconst panel = (fields) => [\n  { json: { action: 'panel', tab: '', page: 1, id: 0, queryId: '', messageId: 0, userMessageId: 0, ...fields } },\n];\n\nconst cb = update.callback_query;\nif (cb) {\n  if (!ours(cb.message?.chat?.id)) return [];\n  const data = String(cb.data ?? '');\n  const chatId = String(cb.message.chat.id);\n  const pressed = { chatId, queryId: cb.id, messageId: cb.message.message_id };\n\n  const list = data.match(/^p:l:([a-z]+):(\\d+)$/);\n  if (list && TABS[list[1]]) return panel({ ...pressed, view: 'list', tab: list[1], page: Number(list[2]) });\n  if (data === 'p:s') return panel({ ...pressed, view: 'stats' });\n  if (data === 'p:n') return panel({ chatId, queryId: cb.id, view: 'list', resume: true });\n  if (data === 'p:x') return panel({ ...pressed, view: 'noop' });\n\n  const letter = data.match(/^l:(\\d+):(redo|sent|unsent)$/);\n  if (letter) {\n    return [{ json: { action: 'letter', id: Number(letter[1]), op: letter[2], ...pressed } }];\n  }\n  const fromPanel = data.match(/^pv:(\\d+):(apply|maybe|skip|edit):([a-z]+):(\\d+)$/);\n  if (fromPanel) {\n    const tab = TABS[fromPanel[3]] ? fromPanel[3] : 'all';\n    return [\n      {\n        json: {\n          action: 'choice',\n          id: Number(fromPanel[1]),\n          choice: fromPanel[2],\n          ...pressed,\n          panel: { messageId: cb.message.message_id, tab, page: Number(fromPanel[4]) },\n        },\n      },\n    ];\n  }\n  const match = data.match(/^v:(\\d+):(apply|maybe|skip|edit)$/);\n  if (!match) return [];\n  return [{ json: { action: 'choice', id: Number(match[1]), choice: match[2], ...pressed, panel: null } }];\n}\n\nconst msg = update.message;\nif (!msg || !ours(msg.chat?.id)) return [];\nconst text = String(msg.text ?? '').trim();\nconst typed = { chatId: String(msg.chat.id), userMessageId: msg.message_id };\n\n// Кнопки под полем ввода и команды: /v169 → [v, 169], /stats@bot → [stats, '']\nconst command = text.match(/^\\/([a-z]+)(\\d*)(?:@\\w+)?(?:\\s|$)/i);\nconst name = command?.[1].toLowerCase();\nif (text === MENU.list || name === 'vacancies') return panel({ ...typed, view: 'list' });\nif (text === MENU.stats || name === 'stats') return panel({ ...typed, view: 'stats' });\nif (name === 'start' || name === 'menu') return panel({ ...typed, view: 'start' });\nif (name === 'v' && command[2]) return panel({ ...typed, view: 'open', id: Number(command[2]) });\n\n// Остальные команды и сообщения без reply не обрабатываем\nif (msg.reply_to_message && text && !text.startsWith('/')) {\n  return [\n    {\n      json: {\n        action: 'reply',\n        replyTo: msg.reply_to_message.message_id,\n        messageId: msg.message_id,\n        chatId: typed.chatId,\n        text: text.slice(0, 500),\n      },\n    },\n  ];\n}\nreturn [];\n"
       }
     },
     {
@@ -843,6 +843,18 @@
                   }
                 ]
               }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "📋 К вакансиям",
+                    "additionalFields": {
+                      "callback_data": "p:n"
+                    }
+                  }
+                ]
+              }
             }
           ]
         },
@@ -998,6 +1010,43 @@
         "telegramApi": {
           "id": "jobHunterTgBot01",
           "name": "Telegram bot"
+        }
+      }
+    },
+    {
+      "id": "9045b6c2-9072-4bc8-843e-efb5696356ef",
+      "name": "Sync job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        325
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W3 · Sync job — после «📨 Отправил» / «↩️ Отменить» под письмом обновить панель меню (W7 Bot menu):\n// если на ней открыта эта вакансия, кнопки решения должны исчезнуть (отклик отправлен) или вернуться.\n// Нода: Code, режим «Run Once for All Items». Открыта другая вакансия или список — W7 ничего не делает.\n// Выход: { action: 'panel', view: 'sync', id, … } → «Panel sync» (Execute Workflow, без ожидания).\n\nconst s = $('Apply sent').first().json;\n\nreturn [\n  {\n    json: {\n      action: 'panel',\n      view: 'sync',\n      id: s.id,\n      chatId: s.chatId,\n      tab: '',\n      page: 1,\n      queryId: '',\n      messageId: 0,\n      userMessageId: 0,\n    },\n  },\n];\n"
+      }
+    },
+    {
+      "id": "c9865259-a3d3-6802-ab2b-60d7199717bb",
+      "name": "Panel sync",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2860,
+        325
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "jobHunterW7Menu1"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": false
         }
       }
     },
@@ -1252,7 +1301,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// W3 · Letter job — задание для W5 Letter: { id, letter_mode, instruction }.\n// Нода: Code, режим «Run Once for All Items». В неё ведут три ветки — в запуске работает одна:\n//   ✅ на карточке и письма ещё нет («Apply choice», need_letter) → new;\n//   «🔄 Переписать» под письмом («Route», action = letter) → redo;\n//   ответ на письмо («Reply kind», kind = revise) → revise, instruction — текст ответа.\n\nconst from = (name) => {\n  try {\n    return $(name).first().json;\n  } catch {\n    return null; // нода не выполнялась в этом запуске\n  }\n};\nconst reply = from('Reply kind');\nconst route = from('Route');\nconst choice = from('Apply choice');\n\nif (reply?.kind === 'revise') return [{ json: { id: reply.id, letter_mode: 'revise', instruction: reply.text } }];\nif (route?.action === 'letter') return [{ json: { id: route.id, letter_mode: 'redo', instruction: '' } }];\nif (choice?.need_letter) return [{ json: { id: choice.id, letter_mode: 'new', instruction: '' } }];\nreturn [];\n"
+        "jsCode": "// W3 · Letter job — задание для W5 Letter: { id, letter_mode, instruction, replace }.\n// Нода: Code, режим «Run Once for All Items». В неё ведут три ветки — в запуске работает одна:\n//   ✅ на карточке и письма ещё нет («Apply choice», need_letter) → new;\n//   «🔄 Переписать» под письмом («Route», action = letter) → redo;\n//   ответ на письмо («Reply kind», kind = revise) → revise, instruction — текст ответа.\n// replace — что удалить, когда новое письмо придёт (решение пользователя 07.10.2026: в ленте только актуальное):\n//   redo — сообщение, где нажали «🔄» (письмо или «⚠️ Письмо не получилось»);\n//   revise — письмо, на которое ответили, и сам ответ с пожеланием (оно видно в новом письме).\n//   Прошлое письмо из строки (tg_letter_id) W5 удаляет и так.\n\nconst from = (name) => {\n  try {\n    return $(name).first().json;\n  } catch {\n    return null; // нода не выполнялась в этом запуске\n  }\n};\nconst reply = from('Reply kind');\nconst route = from('Route');\nconst choice = from('Apply choice');\n\nif (reply?.kind === 'revise') {\n  return [\n    {\n      json: {\n        id: reply.id,\n        letter_mode: 'revise',\n        instruction: reply.text,\n        replace: [route?.replyTo, route?.messageId].filter(Boolean),\n      },\n    },\n  ];\n}\nif (route?.action === 'letter') {\n  return [{ json: { id: route.id, letter_mode: 'redo', instruction: '', replace: [route.messageId].filter(Boolean) } }];\n}\nif (choice?.need_letter) return [{ json: { id: choice.id, letter_mode: 'new', instruction: '', replace: [] } }];\nreturn [];\n"
       }
     },
     {
@@ -1600,6 +1649,39 @@
         [
           {
             "node": "Card: restore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Card: sent": {
+      "main": [
+        [
+          {
+            "node": "Sync job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Card: restore": {
+      "main": [
+        [
+          {
+            "node": "Sync job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync job": {
+      "main": [
+        [
+          {
+            "node": "Panel sync",
             "type": "main",
             "index": 0
           }
