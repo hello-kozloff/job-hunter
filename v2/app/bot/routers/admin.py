@@ -205,12 +205,12 @@ async def admin_button(
     elif action == "invu":
         kb = InlineKeyboardBuilder()
         for d in INVITE_DAYS:
-            _btn(kb, str(d) if d else t("admin.invite_forever_btn"), "invd", f"{arg}:{d}")
+            _btn(kb, str(d) if d else t("admin.invite_forever_btn"), "invd", f"{arg}-{d}")
         _btn(kb, t("admin.btn_back"), "invn")
         kb.adjust(len(INVITE_DAYS), 1)
         view = t("admin.invite_days"), kb.as_markup()
     elif action == "invd":
-        uses, days = (int(x) for x in arg.split(":"))
+        uses, days = (int(x) for x in arg.split("-"))
         if uses not in INVITE_USES or days not in INVITE_DAYS:
             await query.answer(t("stale"))
             return

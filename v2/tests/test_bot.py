@@ -12,3 +12,15 @@ async def test_filters() -> None:
     blocked_admin = User(tg_id=4, role="admin", status="blocked")
     assert [await IsMember()(None, u) for u in (admin, member, blocked, None)] == [True, True, False, False]
     assert [await IsAdmin()(None, u) for u in (admin, member, blocked_admin, None)] == [True, False, False, False]
+
+
+def test_admin_invite_keyboards_pack() -> None:
+    """Кнопки создания приглашения собираются (раньше «:» в arg ронял обработчик)."""
+    from app.bot.callbacks import Admin
+    from app.bot.routers.admin import INVITE_DAYS, INVITE_USES
+
+    for uses in INVITE_USES:
+        for days in INVITE_DAYS:
+            packed = Admin(action="invd", arg=f"{uses}-{days}").pack()
+            assert len(packed.encode()) <= 64
+            assert Admin.unpack(packed).arg == f"{uses}-{days}"
