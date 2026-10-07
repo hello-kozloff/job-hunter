@@ -49,11 +49,46 @@ export const TABLES = {
     ['applied_at', 'string'],
     // этап 5: когда отправлена карточка (W2) — по нему W6 помечает «⌛ устарела» через 3 дня
     ['card_at', 'string'],
+    // 07.10.2026: защита от двойного ✅ (W3 ставит перед вызовом W5) и версия промпта оценки (W2)
+    ['letter_lock', 'string'],
+    ['prompt_v', 'string'],
   ],
   // Чёрный список компаний — заполняет пользователь в UI n8n.
   // company: кусок названия компании или её id на hh (только цифры)
   blacklist: [
     ['company', 'string'],
     ['comment', 'string'],
+  ],
+  // Настройки из бота (⚙️, 07.10.2026): только изменения пользователя, значения по умолчанию — в коде.
+  // value — JSON. Имена колонок обходят служебные слова SQL (key, value)
+  settings: [
+    ['name', 'string'],
+    ['value_json', 'string'],
+  ],
+  // Журнал сборов W1: блокировка параллельных сборов, статистика W6 и W7 (07.10.2026)
+  runs: [
+    ['started_at', 'string'],
+    ['finished_at', 'string'],
+    ['kind', 'string'], // schedule | catchup | bot | manual
+    ['status', 'string'], // running | ok | error
+    ['found', 'number'], // hh нашёл всего (totalResults)
+    ['uniq', 'number'], // без дублей
+    ['fresh', 'number'], // новых
+    ['rejected', 'number'], // отсеяно фильтром
+    ['scoring', 'number'], // ушло на оценку
+    ['pages', 'number'], // открыто страниц вакансий
+    ['cards', 'number'], // карточек отправил W2
+    ['error', 'string'],
+  ],
+  // Тревоги W4: одна на проблему, повторы — счётчик в той же тревоге (07.10.2026)
+  alerts: [
+    ['alert_key', 'string'],
+    ['workflow', 'string'],
+    ['message', 'string'],
+    ['first_at', 'string'],
+    ['last_at', 'string'],
+    ['hits', 'number'],
+    ['is_open', 'boolean'],
+    ['tg_message_id', 'number'],
   ],
 };

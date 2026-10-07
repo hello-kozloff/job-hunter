@@ -490,6 +490,72 @@
         }
       },
       "onError": "continueRegularOutput"
+    },
+    {
+      "id": "fe99e461-f1d1-0dca-4c71-afe6c580ddd9",
+      "name": "Run stats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        500
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W2 · Run stats — сколько карточек отправил этот запуск → журнал сборов runs (запись W1 «Start run»).\n// Нода: Code, режим «Run Once for All Items». Своя ветка от триггера, ниже «Summary»: выполняется последней.\n// Вход: $input — item триггера: от W1 { runId, … }, у ручного запуска runId нет;\n//       «Send card» — ответы Telegram (выполняется, только если были вакансии на оценку).\n// Выход: [{ id, cards }] → «Save run stats» или [] — ручной запуск W2, сбора не было.\n\nconst runId = $input.first()?.json?.runId;\nif (!runId) return [];\n\nlet cards = 0;\ntry {\n  cards = $('Send card')\n    .all()\n    .filter((i) => i.json.result?.message_id).length;\n} catch {\n  // карточек в этом запуске не было — нода не выполнялась\n}\nreturn [{ json: { id: runId, cards } }];\n"
+      }
+    },
+    {
+      "id": "fb194284-8e41-5c34-7ab3-ab4151c7ac3e",
+      "name": "Save run stats",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        500
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "runs"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "cards": "={{ $json.cards }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "cards",
+              "displayName": "cards",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -503,6 +569,11 @@
           },
           {
             "node": "Summary",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Run stats",
             "type": "main",
             "index": 0
           }
@@ -519,6 +590,17 @@
           },
           {
             "node": "Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run stats": {
+      "main": [
+        [
+          {
+            "node": "Save run stats",
             "type": "main",
             "index": 0
           }

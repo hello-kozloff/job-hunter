@@ -1,7 +1,8 @@
 // W6 · Summary — утренняя сводка за сутки (10:00 по Таиланду = 06:00 МСК).
 // Нода: Code, режим «Run Once for All Items». Выполняется последней (ветки выше — устаревшие и закрытые).
 // Вход: «All rows» (таблица до правок этого запуска), «Plan», «Expire rows» / «Archive status» (если были),
-//       «Executions» — запуски n8n из публичного API, $input — «Tunnel» (проверка туннеля ngrok).
+//       «Runs» — журнал сборов W1, «Executions» — запуски n8n из публичного API (ошибки),
+//       $input — «Tunnel» (проверка туннеля ngrok).
 // Выход: одно сообщение { text, silent }. Без звука, если сбоев нет (решение пользователя 07.10.2026).
 
 // @include n8n/shared/schedule.js
@@ -74,19 +75,20 @@ const errors = executions.filter((e) => e.status === 'error' || e.status === 'cr
 const errorsBy = {};
 for (const e of errors) errorsBy[NAMES[e.workflowId] ?? e.workflowId] = (errorsBy[NAMES[e.workflowId] ?? e.workflowId] ?? 0) + 1;
 
-// Сборы W1 по расписанию (n8n/shared/schedule.js). Окно — сутки до «сейчас − 10 мин»:
-// сбор в 06:00 идёт одновременно со сводкой и ещё не закончился
+// Сборы W1 по расписанию — журнал runs (сколько положено — n8n/shared/schedule.js). Окно — сутки
+// до «сейчас − 10 мин»: сбор в 06:00 идёт одновременно со сводкой и ещё не закончился
 const windowEnd = now - 10 * 60 * 1000;
 const windowStart = windowEnd - DAY;
 const expected = countCollectSlots(windowStart, windowEnd);
 const collected = count(
-  executionsBody.data ?? [],
-  (e) =>
-    e.workflowId === 'jobHunterW1Colle' &&
-    e.status === 'success' &&
-    e.mode === 'trigger' &&
-    at(e.startedAt) > windowStart &&
-    at(e.startedAt) <= windowEnd,
+  $('Runs')
+    .all()
+    .map((i) => i.json),
+  (r) =>
+    ['schedule', 'catchup'].includes(r.kind) &&
+    r.status === 'ok' &&
+    at(r.started_at) > windowStart &&
+    at(r.started_at) <= windowEnd,
 );
 // Ждут оценки дольше 30 мин: W2 запускается сразу после сбора, свежие строки detailed — норма
 const pendingScore = count(rows, (r) => r.status === 'detailed' && at(r.createdAt) < now - 30 * 60 * 1000);

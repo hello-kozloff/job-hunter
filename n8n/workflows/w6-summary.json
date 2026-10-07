@@ -403,12 +403,38 @@
       "onError": "continueRegularOutput"
     },
     {
+      "id": "c6c2011f-aeac-32fd-e199-e1b9c6871096",
+      "name": "Runs",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        250
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "runs"
+        },
+        "returnAll": false,
+        "limit": 200,
+        "orderBy": true,
+        "orderByColumn": "createdAt",
+        "orderByDirection": "DESC"
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
       "id": "9315dd95-dfb8-b382-8861-ea2b35c943be",
       "name": "Executions",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
       "position": [
-        660,
+        880,
         250
       ],
       "parameters": {
@@ -445,7 +471,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.5,
       "position": [
-        880,
+        1100,
         250
       ],
       "parameters": {
@@ -470,13 +496,13 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1100,
+        1320,
         250
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// W6 · Summary — утренняя сводка за сутки (10:00 по Таиланду = 06:00 МСК).\n// Нода: Code, режим «Run Once for All Items». Выполняется последней (ветки выше — устаревшие и закрытые).\n// Вход: «All rows» (таблица до правок этого запуска), «Plan», «Expire rows» / «Archive status» (если были),\n//       «Executions» — запуски n8n из публичного API, $input — «Tunnel» (проверка туннеля ngrok).\n// Выход: одно сообщение { text, silent }. Без звука, если сбоев нет (решение пользователя 07.10.2026).\n\n// Расписание сбора W1 по Москве (UTC+3, без перехода на летнее время), решение пользователя 07.10.2026:\n// днём 07:00–17:30 каждые 30 мин, ночью 18, 20, 22, 00, 02, 04, 06 — 29 сборов в сутки.\n// Держать в синхроне с Schedule W1 в scripts/build-workflows.mjs.\n// Общий код W1 «Score job» (следующий сбор), W6 «Summary» и W7 «Render»: строка «// @include n8n/shared/schedule.js».\n\nconst COLLECT_STEP = 30 * 60 * 1000;\n\n// Момент t (мс, кратен 30 мин) — сбор по расписанию?\nfunction isCollectSlot(t) {\n  const msk = new Date(t + 3 * 3600 * 1000);\n  const h = msk.getUTCHours();\n  const m = msk.getUTCMinutes();\n  return h >= 7 && h < 18 ? m % 30 === 0 : m === 0 && h % 2 === 0;\n}\n\n// Сколько сборов по расписанию в промежутке (from, to]\nfunction countCollectSlots(from, to) {\n  let n = 0;\n  for (let t = Math.floor(from / COLLECT_STEP) * COLLECT_STEP + COLLECT_STEP; t <= to; t += COLLECT_STEP) {\n    if (isCollectSlot(t)) n++;\n  }\n  return n;\n}\n\n// Ближайший сбор по расписанию после момента t\nfunction nextCollect(t) {\n  let s = Math.floor(t / COLLECT_STEP) * COLLECT_STEP + COLLECT_STEP;\n  while (!isCollectSlot(s)) s += COLLECT_STEP;\n  return s;\n}\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst from = (name) => {\n  try {\n    return $(name).all().map((i) => i.json);\n  } catch {\n    return []; // ветка не выполнялась: устаревших или закрытых не было\n  }\n};\n\nconst DAY = 24 * 3600 * 1000;\nconst now = Date.now();\nconst since = now - DAY;\nconst at = (s) => Date.parse(s) || 0;\nconst rows = $('All rows').all().map((i) => i.json).filter((r) => r.id);\nconst expired = new Set(from('Expire rows').map((r) => r.id));\nconst archived = new Set(from('Archive status').map((r) => r.id));\n\n// Воронка: новые строки за сутки (кроме бэкфилла seen) → отсеяно фильтром → оценено нейросетью\nconst fresh = rows.filter((r) => at(r.createdAt) >= since && r.status !== 'seen');\nconst rejected = fresh.filter((r) => r.status === 'rejected');\nconst reasons = {};\nfor (const r of rejected) {\n  for (const reason of String(r.reasons).split(', ').filter(Boolean)) {\n    const key = reason.replace(/:.*$/, '');\n    reasons[key] = (reasons[key] ?? 0) + 1;\n  }\n}\nconst topReasons = Object.entries(reasons)\n  .sort((a, b) => b[1] - a[1])\n  .slice(0, 4)\n  .map(([k, n]) => `${esc(k)} ${n}`)\n  .join(' · ');\n// Время оценки — card_at (пишет W2); у строк до этапа 5 его нет — берём время создания\nconst scored = rows.filter((r) => r.decision && at(r.card_at || r.createdAt) >= since);\nconst count = (list, f) => list.filter(f).length;\n\n// Решения пользователя за сутки (по времени последнего изменения строки) и отправленные отклики\nconst mine = rows.filter((r) => r.my_decision && at(r.updatedAt) >= since);\nconst sent = count(rows, (r) => at(r.applied_at) >= since);\n\n// Хвосты после этого запуска\nconst tailsWaiting = count(rows, (r) => r.status === 'waiting' && !expired.has(r.id) && !archived.has(r.id));\nconst tailsApproved = count(rows, (r) => r.status === 'approved' && !archived.has(r.id));\n\n// Теневой режим: оценки пользователя там, где решение нейросети известно\n// («📨 откликался раньше» — my_decision = earlier — не сравниваем: отклик был до бота)\nconst shadow = rows.filter((r) => ['apply', 'maybe', 'skip'].includes(r.my_decision) && ['apply', 'maybe', 'skip'].includes(r.decision));\nconst agree = count(shadow, (r) => r.my_decision === r.decision);\n\n// Сбои: запуски n8n за сутки (публичный API), туннель, хвост оценки нейросетью\nconst NAMES = {\n  jobHunterS0Setup: 'S0 таблицы',\n  jobHunterS1TgTst: 'S1 тест Telegram',\n  jobHunterW0Check: 'W0 проверка hh',\n  jobHunterW4Error: 'W4 тревоги',\n  jobHunterW1Colle: 'W1 сбор',\n  jobHunterW2Score: 'W2 оценка',\n  jobHunterW3Teleg: 'W3 кнопки',\n  jobHunterW5Lettr: 'W5 письма',\n  jobHunterW6Summ1: 'W6 сводка',\n  jobHunterW7Menu1: 'W7 меню',\n};\nconst executionsBody = $('Executions').first().json;\nconst executions = (executionsBody.data ?? []).filter((e) => at(e.startedAt) >= since);\nconst errors = executions.filter((e) => e.status === 'error' || e.status === 'crashed');\nconst errorsBy = {};\nfor (const e of errors) errorsBy[NAMES[e.workflowId] ?? e.workflowId] = (errorsBy[NAMES[e.workflowId] ?? e.workflowId] ?? 0) + 1;\n\n// Сборы W1 по расписанию (n8n/shared/schedule.js). Окно — сутки до «сейчас − 10 мин»:\n// сбор в 06:00 идёт одновременно со сводкой и ещё не закончился\nconst windowEnd = now - 10 * 60 * 1000;\nconst windowStart = windowEnd - DAY;\nconst expected = countCollectSlots(windowStart, windowEnd);\nconst collected = count(\n  executionsBody.data ?? [],\n  (e) =>\n    e.workflowId === 'jobHunterW1Colle' &&\n    e.status === 'success' &&\n    e.mode === 'trigger' &&\n    at(e.startedAt) > windowStart &&\n    at(e.startedAt) <= windowEnd,\n);\n// Ждут оценки дольше 30 мин: W2 запускается сразу после сбора, свежие строки detailed — норма\nconst pendingScore = count(rows, (r) => r.status === 'detailed' && at(r.createdAt) < now - 30 * 60 * 1000);\nconst tunnelCode = $input.first().json.statusCode;\nconst tunnelOk = !$env.NGROK_DOMAIN || tunnelCode === 403; // 403 = туннель жив, политика не пускает чужих\n\nconst problems = [];\nif (executionsBody.error || !executionsBody.data) problems.push('нет данных о запусках n8n');\nif (collected < expected) problems.push(`сборов ${collected} из ${expected}`);\nif (errors.length)\n  problems.push(\n    `ошибок ${errors.length} (${Object.entries(errorsBy)\n      .map(([k, n]) => `${k} ${n}`)\n      .join(' · ')})`,\n  );\nif (!tunnelOk) problems.push(`туннель не отвечает (${tunnelCode ?? 'нет ответа'}) — кнопки не работают`);\nif (pendingScore) problems.push(`ждут оценки нейросетью: ${pendingScore}`);\n\nconst date = new Date(now + 7 * 3600 * 1000).toISOString().slice(0, 10).split('-').reverse().slice(0, 2).join('.');\nconst lines = [\n  `☀️ <b>Сводка за сутки</b> · ${date}`,\n  `🔎 Новых вакансий: ${fresh.length} → фильтр отсеял ${rejected.length}${topReasons ? ` (${topReasons})` : ''}`,\n  `🤖 Оценено: ${scored.length}${scored.length ? ` — 🟢 ${count(scored, (r) => r.decision === 'apply')} · 🟡 ${count(scored, (r) => r.decision === 'maybe')} · 🔴 ${count(scored, (r) => r.decision === 'skip')}` : ''}${count(scored, (r) => r.decision === 'error') ? ` · ⚠️ ${count(scored, (r) => r.decision === 'error')}` : ''}`,\n  `👤 Твои решения: ✅ ${count(mine, (r) => r.my_decision === 'apply')} · 🤔 ${count(mine, (r) => r.my_decision === 'maybe')} · ❌ ${count(mine, (r) => r.my_decision === 'skip')} · 📨 отправлено ${sent}${count(mine, (r) => r.my_decision === 'earlier') ? ` · 📨 раньше ${count(mine, (r) => r.my_decision === 'earlier')}` : ''}`,\n  `⏳ Хвосты: без решения ${tailsWaiting} · ✅ без отклика ${tailsApproved}`,\n  expired.size || archived.size ? `⌛ Устарели: ${expired.size} · 🔒 закрылись на hh: ${archived.size}` : '',\n  shadow.length >= 50\n    ? `🧪 Теневой режим: ${shadow.length}/50, совпало ${agree} (${Math.round((agree / shadow.length) * 100)}%) — пора разбирать, напиши Claude`\n    : `🧪 Теневой режим: ${shadow.length}/50${shadow.length ? `, совпало ${agree} (${Math.round((agree / shadow.length) * 100)}%)` : ''}`,\n  problems.length ? `⚠️ Сбои: ${problems.join(' · ')}` : `⚙️ Сборов ${collected} из ${expected}, ошибок нет, туннель работает`,\n];\n\nreturn [{ json: { text: lines.filter(Boolean).join('\\n'), silent: problems.length === 0 } }];\n"
+        "jsCode": "// W6 · Summary — утренняя сводка за сутки (10:00 по Таиланду = 06:00 МСК).\n// Нода: Code, режим «Run Once for All Items». Выполняется последней (ветки выше — устаревшие и закрытые).\n// Вход: «All rows» (таблица до правок этого запуска), «Plan», «Expire rows» / «Archive status» (если были),\n//       «Runs» — журнал сборов W1, «Executions» — запуски n8n из публичного API (ошибки),\n//       $input — «Tunnel» (проверка туннеля ngrok).\n// Выход: одно сообщение { text, silent }. Без звука, если сбоев нет (решение пользователя 07.10.2026).\n\n// Расписание сбора W1 по Москве (UTC+3, без перехода на летнее время), решение пользователя 07.10.2026:\n// днём 07:00–17:30 каждые 30 мин, ночью 18, 20, 22, 00, 02, 04, 06 — 29 сборов в сутки.\n// Держать в синхроне с Schedule W1 в scripts/build-workflows.mjs.\n// Общий код W1 «Score job» (следующий сбор), W6 «Summary» и W7 «Render»: строка «// @include n8n/shared/schedule.js».\n\nconst COLLECT_STEP = 30 * 60 * 1000;\n\n// Момент t (мс, кратен 30 мин) — сбор по расписанию?\nfunction isCollectSlot(t) {\n  const msk = new Date(t + 3 * 3600 * 1000);\n  const h = msk.getUTCHours();\n  const m = msk.getUTCMinutes();\n  return h >= 7 && h < 18 ? m % 30 === 0 : m === 0 && h % 2 === 0;\n}\n\n// Сколько сборов по расписанию в промежутке (from, to]\nfunction countCollectSlots(from, to) {\n  let n = 0;\n  for (let t = Math.floor(from / COLLECT_STEP) * COLLECT_STEP + COLLECT_STEP; t <= to; t += COLLECT_STEP) {\n    if (isCollectSlot(t)) n++;\n  }\n  return n;\n}\n\n// Ближайший сбор по расписанию после момента t\nfunction nextCollect(t) {\n  let s = Math.floor(t / COLLECT_STEP) * COLLECT_STEP + COLLECT_STEP;\n  while (!isCollectSlot(s)) s += COLLECT_STEP;\n  return s;\n}\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst from = (name) => {\n  try {\n    return $(name).all().map((i) => i.json);\n  } catch {\n    return []; // ветка не выполнялась: устаревших или закрытых не было\n  }\n};\n\nconst DAY = 24 * 3600 * 1000;\nconst now = Date.now();\nconst since = now - DAY;\nconst at = (s) => Date.parse(s) || 0;\nconst rows = $('All rows').all().map((i) => i.json).filter((r) => r.id);\nconst expired = new Set(from('Expire rows').map((r) => r.id));\nconst archived = new Set(from('Archive status').map((r) => r.id));\n\n// Воронка: новые строки за сутки (кроме бэкфилла seen) → отсеяно фильтром → оценено нейросетью\nconst fresh = rows.filter((r) => at(r.createdAt) >= since && r.status !== 'seen');\nconst rejected = fresh.filter((r) => r.status === 'rejected');\nconst reasons = {};\nfor (const r of rejected) {\n  for (const reason of String(r.reasons).split(', ').filter(Boolean)) {\n    const key = reason.replace(/:.*$/, '');\n    reasons[key] = (reasons[key] ?? 0) + 1;\n  }\n}\nconst topReasons = Object.entries(reasons)\n  .sort((a, b) => b[1] - a[1])\n  .slice(0, 4)\n  .map(([k, n]) => `${esc(k)} ${n}`)\n  .join(' · ');\n// Время оценки — card_at (пишет W2); у строк до этапа 5 его нет — берём время создания\nconst scored = rows.filter((r) => r.decision && at(r.card_at || r.createdAt) >= since);\nconst count = (list, f) => list.filter(f).length;\n\n// Решения пользователя за сутки (по времени последнего изменения строки) и отправленные отклики\nconst mine = rows.filter((r) => r.my_decision && at(r.updatedAt) >= since);\nconst sent = count(rows, (r) => at(r.applied_at) >= since);\n\n// Хвосты после этого запуска\nconst tailsWaiting = count(rows, (r) => r.status === 'waiting' && !expired.has(r.id) && !archived.has(r.id));\nconst tailsApproved = count(rows, (r) => r.status === 'approved' && !archived.has(r.id));\n\n// Теневой режим: оценки пользователя там, где решение нейросети известно\n// («📨 откликался раньше» — my_decision = earlier — не сравниваем: отклик был до бота)\nconst shadow = rows.filter((r) => ['apply', 'maybe', 'skip'].includes(r.my_decision) && ['apply', 'maybe', 'skip'].includes(r.decision));\nconst agree = count(shadow, (r) => r.my_decision === r.decision);\n\n// Сбои: запуски n8n за сутки (публичный API), туннель, хвост оценки нейросетью\nconst NAMES = {\n  jobHunterS0Setup: 'S0 таблицы',\n  jobHunterS1TgTst: 'S1 тест Telegram',\n  jobHunterW0Check: 'W0 проверка hh',\n  jobHunterW4Error: 'W4 тревоги',\n  jobHunterW1Colle: 'W1 сбор',\n  jobHunterW2Score: 'W2 оценка',\n  jobHunterW3Teleg: 'W3 кнопки',\n  jobHunterW5Lettr: 'W5 письма',\n  jobHunterW6Summ1: 'W6 сводка',\n  jobHunterW7Menu1: 'W7 меню',\n};\nconst executionsBody = $('Executions').first().json;\nconst executions = (executionsBody.data ?? []).filter((e) => at(e.startedAt) >= since);\nconst errors = executions.filter((e) => e.status === 'error' || e.status === 'crashed');\nconst errorsBy = {};\nfor (const e of errors) errorsBy[NAMES[e.workflowId] ?? e.workflowId] = (errorsBy[NAMES[e.workflowId] ?? e.workflowId] ?? 0) + 1;\n\n// Сборы W1 по расписанию — журнал runs (сколько положено — n8n/shared/schedule.js). Окно — сутки\n// до «сейчас − 10 мин»: сбор в 06:00 идёт одновременно со сводкой и ещё не закончился\nconst windowEnd = now - 10 * 60 * 1000;\nconst windowStart = windowEnd - DAY;\nconst expected = countCollectSlots(windowStart, windowEnd);\nconst collected = count(\n  $('Runs')\n    .all()\n    .map((i) => i.json),\n  (r) =>\n    ['schedule', 'catchup'].includes(r.kind) &&\n    r.status === 'ok' &&\n    at(r.started_at) > windowStart &&\n    at(r.started_at) <= windowEnd,\n);\n// Ждут оценки дольше 30 мин: W2 запускается сразу после сбора, свежие строки detailed — норма\nconst pendingScore = count(rows, (r) => r.status === 'detailed' && at(r.createdAt) < now - 30 * 60 * 1000);\nconst tunnelCode = $input.first().json.statusCode;\nconst tunnelOk = !$env.NGROK_DOMAIN || tunnelCode === 403; // 403 = туннель жив, политика не пускает чужих\n\nconst problems = [];\nif (executionsBody.error || !executionsBody.data) problems.push('нет данных о запусках n8n');\nif (collected < expected) problems.push(`сборов ${collected} из ${expected}`);\nif (errors.length)\n  problems.push(\n    `ошибок ${errors.length} (${Object.entries(errorsBy)\n      .map(([k, n]) => `${k} ${n}`)\n      .join(' · ')})`,\n  );\nif (!tunnelOk) problems.push(`туннель не отвечает (${tunnelCode ?? 'нет ответа'}) — кнопки не работают`);\nif (pendingScore) problems.push(`ждут оценки нейросетью: ${pendingScore}`);\n\nconst date = new Date(now + 7 * 3600 * 1000).toISOString().slice(0, 10).split('-').reverse().slice(0, 2).join('.');\nconst lines = [\n  `☀️ <b>Сводка за сутки</b> · ${date}`,\n  `🔎 Новых вакансий: ${fresh.length} → фильтр отсеял ${rejected.length}${topReasons ? ` (${topReasons})` : ''}`,\n  `🤖 Оценено: ${scored.length}${scored.length ? ` — 🟢 ${count(scored, (r) => r.decision === 'apply')} · 🟡 ${count(scored, (r) => r.decision === 'maybe')} · 🔴 ${count(scored, (r) => r.decision === 'skip')}` : ''}${count(scored, (r) => r.decision === 'error') ? ` · ⚠️ ${count(scored, (r) => r.decision === 'error')}` : ''}`,\n  `👤 Твои решения: ✅ ${count(mine, (r) => r.my_decision === 'apply')} · 🤔 ${count(mine, (r) => r.my_decision === 'maybe')} · ❌ ${count(mine, (r) => r.my_decision === 'skip')} · 📨 отправлено ${sent}${count(mine, (r) => r.my_decision === 'earlier') ? ` · 📨 раньше ${count(mine, (r) => r.my_decision === 'earlier')}` : ''}`,\n  `⏳ Хвосты: без решения ${tailsWaiting} · ✅ без отклика ${tailsApproved}`,\n  expired.size || archived.size ? `⌛ Устарели: ${expired.size} · 🔒 закрылись на hh: ${archived.size}` : '',\n  shadow.length >= 50\n    ? `🧪 Теневой режим: ${shadow.length}/50, совпало ${agree} (${Math.round((agree / shadow.length) * 100)}%) — пора разбирать, напиши Claude`\n    : `🧪 Теневой режим: ${shadow.length}/50${shadow.length ? `, совпало ${agree} (${Math.round((agree / shadow.length) * 100)}%)` : ''}`,\n  problems.length ? `⚠️ Сбои: ${problems.join(' · ')}` : `⚙️ Сборов ${collected} из ${expected}, ошибок нет, туннель работает`,\n];\n\nreturn [{ json: { text: lines.filter(Boolean).join('\\n'), silent: problems.length === 0 } }];\n"
       }
     },
     {
@@ -485,7 +511,7 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        1320,
+        1540,
         250
       ],
       "parameters": {
@@ -526,6 +552,114 @@
           "name": "Telegram bot"
         }
       }
+    },
+    {
+      "id": "36e689f1-8e27-40e0-f43b-8ac66122715e",
+      "name": "Cleanup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        600
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W6 · Cleanup — убрать описания у отработанных вакансий старше 30 дней (07.10.2026).\n// Нода: Code, режим «Run Once for All Items». Своя ветка ниже сводки: выполняется последней.\n// Зачем: у таблиц лимит 100 МБ, а меню (W7) на каждое нажатие читает таблицу целиком. Строку не удаляем:\n// по external_id и dup_key сбор узнаёт старые вакансии, а в меню видна история.\n// Вход: «All rows». Выход: [{ id }] → «Save stripped» (description и snippet = ''), не больше 200 за раз.\n// Отклики (applied), ✅ и 🤔 не трогаем: описание может понадобиться для письма и собеседования.\n\nconst DAY = 24 * 3600 * 1000;\nconst now = Date.now();\nconst DONE = ['rejected', 'skipped', 'expired', 'archived', 'seen'];\n\nreturn $('All rows')\n  .all()\n  .map((i) => i.json)\n  .filter(\n    (r) =>\n      r.id && DONE.includes(r.status) && (r.description || r.snippet) && now - (Date.parse(r.updatedAt) || now) > 30 * DAY,\n  )\n  .slice(0, 200)\n  .map((r) => ({ json: { id: r.id } }));\n"
+      }
+    },
+    {
+      "id": "afb3580c-19ea-d1b1-012f-ec80383734c8",
+      "name": "Save stripped",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        600
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "vacancies"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "description": "",
+            "snippet": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "description",
+              "displayName": "description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "snippet",
+              "displayName": "snippet",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a91eebc3-7459-18d6-471c-533a81d83466",
+      "name": "Delete old runs",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        800
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "deleteRows",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "runs"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "started_at",
+              "condition": "lt",
+              "keyValue": "={{ new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "executeOnce": true,
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -576,7 +710,17 @@
             "index": 0
           },
           {
-            "node": "Executions",
+            "node": "Runs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Cleanup",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Delete old runs",
             "type": "main",
             "index": 0
           }
@@ -687,6 +831,17 @@
         ]
       ]
     },
+    "Runs": {
+      "main": [
+        [
+          {
+            "node": "Executions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Executions": {
       "main": [
         [
@@ -714,6 +869,17 @@
         [
           {
             "node": "Send summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cleanup": {
+      "main": [
+        [
+          {
+            "node": "Save stripped",
             "type": "main",
             "index": 0
           }

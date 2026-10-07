@@ -191,6 +191,14 @@
             {
               "name": "card_at",
               "type": "string"
+            },
+            {
+              "name": "letter_lock",
+              "type": "string"
+            },
+            {
+              "name": "prompt_v",
+              "type": "string"
             }
           ]
         },
@@ -228,6 +236,160 @@
           "createIfNotExists": true
         }
       }
+    },
+    {
+      "id": "470d0512-4c89-fce2-a4b6-88e54aeefe92",
+      "name": "Create settings",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "resource": "table",
+        "operation": "create",
+        "tableName": "settings",
+        "columns": {
+          "column": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "value_json",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {
+          "createIfNotExists": true
+        }
+      }
+    },
+    {
+      "id": "02b978d1-585c-9036-2ae9-2af5ff25a4f9",
+      "name": "Create runs",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "resource": "table",
+        "operation": "create",
+        "tableName": "runs",
+        "columns": {
+          "column": [
+            {
+              "name": "started_at",
+              "type": "string"
+            },
+            {
+              "name": "finished_at",
+              "type": "string"
+            },
+            {
+              "name": "kind",
+              "type": "string"
+            },
+            {
+              "name": "status",
+              "type": "string"
+            },
+            {
+              "name": "found",
+              "type": "number"
+            },
+            {
+              "name": "uniq",
+              "type": "number"
+            },
+            {
+              "name": "fresh",
+              "type": "number"
+            },
+            {
+              "name": "rejected",
+              "type": "number"
+            },
+            {
+              "name": "scoring",
+              "type": "number"
+            },
+            {
+              "name": "pages",
+              "type": "number"
+            },
+            {
+              "name": "cards",
+              "type": "number"
+            },
+            {
+              "name": "error",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {
+          "createIfNotExists": true
+        }
+      }
+    },
+    {
+      "id": "d76d6ff6-52b5-0ee8-58ee-86f071b6eb90",
+      "name": "Create alerts",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "resource": "table",
+        "operation": "create",
+        "tableName": "alerts",
+        "columns": {
+          "column": [
+            {
+              "name": "alert_key",
+              "type": "string"
+            },
+            {
+              "name": "workflow",
+              "type": "string"
+            },
+            {
+              "name": "message",
+              "type": "string"
+            },
+            {
+              "name": "first_at",
+              "type": "string"
+            },
+            {
+              "name": "last_at",
+              "type": "string"
+            },
+            {
+              "name": "hits",
+              "type": "number"
+            },
+            {
+              "name": "is_open",
+              "type": "boolean"
+            },
+            {
+              "name": "tg_message_id",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {
+          "createIfNotExists": true
+        }
+      }
     }
   ],
   "connections": {
@@ -247,6 +409,39 @@
         [
           {
             "node": "Create blacklist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create blacklist": {
+      "main": [
+        [
+          {
+            "node": "Create settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create settings": {
+      "main": [
+        [
+          {
+            "node": "Create runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create runs": {
+      "main": [
+        [
+          {
+            "node": "Create alerts",
             "type": "main",
             "index": 0
           }
