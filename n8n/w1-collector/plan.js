@@ -5,9 +5,17 @@
 // Первый запуск (таблица пустая) = бэкфилл: страницы 0 и 1, всё пишется со статусом seen.
 // Обычный запуск: только страница 0 — 100 последних вакансий с запасом покрывают ночной интервал в 2 часа.
 // startedAt — начало сбора для сообщения о сборе («Score job»).
+// text и period — слова и период поиска из настроек бота (⚙️ → 🔎 Поиск) → «Search hh».
+
+// @include n8n/shared/settings.js
+
+// @include n8n/shared/search.js
 
 const firstRun = !$input.first().json.id;
 const pages = firstRun ? [0, 1] : [0];
 const startedAt = Date.now();
+const s = loadSettings($('Settings').all());
+const text = searchText(s);
+const period = s['search.period'];
 
-return pages.map((page) => ({ json: { page, firstRun, startedAt } }));
+return pages.map((page) => ({ json: { page, firstRun, startedAt, text, period } }));

@@ -13,6 +13,8 @@ const VERDICT = { apply: '🟢 apply', maybe: '🟡 maybe', skip: '🔴 skip', e
 // earlier — «📨 Уже откликался» (до бота, 07.10.2026): status = applied без письма и без applied_at,
 // без «Почему?» и вне теневого режима (сравниваются только apply / maybe / skip)
 const CHOICE = { apply: '✅ Откликнусь', maybe: '🤔 Возможно', skip: '❌ Мимо', earlier: '📨 Откликался раньше' };
+// «🚫 В ЧС» на карточке (07.10.2026): компания уходит в чёрный список, вакансия — ❌ с этой причиной
+const BAN_REASON = 'чёрный список';
 const STATUS_BY_CHOICE = { apply: 'approved', maybe: 'maybe', skip: 'skipped', earlier: 'applied' };
 
 const short = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
@@ -62,7 +64,9 @@ function cardText(r) {
     .filter(Boolean)
     .join(' · ');
   const verdict = `🤖 ${VERDICT[r.decision] ?? esc(r.decision)}${r.llm_reason ? ` — ${esc(r.llm_reason)}` : ''}`;
-  const mine = CHOICE[r.my_decision] ? `👤 ${CHOICE[r.my_decision]}` : '';
+  const mine = CHOICE[r.my_decision]
+    ? `👤 ${CHOICE[r.my_decision]}${r.my_reason === BAN_REASON ? ' · 🚫 компания в чёрном списке' : ''}`
+    : '';
   // «📨 Откликался раньше» уже в строке «👤 …» — второй раз не пишем
   const sent =
     r.status === 'applied' && r.my_decision !== 'earlier'

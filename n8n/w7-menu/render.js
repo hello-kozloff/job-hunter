@@ -14,6 +14,7 @@
 // @include n8n/shared/card.js
 // @include n8n/shared/menu.js
 // @include n8n/shared/settings.js
+// @include n8n/shared/search.js
 // @include n8n/shared/schedule.js
 
 const job = $('Job').first().json;
@@ -33,15 +34,32 @@ const now = Date.now();
 const DAY = 24 * 3600 * 1000;
 const PAGE = 8;
 // Порядок = PANEL_LAYOUTS в scripts/build-workflows.mjs (выходы «Layout»); после них — приветствие
-const LAYOUTS = ['list', 'open_choose', 'open_decided', 'open_plain', 'stats', 'settings', 'set_collect'];
+const LAYOUTS = [
+  'list',
+  'open_choose',
+  'open_decided',
+  'open_plain',
+  'stats',
+  'settings',
+  'set_collect',
+  'set_search',
+  'set_filter',
+  'set_rules',
+  'set_blacklist',
+  'set_confirm',
+];
+// Выходы «Layout» после раскладок: приветствие, вопрос ⚙️ со списком (ForceReply)
+const ROUTE_START = LAYOUTS.length * 2;
+const ROUTE_PROMPT = LAYOUTS.length * 2 + 1;
 const chatId = String(job.chatId || $env.TG_CHAT_ID);
 // sync — после «📨 Отправил» / «↩️ Отменить» под письмом (W3 «Sync job»): перерисовать панель,
 // только если на ней открыта эта вакансия — иначе на ней нечего обновлять
 if (job.view === 'sync' && !(panel.view === 'open' && Number(panel.id) === Number(job.id) && panel.messageId)) {
   return [];
 }
-// Кнопка в панели, перерисовка после решения, sync — правим панель; кнопка меню, /v…, «📋 К вакансиям» — новая
-const target = job.view === 'sync' ? panel.messageId : job.messageId;
+// Кнопка в панели, перерисовка после решения, sync — правим панель; кнопка меню, /v…, «📋 К вакансиям» — новая.
+// Ответ на вопрос ⚙️ со списком — правим панель, на которой нажали «✏️»
+const target = job.view === 'sync' || job.input ? panel.messageId : job.messageId;
 const edit = Boolean(target);
 const at = (s) => Date.parse(s) || 0;
 const count = (list, f) => list.filter(f).length;
@@ -158,6 +176,7 @@ function openView(id) {
       maybe: choice('maybe'),
       skip: choice('skip'),
       earlier: choice('earlier'),
+      ban: choice('ban'),
       edit: choice('edit'),
       url: r.url,
       back: `p:l:${tab}:${page}`,
@@ -265,7 +284,7 @@ if (job.view === 'start') {
   return [
     {
       json: {
-        route: LAYOUTS.length * 2,
+        route: ROUTE_START,
         view: 'start',
         layout: 'start',
         edit: false,
@@ -274,6 +293,25 @@ if (job.view === 'start') {
         text: GREETING,
         b: {},
         deleteIds: [job.userMessageId, state.greetingId].filter(Boolean),
+      },
+    },
+  ];
+}
+
+// «✏️» в настройках — вопрос со списком отдельным сообщением; панель не трогаем
+if (job.view === 'settings' && SETTING_PROMPTS[job.ask]) {
+  return [
+    {
+      json: {
+        route: ROUTE_PROMPT,
+        view: 'prompt',
+        layout: 'prompt',
+        edit: false,
+        chatId,
+        messageId: 0,
+        text: settingsPrompt(job.ask),
+        b: {},
+        deleteIds: [],
       },
     },
   ];
@@ -307,7 +345,13 @@ return [
       messageId: target || 0,
       text: view.text,
       b: view.b,
-      deleteIds: edit ? [] : [job.userMessageId, panel.messageId].filter(Boolean),
+      // Новая панель — убрать нажатие и прошлую панель; ответ на вопрос со списком — убрать вопрос и ответ
+      deleteIds: [
+        ...new Set([
+          ...(edit ? [] : [job.userMessageId, panel.messageId]),
+          ...(job.input ? [job.promptId, job.userMessageId] : []),
+        ]),
+      ].filter(Boolean),
       tab: view.tab ?? '',
       page: view.page ?? 1,
     },

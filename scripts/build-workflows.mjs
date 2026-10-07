@@ -74,8 +74,12 @@ const workflow = (id, name, nodes, links, settings = {}) => ({
 
 // ---------- Общие куски ----------
 
-// Поисковый запрос hh — из n8n/shared/search.js (его же показывает сообщение о сборе W1 → W2)
-const { SEARCH_URL, SEARCH_QUERY } = new Function(`${read('n8n/shared/search.js')}\nreturn { SEARCH_URL, SEARCH_QUERY };`)();
+// Поисковый запрос hh — из n8n/shared/search.js. Слова и период — настройки бота (⚙️ → 🔎 Поиск):
+// W1 «Plan» берёт их из таблицы settings, W0 (ручная проверка) — значения по умолчанию
+const { SEARCH_URL, searchQuery, loadSettings } = new Function(
+  `${read('n8n/shared/settings.js')}\n${read('n8n/shared/search.js')}\nreturn { SEARCH_URL, searchQuery, loadSettings };`,
+)();
+const SEARCH_QUERY = searchQuery(loadSettings([]));
 
 const BROWSER_HEADERS = [
   ['User-Agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'],
@@ -286,7 +290,10 @@ const PANEL_LAYOUTS = [
         ['🤔 Возможно', panelButton('maybe')],
         ['❌ Мимо', panelButton('skip')],
       ],
-      [['📨 Уже откликался', panelButton('earlier')]],
+      [
+        ['📨 Уже откликался', panelButton('earlier')],
+        ['🚫 В ЧС', panelButton('ban')],
+      ],
       [
         ['🔗 На hh', { url: panelButton('url') }],
         ['⬅️ К списку', panelButton('back')],
@@ -348,6 +355,55 @@ const PANEL_LAYOUTS = [
         ['🔄 Собрать сейчас', 'sn'],
       ],
       [['⬅️ Настройки', 's:root']],
+    ],
+  ],
+  [
+    'set search',
+    [
+      [[panelButton('period.text'), panelButton('period.cb')]],
+      [
+        ['✏️ Везде в тексте', 'sw:search.anywhere'],
+        ['✏️ В названии', 'sw:search.in_name'],
+      ],
+      [
+        ['🔗 Открыть поиск', { url: panelButton('url') }],
+        ['⬅️ Настройки', 's:root'],
+      ],
+    ],
+  ],
+  [
+    'set filter',
+    [
+      [
+        [panelButton('responses.text'), panelButton('responses.cb')],
+        ['✏️ Стоп-слова', 'sw:filter.stop_words'],
+      ],
+      [
+        ['⚙️ Правила', 's:rules'],
+        [panelButton('blacklist.text'), 's:blacklist'],
+      ],
+      [['⬅️ Настройки', 's:root']],
+    ],
+  ],
+  // 10 правил фильтра (n8n/shared/settings.js → FILTER_RULES), по два в ряд
+  [
+    'set rules',
+    [
+      ...[0, 2, 4, 6, 8].map((i) => [
+        [panelButton(`r${i}.text`), panelButton(`r${i}.cb`)],
+        [panelButton(`r${i + 1}.text`), panelButton(`r${i + 1}.cb`)],
+      ]),
+      [['⬅️ Фильтр', 's:filter']],
+    ],
+  ],
+  ['set blacklist', [[['⬅️ Фильтр', 's:filter']]]],
+  [
+    'set confirm',
+    [
+      [
+        ['🗑 Убрать', panelButton('yes')],
+        ['Отмена', 's:blacklist'],
+      ],
     ],
   ],
 ];
@@ -599,7 +655,14 @@ const workflows = {
         [1320, 0],
         hhRequest({
           url: SEARCH_URL,
-          query: [...SEARCH_QUERY, ['page', '={{ $json.page }}']],
+          // Слова и период — из «Plan» (настройки бота)
+          query: [
+            ...SEARCH_QUERY.map(([key, value]) => [
+              key,
+              { text: '={{ $json.text }}', search_period: '={{ $json.period }}' }[key] ?? value,
+            ]),
+            ['page', '={{ $json.page }}'],
+          ],
           batching: true,
         }),
       ),
@@ -862,8 +925,11 @@ const workflows = {
               ['🤔 Возможно', '=v:{{ $json.id }}:maybe'],
               ['❌ Мимо', '=v:{{ $json.id }}:skip'],
             ],
-            // Откликался до бота: без письма, вне теневого режима
-            [['📨 Уже откликался', '=v:{{ $json.id }}:earlier']],
+            // Откликался до бота: без письма, вне теневого режима. «🚫 В ЧС» — компания в чёрный список, вакансия — ❌
+            [
+              ['📨 Уже откликался', '=v:{{ $json.id }}:earlier'],
+              ['🚫 В ЧС', '=v:{{ $json.id }}:ban'],
+            ],
           ]),
         },
         fields: { disable_notification: '={{ $json.silent }}' },
@@ -1007,7 +1073,11 @@ const workflows = {
         operation: 'update',
         dataTableId: VACANCIES,
         ...byId('={{ $json.id }}'),
-        columns: setColumns({ my_decision: '={{ $json.my_decision }}', status: '={{ $json.status }}' }),
+        columns: setColumns({
+          my_decision: '={{ $json.my_decision }}',
+          status: '={{ $json.status }}',
+          my_reason: '={{ $json.my_reason }}',
+        }),
         options: {},
       }),
       node(
@@ -1032,7 +1102,10 @@ const workflows = {
           ['🤔 Возможно', `=v:{{ ${CHOICE}.id }}:maybe`],
           ['❌ Мимо', `=v:{{ ${CHOICE}.id }}:skip`],
         ],
-        [['📨 Уже откликался', `=v:{{ ${CHOICE}.id }}:earlier`]],
+        [
+          ['📨 Уже откликался', `=v:{{ ${CHOICE}.id }}:earlier`],
+          ['🚫 В ЧС', `=v:{{ ${CHOICE}.id }}:ban`],
+        ],
       ]),
       node('W3', 'Ask?', 'if', 2.3, [1980, -200], ifTrue('W3', `={{ Boolean(${CHOICE}.ask) }}`)),
       telegram('W3', 'Ask why', [2200, -200], {
@@ -1139,6 +1212,26 @@ const workflows = {
       // Решение принято в карточке на панели меню: после правки исходной карточки — перерисовать панель (W7).
       // Ветка ниже «Decided?»: n8n (execution order v1) выполняет её последней
       node('W3', 'From panel?', 'if', 2.3, [1540, 150], ifTrue('W3', `={{ Boolean(${CHOICE}.panel) }}`)),
+      // «🚫 В ЧС» (07.10.2026): компания — в чёрный список (название как в карточке; id на hh — в комментарии)
+      node('W3', 'Ban?', 'if', 2.3, [1540, 800], ifTrue('W3', `={{ Boolean(${CHOICE}.ban) }}`)),
+      node(
+        'W3',
+        'Ban company',
+        'dataTable',
+        1.1,
+        [1760, 800],
+        {
+          resource: 'row',
+          operation: 'insert',
+          dataTableId: BLACKLIST,
+          columns: setColumns({
+            company: `={{ ${CHOICE}.ban.company }}`,
+            comment: `={{ 'кнопка «🚫 В ЧС» ' + $now.toFormat('dd.MM') + (${CHOICE}.ban.company_id ? ' · hh ' + ${CHOICE}.ban.company_id : '') + ' · ' + ${CHOICE}.ban.title }}`,
+          }),
+          options: {},
+        },
+        { onError: 'continueRegularOutput' },
+      ),
       code('W3', 'Panel job', 'n8n/w3-telegram/panel-job.js', [1760, 150]),
       runWorkflow('W3', 'Panel refresh', [1980, 150], IDS.menu),
       // Письмо: одна нода на три ветки (✅, «🔄 Переписать», ответ на письмо) → W5 Letter
@@ -1199,6 +1292,8 @@ const workflows = {
       ['Save choice', 'Answer'],
       ['Answer', 'Decided?'],
       ['Answer', 'From panel?'],
+      ['Answer', 'Ban?'],
+      ['Ban?', 'Ban company', 0],
       ['From panel?', 'Panel job', 0],
       ['From panel?', 'Sync job', 1],
       ['Panel job', 'Panel refresh'],
@@ -1683,6 +1778,26 @@ const workflows = {
       ),
       code('W7', 'Collect now', 'n8n/w7-menu/collect-now.js', [1540, -1100]),
       runWorkflow('W7', 'Run W1', [1760, -1100], IDS.collector),
+      // Чёрный список — для ⚙️ → 🧹 Фильтр; «🗑 Убрать» удаляет строку до «Render»
+      node(
+        'W7',
+        'Blacklist',
+        'dataTable',
+        1.1,
+        [1430, 150],
+        { resource: 'row', operation: 'get', dataTableId: BLACKLIST, returnAll: true },
+        { executeOnce: true, alwaysOutputData: true },
+      ),
+      code('W7', 'Unban', 'n8n/w7-menu/unban.js', [1540, -900]),
+      node(
+        'W7',
+        'Delete ban',
+        'dataTable',
+        1.1,
+        [1760, -900],
+        { resource: 'row', operation: 'deleteRows', dataTableId: BLACKLIST, ...byId('={{ $json.id }}'), options: {} },
+        { onError: 'continueRegularOutput' },
+      ),
       node(
         'W7',
         'Rows',
@@ -1715,7 +1830,7 @@ const workflows = {
       // Выход = $json.route (render.js): раскладка × новое сообщение (чётный) / правка панели (нечётный), 10 — приветствие
       node('W7', 'Layout', 'switch', 3.4, [1980, -300], {
         mode: 'expression',
-        numberOutputs: PANEL_LAYOUTS.length * 2 + 1,
+        numberOutputs: PANEL_LAYOUTS.length * 2 + 2,
         output: '={{ $json.route }}',
         options: {},
       }),
@@ -1737,6 +1852,11 @@ const workflows = {
       telegram('W7', 'New: start', [2200, -900 + PANEL_LAYOUTS.length * 300], {
         fields: { disable_notification: true },
         markup: MENU_KEYBOARD,
+      }),
+      // «✏️» в ⚙️: вопрос со списком — ответ сообщением (ForceReply); панель не трогаем, в Remember не идёт
+      telegram('W7', 'New: prompt', [2200, -600 + PANEL_LAYOUTS.length * 300], {
+        fields: { disable_notification: true },
+        markup: { replyMarkup: 'forceReply', forceReply: { force_reply: true } },
       }),
       code('W7', 'Remember', 'n8n/w7-menu/remember.js', [2420, -300]),
       // Ветка ниже «Layout»: старая панель и нажатие пользователя удаляются после отправки новой
@@ -1760,13 +1880,16 @@ const workflows = {
       ['Answer query', 'Work?'],
       ['Answer?', 'Work?', 1],
       ['Work?', 'Settings', 0],
-      ['Settings', 'Setting change'],
+      ['Settings', 'Blacklist'],
+      ['Blacklist', 'Setting change'],
       ['Setting change', 'Save setting'],
       ['Save setting', 'HC plan'],
       ['HC plan', 'HC sync'],
-      ['Settings', 'Collect now'],
+      ['Blacklist', 'Collect now'],
       ['Collect now', 'Run W1'],
-      ['Settings', 'Rows'],
+      ['Blacklist', 'Unban'],
+      ['Unban', 'Delete ban'],
+      ['Blacklist', 'Rows'],
       ['Rows', 'Runs'],
       ['Runs', 'Render'],
       ['Render', 'Layout'],
@@ -1777,6 +1900,7 @@ const workflows = {
         [`Edit: ${layout}`, 'Remember'],
       ]),
       ['Layout', 'New: start', PANEL_LAYOUTS.length * 2],
+      ['Layout', 'New: prompt', PANEL_LAYOUTS.length * 2 + 1],
       ['New: start', 'Remember'],
       ['Render', 'Delete ids'],
       ['Delete ids', 'Delete old'],
