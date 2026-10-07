@@ -12,6 +12,11 @@ const responses = $input.all().map((i) => i.json);
 
 // @include n8n/shared/ai.js
 
+// @include n8n/shared/settings.js
+
+// Правила, выключенные в настройках бота (⚙️ → 🧹 Фильтр → Правила): only_rf, no_stack
+const off = new Set(loadSettings($('Settings').all())['filter.rules_off']);
+
 // Описание вакансии: HTML → текст с переносами строк
 const htmlToText = (html) =>
   decodeEntities(
@@ -52,11 +57,11 @@ return rows.map((row, i) => {
   const reasons = [];
   if (v.status?.archived || v.closedForApplicants) reasons.push('в архиве');
   const rf = RF_ONLY.map((re) => description.match(re)).find(Boolean);
-  if (rf) reasons.push(`только из РФ: «${rf[0].trim()}»`);
+  if (rf && !off.has('only_rf')) reasons.push(`только из РФ: «${rf[0].trim()}»`);
   // Vue (и Nuxt) — тоже наш стек с 07.10.2026: только Vue нейросеть оценит как maybe.
   // AI-вакансии (разработка на LLM) без React и Vue берём, только если в них JS/TS (решения пользователя 07.10.2026)
   const stack = `${row.title} ${skills} ${description}`;
-  if (!/react|next\.?js|vue|nuxt/i.test(stack)) {
+  if (!off.has('no_stack') && !/react|next\.?js|vue|nuxt/i.test(stack)) {
     if (!isAi(`${row.title} ${skills || row.key_skills}`)) reasons.push('нет React и Vue');
     else if (!JS_STACK.test(stack)) reasons.push('AI не на JS/TS');
   }

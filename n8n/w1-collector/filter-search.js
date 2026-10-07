@@ -2,11 +2,18 @@
 // Нода: Code, режим «Run Once for All Items».
 // Вход: новые вакансии из «Is new» и строки чёрного списка из «Blacklist».
 // Выход: те же вакансии со status = new | rejected | seen и причиной в reasons.
-// Правила — решения пользователя от 07.10.2026 (CLAUDE.md §7).
+// Правила — решения пользователя от 07.10.2026 (CLAUDE.md §7). Из настроек бота (⚙️ → 🧹 Фильтр): какие правила
+// выключены (filter.rules_off), порог откликов (filter.max_responses, 0 — не отсекать) и стоп-слова (filter.stop_words).
 
 // @include n8n/shared/ai.js
 
+// @include n8n/shared/settings.js
+
 const firstRun = Boolean($('Plan').first().json.firstRun);
+const settings = loadSettings($('Settings').all());
+const off = new Set(settings['filter.rules_off']);
+const maxResponses = settings['filter.max_responses'];
+const stopWords = wordsRegex(settings['filter.stop_words']);
 const rows = $('Is new').all().map((i) => i.json);
 
 // Чёрный список: в колонке company — точное название компании, как на hh (без учёта регистра
@@ -26,12 +33,18 @@ const inBlacklist = (r) => blacklist.has(norm(r.company)) || blacklist.has(Strin
 // \b и \w в JS не работают с кириллицей — границы слова и окончания задаём явно
 const ru = (word) => new RegExp(`(^|[^а-яё])${word}([^а-яё]|$)`, 'i');
 
+// [id (n8n/shared/settings.js → FILTER_RULES), причина в reasons, проверка]
 const RULES = [
-  ['без опыта', (r) => r.experience === 'noExperience'],
-  ['junior/стажёр', (r) => /junior|\bintern|trainee/i.test(r.title) || ru('(стаж[её]р|младш[а-яё]*|джун[а-яё]*)').test(r.title)],
-  // Vue не отсекаем (решение пользователя 07.10.2026): только Vue — нейросеть ставит maybe, React + Vue — как React
-  ['Angular', (r) => /angular/i.test(r.title)],
+  ['no_exp', 'без опыта', (r) => r.experience === 'noExperience'],
   [
+    'junior',
+    'junior/стажёр',
+    (r) => /junior|\bintern|trainee/i.test(r.title) || ru('(стаж[её]р|младш[а-яё]*|джун[а-яё]*)').test(r.title),
+  ],
+  // Vue не отсекаем (решение пользователя 07.10.2026): только Vue — нейросеть ставит maybe, React + Vue — как React
+  ['angular', 'Angular', (r) => /angular/i.test(r.title)],
+  [
+    'lead',
     'Lead/архитектор',
     (r) =>
       (/\b(team ?lead|tech ?lead|lead|head|architect|cto)\b/i.test(r.title) ||
@@ -39,17 +52,14 @@ const RULES = [
       !/senior|middle/i.test(r.title) &&
       !ru('(старш[а-яё]*|ведущ[а-яё]*)').test(r.title),
   ],
-  [
-    'стоп-слово',
-    (r) =>
-      // Laravel, Symfony, Yii — тот же PHP (07.10.2026: «Laravel + Nuxt» пользователь отклонил)
-      /php|laravel|symfony|\byii\b|wordpress|bitrix|\bqa\b|\b1c\b|teacher|tutor|instructor|o.?qituvchi/i.test(r.title) ||
-      ru('(1с|битрикс[а-яё]*|преподавател[а-яё]*|тестировщик[а-яё]*|наставник[а-яё]*)').test(r.title),
-  ],
+  // Стоп-слова — список из настроек: PHP (и Laravel, Symfony, Yii — 07.10.2026: «Laravel + Nuxt» пользователь
+  // отклонил), 1С, WordPress, Битрикс, QA/тестировщик, преподаватель/наставник
+  ['stop', 'стоп-слово', (r) => stopWords.test(r.title)],
   // Поиск frontend по всему тексту приносит чужой бэкенд (07.10.2026): режем по названию, в том числе fullstack
   // с таким бэкендом (пользователь отклонил «.Net/React») и AI на таком стеке (AI берём только на JS/TS).
   // Python — только без JS/TS и фронтенда в названии: «Python + React» пользователь берёт, AI на Python — нет
   [
+    'foreign',
     'чужой стек',
     (r) =>
       /\bruby\b|\brails\b|c#|\.net\b|\bdotnet\b|\bjava\b(?!\s*script)|\bgo(lang)?\b|\bdwh\b|data[\s-]*engineer/i.test(r.title) ||
@@ -59,6 +69,7 @@ const RULES = [
         !ru('(фул+[\\s-]?ст[еэ]к[а-яё]*|фронт[\\s-]?[еэ]нд[а-яё]*)').test(r.title)),
   ],
   [
+    'backend',
     'бэкенд',
     (r) =>
       !isAi(r.title) &&
@@ -66,12 +77,12 @@ const RULES = [
       !/full[\s-]?stack|front[\s-]?end/i.test(r.title) &&
       !ru('(фул+[\\s-]?ст[еэ]к[а-яё]*|фронт[\\s-]?[еэ]нд[а-яё]*)').test(r.title),
   ],
-  ['> 3000 откликов', (r) => (r.responses ?? 0) > 3000],
-  ['чёрный список', inBlacklist],
-];
+  ['responses', `> ${maxResponses} откликов`, (r) => maxResponses > 0 && (r.responses ?? 0) > maxResponses],
+  ['blacklist', 'чёрный список', inBlacklist],
+].filter(([id]) => !off.has(id));
 
 return rows.map((r) => {
   if (firstRun) return { json: { ...r, status: 'seen', reasons: '' } };
-  const failed = RULES.filter(([, test]) => test(r)).map(([name]) => name);
+  const failed = RULES.filter(([, , test]) => test(r)).map(([, name]) => name);
   return { json: { ...r, status: failed.length ? 'rejected' : 'new', reasons: failed.join(', ') } };
 });

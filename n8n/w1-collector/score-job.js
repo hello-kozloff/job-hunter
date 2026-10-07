@@ -8,9 +8,9 @@
 // W2 шлёт его одним живым сообщением без звука (прошлое удаляет) или ставит сверху итога «📊 Оценено»
 // (решения пользователя 07.10.2026).
 
-// @include n8n/shared/search.js
-
 // @include n8n/shared/settings.js
+
+// @include n8n/shared/search.js
 
 // @include n8n/shared/schedule.js
 
@@ -55,10 +55,11 @@ if (parsed.length) {
   if (noPage) requestLine += ` (не открылись ${noPage} — оценка по фрагменту)`;
 }
 
+const settings = loadSettings($('Settings').all());
 const onPages = requests.reduce((n, r) => n + (r.count ?? 0), 0);
 const total = requests[0]?.total;
 // Поиск за сутки (search_period=1): обычно всё найденное умещается на одной странице
-const period = SEARCH_LABELS.search_period?.[SEARCH_QUERY.find(([key]) => key === 'search_period')?.[1]];
+const period = SEARCH_LABELS.search_period[settings['search.period']];
 let result = 'все уже в базе';
 if (search.firstRun) result = `первый запуск: ${fresh.length} записано без обработки (бэкфилл)`;
 else if (fresh.length && !rejected.length) result = `новых ${fresh.length}, все на оценку`;
@@ -79,16 +80,16 @@ const rejectedLines = rejected
   .map((r) => `🚫 <a href="${esc(r.url)}">${esc(r.title)}</a> — ${esc(cut(String(r.reasons ?? ''), 120))}`);
 if (rejected.length > SHOW) rejectedLines.push(`и ещё ${rejected.length - SHOW}`);
 
-const { words, filters } = describeSearch();
+const { words, filters } = describeSearch(settings);
 // Расписание — из настроек бота (⚙️ → 🕐 Сбор)
-const next = nextCollect(Date.now(), scheduleFrom(loadSettings($('Settings').all())));
+const next = nextCollect(Date.now(), scheduleFrom(settings));
 const report = [
   `🔎 Сбор ${thaiMsk(plan.startedAt ?? Date.now())} · ${fresh.length ? `новых ${fresh.length}` : 'новых нет'}`,
   requestLine,
   countLine,
   ...rejectedLines,
   `<blockquote expandable>${esc(words)}\n${esc(filters)}</blockquote>`,
-  `🔗 <a href="${esc(searchUrl(requests[0]?.page ?? 0))}">Открыть этот поиск на hh</a>`,
+  `🔗 <a href="${esc(searchUrl(requests[0]?.page ?? 0, settings))}">Открыть этот поиск на hh</a>`,
   next ? `Следующий сбор ${thaiMsk(next)}` : '⏸ Сбор на паузе — дальше только «🔄 Собрать сейчас» в ⚙️ Настройках',
 ].join('\n');
 

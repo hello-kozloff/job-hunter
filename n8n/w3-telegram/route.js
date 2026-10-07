@@ -12,7 +12,9 @@
 //      кнопки под полем ввода («📋 Вакансии», «📊 Статистика», «⚙️ Настройки»), команды /start, /menu, /vacancies,
 //      /stats, /settings, /v<id> и кнопки панели (callback_data p:…, s:…, sc:…, sn).
 //      view = list | stats | start | open | noop | sync | settings;
-//      settings: section — раздел, change = { name } — следующее значение настройки, collectNow — собрать сейчас;
+//      settings: section — раздел, change = { name, toggle? } — следующее значение настройки или правило фильтра,
+//      collectNow — собрать сейчас, ask — вопрос со списком, input = { name, text } — ответ на него (promptId — вопрос),
+//      unban — убрать компанию из чёрного списка, id — компания для подтверждения (/bl<id>);
 //      resume = true — список там, где был (p:n — «📋 К вакансиям» под письмом: новая панель, не правка письма);
 //      messageId — панель, где нажали кнопку (правим её); userMessageId — сообщение пользователя (удалить).
 // Чужие чаты отсекает сам Telegram Trigger (Restrict to Chat IDs = TG_CHAT_ID); здесь — вторая проверка.
@@ -47,12 +49,22 @@ if (cb) {
     return panel({ ...pressed, view: 'settings', section: change[1].split('.')[0], change: { name: change[1] } });
   }
   if (data === 'sn') return panel({ ...pressed, view: 'settings', section: 'collect', collectNow: true });
+  const toggle = data.match(/^st:([a-z_]+)$/);
+  if (toggle) {
+    return panel({ ...pressed, view: 'settings', section: 'rules', change: { name: 'filter.rules_off', toggle: toggle[1] } });
+  }
+  const ask = data.match(/^sw:([a-z_.]+)$/);
+  if (ask && SETTING_PROMPTS[ask[1]]) {
+    return panel({ ...pressed, view: 'settings', section: ask[1].split('.')[0], ask: ask[1] });
+  }
+  const unban = data.match(/^bld:(\d+)$/);
+  if (unban) return panel({ ...pressed, view: 'settings', section: 'blacklist', unban: Number(unban[1]) });
 
   const letter = data.match(/^l:(\d+):(redo|sent|unsent)$/);
   if (letter) {
     return [{ json: { action: 'letter', id: Number(letter[1]), op: letter[2], ...pressed } }];
   }
-  const fromPanel = data.match(/^pv:(\d+):(apply|maybe|skip|earlier|edit):([a-z]+):(\d+)$/);
+  const fromPanel = data.match(/^pv:(\d+):(apply|maybe|skip|earlier|ban|edit):([a-z]+):(\d+)$/);
   if (fromPanel) {
     const tab = TABS[fromPanel[3]] ? fromPanel[3] : 'all';
     return [
@@ -67,7 +79,7 @@ if (cb) {
       },
     ];
   }
-  const match = data.match(/^v:(\d+):(apply|maybe|skip|earlier|edit)$/);
+  const match = data.match(/^v:(\d+):(apply|maybe|skip|earlier|ban|edit)$/);
   if (!match) return [];
   return [{ json: { action: 'choice', id: Number(match[1]), choice: match[2], ...pressed, panel: null } }];
 }
@@ -85,6 +97,22 @@ if (text === MENU.stats || name === 'stats') return panel({ ...typed, view: 'sta
 if (text === MENU.settings || name === 'settings') return panel({ ...typed, view: 'settings', section: 'root' });
 if (name === 'start' || name === 'menu') return panel({ ...typed, view: 'start' });
 if (name === 'v' && command[2]) return panel({ ...typed, view: 'open', id: Number(command[2]) });
+// /bl12 — убрать компанию из чёрного списка (панель спросит подтверждение)
+if (name === 'bl' && command[2]) return panel({ ...typed, view: 'settings', section: 'unban', id: Number(command[2]) });
+
+// Ответ на вопрос ⚙️ со списком — новый список (вопрос узнаём по началу его текста)
+const prompt = Object.keys(SETTING_PROMPTS).find((key) =>
+  String(msg.reply_to_message?.text ?? '').startsWith(SETTING_PROMPTS[key]),
+);
+if (prompt && text) {
+  return panel({
+    ...typed,
+    view: 'settings',
+    section: prompt.split('.')[0],
+    input: { name: prompt, text: text.slice(0, 1000) },
+    promptId: msg.reply_to_message.message_id,
+  });
+}
 
 // Остальные команды и сообщения без reply не обрабатываем
 if (msg.reply_to_message && text && !text.startsWith('/')) {

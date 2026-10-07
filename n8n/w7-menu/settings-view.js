@@ -1,7 +1,8 @@
 // W7 · Render — раздел «⚙️ Настройки» панели меню (07.10.2026). Подключается в render.js строкой
 // «// @include n8n/w7-menu/settings-view.js», после помощников времени (thaiMsk, hhmm).
 // Значения — из таблицы settings плюс изменение этого нажатия: «Setting change» выполнилась раньше (ветка выше).
-// Раскладки: settings (корень, 4 раздела) и set_collect (🕐 Сбор). Кнопки «▸» — следующее значение по кругу.
+// Раскладки: settings (корень), set_collect, set_search, set_filter, set_rules, set_blacklist, set_confirm.
+// Кнопки «▸» — следующее значение по кругу, «✏️» — вопрос со списком (ответ — сообщением).
 
 const ranNode = (name) => {
   try {
@@ -18,9 +19,32 @@ const settings = {
   ...(settingChange ? { [settingChange.name]: settingChange.value } : {}),
 };
 const collectSchedule = scheduleFrom(settings);
+// Чёрный список: строки таблицы blacklist, без только что убранной («Delete ban» выполнилась раньше)
+const unbanned = Number(job.unban) || 0;
+const blacklist = ranNode('Blacklist').filter((r) => r.id && r.id !== unbanned);
 
 const everyText = (m) => (m % 60 ? `${m} мин` : `${m / 60} ч`);
 const pad2 = (n) => String(n).padStart(2, '0');
+const periodText = (days) => SEARCH_LABELS.search_period[days] ?? `за ${days} дн.`;
+const responsesText = (n) => (n ? `больше ${n}` : 'не отсекать');
+const rulesOn = () => Object.keys(FILTER_RULES).filter((id) => !settings['filter.rules_off'].includes(id));
+const companies = (n) => {
+  const d = n % 10;
+  const dd = n % 100;
+  if (d === 1 && dd !== 11) return `${n} компания`;
+  return d >= 2 && d <= 4 && (dd < 12 || dd > 14) ? `${n} компании` : `${n} компаний`;
+};
+
+// Что сделало это нажатие: «✅ Записал», ошибка ввода списка
+function changeNotes() {
+  const notes = [];
+  if (settingChange) notes.push('✅ Записал');
+  if (job.input && !settingChange) {
+    const parsed = parseWords(job.input.text);
+    if (parsed.error) notes.push(`⚠️ Не записал: ${esc(parsed.error)}. Нажми ✏️ и пришли список ещё раз`);
+  }
+  return notes;
+}
 
 function settingsRootView(note) {
   const sch = collectSchedule;
@@ -28,18 +52,15 @@ function settingsRootView(note) {
     '⚙️ <b>Настройки</b>',
     '',
     `🕐 <b>Сбор</b>: ${describeSchedule(sch)} · ${collectsPerDay(sch)} в сутки${sch.paused ? ' · ⏸ <b>пауза</b>' : ''}`,
-    '🔎 Поиск · 🧹 Фильтр · 🤖 Нейросеть — в следующем обновлении',
+    `🔎 <b>Поиск</b>: ${periodText(settings['search.period'])} · везде — ${settings['search.anywhere'].length} сл., в названии — ${settings['search.in_name'].length}`,
+    `🧹 <b>Фильтр</b>: правил ${rulesOn().length} из ${Object.keys(FILTER_RULES).length} · отклики — ${responsesText(settings['filter.max_responses'])} · стоп-слов ${settings['filter.stop_words'].length} · ЧС ${blacklist.length}`,
+    '🤖 Нейросеть — в следующем обновлении',
   ];
   if (note) lines.push('', note);
   return {
     layout: 'settings',
     text: lines.join('\n'),
-    b: {
-      collect: { cb: 's:collect' },
-      search: { cb: 's:search' },
-      filter: { cb: 's:filter' },
-      llm: { cb: 's:llm' },
-    },
+    b: { collect: { cb: 's:collect' }, search: { cb: 's:search' }, filter: { cb: 's:filter' }, llm: { cb: 's:llm' } },
   };
 }
 
@@ -56,9 +77,7 @@ function settingsCollectView() {
       : `Сборов в сутки: ${collectsPerDay(sch)} · следующий: ${next ? thaiMsk(next) : '—'}`,
   ];
 
-  // Что сделало это нажатие
-  const notes = [];
-  if (settingChange) notes.push('✅ Записал');
+  const notes = changeNotes();
   const hc = ranNode('HC sync')[0];
   if (hc) {
     const error = hc.error ? String(hc.error.message ?? hc.error) : '';
@@ -85,8 +104,114 @@ function settingsCollectView() {
   };
 }
 
+function settingsSearchView() {
+  const { words, filters } = describeSearch(settings);
+  const lines = [
+    '🔎 <b>Поиск на hh</b>',
+    '',
+    `Период: ${periodText(settings['search.period'])}`,
+    ...esc(words)
+      .split('\n')
+      .map((line) => line.replace(/^([^:]+):/, (m, label) => `${label[0].toUpperCase()}${label.slice(1)}:`)),
+    filters[0].toUpperCase() + filters.slice(1),
+    '',
+    'Слова везде в тексте ищутся в названии, описании и навыках; в названии — только в названии. ✏️ — прислать новый список.',
+  ];
+  const notes = changeNotes();
+  if (notes.length) lines.push('', ...notes);
+  return {
+    layout: 'set_search',
+    text: lines.join('\n'),
+    b: {
+      period: { text: `Период: ${periodText(settings['search.period'])} ▸`, cb: 'sc:search.period' },
+      url: searchUrl(0, settings),
+    },
+  };
+}
+
+function settingsFilterView() {
+  const off = settings['filter.rules_off'];
+  const lines = [
+    '🧹 <b>Фильтр</b> — отсекает до нейросети',
+    '',
+    `Правила: ${Object.entries(FILTER_RULES)
+      .map(([id, label]) => `${off.includes(id) ? '◻️' : '✅'} ${label}`)
+      .join(' · ')}`,
+    `Отклики: ${responsesText(settings['filter.max_responses'])}`,
+    `Стоп-слова в названии: ${esc(settings['filter.stop_words'].join(', '))}`,
+    `Чёрный список: ${companies(blacklist.length)}`,
+  ];
+  const notes = changeNotes();
+  if (notes.length) lines.push('', ...notes);
+  return {
+    layout: 'set_filter',
+    text: lines.join('\n'),
+    b: {
+      responses: {
+        text: `Отклики: ${settings['filter.max_responses'] ? `> ${settings['filter.max_responses']}` : 'все'} ▸`,
+        cb: 'sc:filter.max_responses',
+      },
+      blacklist: { text: `🚫 Чёрный список · ${blacklist.length}` },
+    },
+  };
+}
+
+function settingsRulesView() {
+  const off = settings['filter.rules_off'];
+  const ids = Object.keys(FILTER_RULES);
+  const lines = [
+    '⚙️ <b>Правила фильтра</b>',
+    '',
+    'Нажми правило, чтобы выключить или включить. ◻️ — правило не работает: такие вакансии дойдут до нейросети.',
+  ];
+  const notes = changeNotes();
+  if (notes.length) lines.push('', ...notes);
+  const b = {};
+  ids.forEach((id, i) => {
+    b[`r${i}`] = { text: `${off.includes(id) ? '◻️' : '✅'} ${FILTER_RULES[id]}`, cb: `st:${id}` };
+  });
+  return { layout: 'set_rules', text: lines.join('\n'), b };
+}
+
+function settingsBlacklistView() {
+  const SHOW = 60;
+  const lines = [`🚫 <b>Чёрный список</b> — ${blacklist.length}`, ''];
+  for (const r of blacklist.slice(0, SHOW)) {
+    lines.push(`/bl${r.id} ${esc(r.company)}${r.comment ? ` — ${esc(String(r.comment).slice(0, 60))}` : ''}`);
+  }
+  if (blacklist.length > SHOW) lines.push(`…и ещё ${blacklist.length - SHOW} — в UI n8n`);
+  lines.push('', 'Команда <code>/bl12</code> — убрать компанию. Добавить — кнопкой «🚫 В ЧС» на карточке вакансии.');
+  if (unbanned) lines.push('', '🗑 Убрал из чёрного списка');
+  return { layout: 'set_blacklist', text: lines.join('\n'), b: {} };
+}
+
+function settingsConfirmView(id) {
+  const row = blacklist.find((r) => r.id === Number(id));
+  if (!row) return { ...settingsBlacklistView(), text: `${settingsBlacklistView().text}\n\n⚠️ Такой строки в чёрном списке нет` };
+  return {
+    layout: 'set_confirm',
+    text: `🚫 Убрать «${esc(row.company)}» из чёрного списка?\nВакансии компании снова пойдут в оценку.`,
+    b: { yes: `bld:${row.id}` },
+  };
+}
+
 function settingsView(section) {
   if (section === 'collect') return settingsCollectView();
+  if (section === 'search') return settingsSearchView();
+  if (section === 'filter') return settingsFilterView();
+  if (section === 'rules') return settingsRulesView();
+  if (section === 'blacklist') return settingsBlacklistView();
+  if (section === 'unban') return settingsConfirmView(job.id);
   if (section && section !== 'root') return settingsRootView('🔜 Этот раздел появится в следующем обновлении.');
   return settingsRootView();
+}
+
+// Вопрос со списком (ForceReply): ответ узнаёт W3 «Route» по началу текста (SETTING_PROMPTS)
+function settingsPrompt(name) {
+  return [
+    SETTING_PROMPTS[name],
+    `Сейчас: ${settings[name].join(', ')}`,
+    '',
+    'Пришли новый список через запятую — заменю его целиком. «*» в конце слова — любое окончание.',
+  ].join('\n');
 }
