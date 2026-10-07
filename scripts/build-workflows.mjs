@@ -131,6 +131,15 @@ const replyKeyboard = (rows) => ({
 // Подписи кнопок меню — из n8n/shared/menu.js (по ним W3 «Route» узнаёт нажатие)
 const { MENU } = new Function(`${read('n8n/shared/menu.js')}\nreturn { MENU };`)();
 
+// Кнопки меню под полем ввода. Вопрос «Почему?» (force reply) их прячет, а вернуть их может только новое
+// сообщение бота с этой клавиатурой — поэтому она едет с каждым простым сообщением: приветствие W7,
+// «✍️ Записал причину» (W3), итог после карточек (W2), утренняя сводка (W6)
+const MENU_KEYBOARD = {
+  replyMarkup: 'replyKeyboard',
+  replyKeyboard: replyKeyboard([[MENU.list, MENU.stats]]),
+  replyKeyboardOptions: { resize_keyboard: true },
+};
+
 // Ответ на нажатие кнопки (убирает «часики» на кнопке, показывает всплывающий текст)
 const answerQuery = (wf, name, position, queryId, text, extra = {}) =>
   node(
@@ -720,7 +729,10 @@ const workflows = {
         { executeOnce: true, alwaysOutputData: true },
       ),
       code('W2', 'Summary', 'n8n/w2-score/summary.js', [1980, 150]),
-      telegram('W2', 'Send summary', [2200, 150], { fields: { disable_notification: '={{ $json.silent }}' } }),
+      telegram('W2', 'Send summary', [2200, 150], {
+        fields: { disable_notification: '={{ $json.silent }}' },
+        markup: MENU_KEYBOARD,
+      }),
     ],
     [
       ['Called by W1', 'Pending'],
@@ -900,9 +912,11 @@ const workflows = {
         columns: setColumns({ my_reason: '={{ $json.text }}' }),
         options: {},
       }),
+      // Ответ на «Почему?» (force reply спрятал кнопки меню) — подтверждение возвращает их
       telegram('W3', 'Confirm', [1760, 600], {
         text: '✍️ Записал причину',
         fields: { reply_to_message_id: "={{ $('Route').first().json.messageId }}", disable_notification: true },
+        markup: MENU_KEYBOARD,
       }),
       // Решение принято в карточке на панели меню: после правки исходной карточки — перерисовать панель (W7).
       // Ветка ниже «Decided?»: n8n (execution order v1) выполняет её последней
@@ -1200,7 +1214,10 @@ const workflows = {
         { onError: 'continueRegularOutput' },
       ),
       code('W6', 'Summary', 'n8n/w6-summary/summary.js', [1100, 250]),
-      telegram('W6', 'Send summary', [1320, 250], { fields: { disable_notification: '={{ $json.silent }}' } }),
+      telegram('W6', 'Send summary', [1320, 250], {
+        fields: { disable_notification: '={{ $json.silent }}' },
+        markup: MENU_KEYBOARD,
+      }),
     ],
     [
       ['Schedule', 'All rows'],
@@ -1303,11 +1320,7 @@ const workflows = {
       ]),
       telegram('W7', 'New: start', [2200, -900 + PANEL_LAYOUTS.length * 300], {
         fields: { disable_notification: true },
-        markup: {
-          replyMarkup: 'replyKeyboard',
-          replyKeyboard: replyKeyboard([[MENU.list, MENU.stats]]),
-          replyKeyboardOptions: { resize_keyboard: true },
-        },
+        markup: MENU_KEYBOARD,
       }),
       code('W7', 'Remember', 'n8n/w7-menu/remember.js', [2420, -300]),
       // Ветка ниже «Layout»: старая панель и нажатие пользователя удаляются после отправки новой
