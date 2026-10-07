@@ -71,16 +71,8 @@ const workflow = (id, name, nodes, links, settings = {}) => ({
 
 // ---------- Общие куски ----------
 
-const SEARCH_QUERY = [
-  // vue и nuxt — с 07.10.2026: Vue-вакансии без слов frontend/react в названии иначе не находятся
-  ['text', 'NAME:(frontend OR front-end OR фронтенд OR react OR next.js OR nextjs OR typescript OR vue OR vue.js OR vuejs OR nuxt OR nuxt.js OR nuxtjs)'],
-  ['professional_role', '96'],
-  ['work_format', 'REMOTE'],
-  ['education', 'not_required_or_not_specified'],
-  ['order_by', 'publication_time'],
-  ['items_on_page', '100'],
-  ['enable_snippets', 'true'],
-];
+// Поисковый запрос hh — из n8n/shared/search.js (его же показывает сообщение о сборе W1 → W2)
+const { SEARCH_URL, SEARCH_QUERY } = new Function(`${read('n8n/shared/search.js')}\nreturn { SEARCH_URL, SEARCH_QUERY };`)();
 
 const BROWSER_HEADERS = [
   ['User-Agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'],
@@ -134,7 +126,7 @@ const { MENU } = new Function(`${read('n8n/shared/menu.js')}\nreturn { MENU };`)
 
 // Кнопки меню под полем ввода. Вопрос «Почему?» (force reply) их прячет, а вернуть их может только новое
 // сообщение бота с этой клавиатурой — поэтому она едет с каждым простым сообщением: приветствие W7,
-// «✍️ Записал причину» (W3), итог после карточек (W2), утренняя сводка (W6)
+// «✍️ Записал причину» (W3), сообщение о сборе и итог после карточек (W2), утренняя сводка (W6)
 const MENU_KEYBOARD = {
   replyMarkup: 'replyKeyboard',
   replyKeyboard: replyKeyboard([[MENU.list, MENU.stats]]),
@@ -432,7 +424,7 @@ const workflows = {
         'httpRequest',
         4.5,
         [220, 0],
-        hhRequest({ url: 'https://hh.ru/search/vacancy', query: [...SEARCH_QUERY, ['page', '0']] }),
+        hhRequest({ url: SEARCH_URL, query: [...SEARCH_QUERY, ['page', '0']] }),
       ),
       code('W0', 'Check search', 'n8n/w0-check/check-search.js', [440, 0]),
       node(
@@ -492,7 +484,7 @@ const workflows = {
         4.5,
         [660, 0],
         hhRequest({
-          url: 'https://hh.ru/search/vacancy',
+          url: SEARCH_URL,
           query: [...SEARCH_QUERY, ['page', '={{ $json.page }}']],
           batching: true,
         }),
@@ -681,7 +673,6 @@ const workflows = {
         { credentials: { googlePalmApi: { id: IDS.geminiCredential, name: 'Gemini' } }, onError: 'continueRegularOutput' },
       ),
       code('W2', 'Parse verdict', 'n8n/w2-score/parse-verdict.js', [1540, 0]),
-      // Ветка карточек выше ветки сводки: n8n (execution order v1) выполняет её первой
       code('W2', 'Format card', 'n8n/w2-score/format-card.js', [1760, -100]),
       telegram('W2', 'Send card', [1980, -100], {
         markup: {
@@ -709,35 +700,31 @@ const workflows = {
         columns: AUTO_MAP,
         options: {},
       }),
-      node(
-        'W2',
-        'Recent rejects',
-        'dataTable',
-        1.1,
-        [1760, 150],
-        {
-          resource: 'row',
-          operation: 'get',
-          dataTableId: VACANCIES,
-          matchType: 'allConditions',
-          filters: { conditions: [{ keyName: 'status', keyValue: 'rejected' }] },
-          returnAll: false,
-          limit: 100,
-          orderBy: true,
-          orderByColumn: 'updatedAt',
-          orderByDirection: 'DESC',
-        },
-        { executeOnce: true, alwaysOutputData: true },
-      ),
-      code('W2', 'Summary', 'n8n/w2-score/summary.js', [1980, 150]),
-      telegram('W2', 'Send summary', [2200, 150], {
+      // Сообщения после запуска: о сборе («🔎 Сбор» из W1), итог оценки, тревоги. Своя ветка от триггера ниже ветки
+      // карточек: n8n (execution order v1) выполняет её последней, даже если «Pending» пуст и карточек не было
+      code('W2', 'Summary', 'n8n/w2-score/summary.js', [1760, 300]),
+      telegram('W2', 'Send summary', [1980, 300], {
         fields: { disable_notification: '={{ $json.silent }}' },
         markup: MENU_KEYBOARD,
       }),
+      // Сообщение о сборе одно: прошлое удаляется (решение пользователя 07.10.2026)
+      code('W2', 'Live report', 'n8n/w2-score/live-report.js', [2200, 300]),
+      node(
+        'W2',
+        'Delete report',
+        'telegram',
+        1.2,
+        [2420, 300],
+        { resource: 'message', operation: 'deleteMessage', chatId: '={{ $env.TG_CHAT_ID }}', messageId: '={{ $json.messageId }}' },
+        // Сообщение старше 48 ч Telegram не удалит — это не ошибка
+        { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
+      ),
     ],
     [
       ['Called by W1', 'Pending'],
       ['Manual', 'Pending'],
+      ['Called by W1', 'Summary'],
+      ['Manual', 'Summary'],
       ['Pending', 'Resume'],
       ['Resume', 'Resume text'],
       ['Resume text', 'Build prompt'],
@@ -747,12 +734,12 @@ const workflows = {
       ['Claude', 'Parse verdict'],
       ['Gemini', 'Parse verdict'],
       ['Parse verdict', 'Format card'],
-      ['Parse verdict', 'Recent rejects'],
       ['Format card', 'Send card'],
       ['Send card', 'Card sent'],
       ['Card sent', 'Save cards'],
-      ['Recent rejects', 'Summary'],
       ['Summary', 'Send summary'],
+      ['Send summary', 'Live report'],
+      ['Live report', 'Delete report'],
     ],
     { timezone: 'Europe/Moscow', errorWorkflow: IDS.errors },
   ),

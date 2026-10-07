@@ -10,6 +10,8 @@ const responses = $input.all().map((i) => i.json);
 
 // @include n8n/shared/hh.js
 
+// @include n8n/shared/ai.js
+
 // Описание вакансии: HTML → текст с переносами строк
 const htmlToText = (html) =>
   decodeEntities(
@@ -51,8 +53,13 @@ return rows.map((row, i) => {
   if (v.status?.archived || v.closedForApplicants) reasons.push('в архиве');
   const rf = RF_ONLY.map((re) => description.match(re)).find(Boolean);
   if (rf) reasons.push(`только из РФ: «${rf[0].trim()}»`);
-  // Vue (и Nuxt) — тоже наш стек с 07.10.2026: только Vue нейросеть оценит как maybe
-  if (!/react|next\.?js|vue|nuxt/i.test(`${row.title} ${skills} ${description}`)) reasons.push('нет React и Vue');
+  // Vue (и Nuxt) — тоже наш стек с 07.10.2026: только Vue нейросеть оценит как maybe.
+  // AI-вакансии (разработка на LLM) без React и Vue берём, только если в них JS/TS (решения пользователя 07.10.2026)
+  const stack = `${row.title} ${skills} ${description}`;
+  if (!/react|next\.?js|vue|nuxt/i.test(stack)) {
+    if (!isAi(`${row.title} ${skills || row.key_skills}`)) reasons.push('нет React и Vue');
+    else if (!JS_STACK.test(stack)) reasons.push('AI не на JS/TS');
+  }
 
   return {
     json: {
