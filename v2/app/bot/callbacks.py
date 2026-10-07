@@ -27,3 +27,11 @@ class Admin(CallbackData, prefix="adm"):
 
     action: str
     arg: str = ""
+
+
+class Prof(CallbackData, prefix="pf"):
+    """Резюме (профиль): action — экран или действие, pid — id профиля (0 — список), arg — параметр (id правила)."""
+
+    action: str
+    pid: int = 0
+    arg: str = ""

@@ -25,6 +25,9 @@ curl localhost:8100/health
 - `INSERT … RETURNING` через ORM отдаёт объект из identity map со старыми полями → `.execution_options(populate_existing=True)`.
 - `tests/test_migrations.py` падает, если модели разошлись с миграциями.
 - Не делать `session.rollback()`, если UPDATE ничего не изменил: rollback «протухает» все объекты сессии, следующий доступ к их полям → `MissingGreenlet`.
+- Gemini: строгий JSON через `response_json_schema=Model.model_json_schema()` (схемы без рекурсии — тест), Claude — через обязательный tool `answer`. Всё — `app/services/llm.py`, каждый вызов → `llm_usage`.
+- selectolax ≥ 1.0: только `selectolax.lexbor` (старый `selectolax.parser` бросает ImportError).
+- Шаблон правила: граница слова ставится только со стороны буквы — иначе `.net` не находится в «ASP.NET».
 - `docker logs` фильтрует rtk — смотреть через `rtk proxy docker logs job-hunter-v2-bot`.
 - Меню команд админа (`/admin`) ставится по chat id: пока админ не написал боту, Telegram отвечает «chat not found» → `app/bot/commands.py` это глотает и повторяет при `/start` админа.
 
@@ -40,5 +43,6 @@ curl localhost:8100/health
 |---|---|
 | v2.0 Каркас | ✅ 08.10.2026: compose (postgres, api, bot, n8n v2), вся схема БД (17 таблиц, `app/db/models.py`), Alembic, `/health`, `/internal/*` с токеном, `/start` (админ из `.env`, остальным «по приглашениям»), тесты 6/6, деплой. v1 не перезапускался. Бот v2 — `@dead_serfs_bot` |
 | v2.1 Доступ | ✅ 08.10.2026: инвайты `t.me/<бот>?start=i_<код>` (число входов, срок, отзыв; активация — один UPDATE), «🙋 Запросить доступ» → заявка всем админам с ✅/❌, онбординг: часовой пояс кнопкой или текстом (`app/domain/timezones.py`), `/tz`; `/admin`: сводка, приглашения, заявки, пользователи (блок/разблок), рассылка (`copy_message` всем активным). Тесты 34/34. FSM — в памяти (сброс при перезапуске бота). **Живая проверка пользователем:** второй аккаунт по инвайту и через заявку |
-| v2.2 Резюме | ← следующий |
-| v2.3 Сбор … v2.7 Переезд | см. `docs/v2/architecture.md` → «Этапы» |
+| v2.2 Резюме | ✅ 08.10.2026 (без предпросмотра правки на вакансиях — пул пуст до v2.3): резюме файлом (PDF/DOCX/TXT, в любой момент), ссылкой hh (разовый запрос из ядра, `fetch_log` kind=resume; не видно без входа → просим PDF) или текстом → контакты вырезаются (`app/domain/resume_text.py`) → Gemini: разбор резюме + черновик `ProfileConfig` (`app/domain/llm/draft.py`, роли — только из `app/domain/hh/roles.py`) → профиль-черновик v1. Карточка резюме: правила вкл/выкл, «✏️ Изменить текстом» (нейросеть возвращает новые настройки + список изменений → подтверждение → новая версия), теневой режим, ▶️/⏸, удаление. DSL правил — `app/domain/profile_config.py` + `app/domain/filter/engine.py`. Тесты 49/49. Проверено вживую на резюме Frontend из v1 (Gemini, ~10 с) |
+| v2.3 Сбор | ← следующий |
+| v2.4 Оценка … v2.7 Переезд | см. `docs/v2/architecture.md` → «Этапы» |

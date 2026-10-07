@@ -9,7 +9,7 @@ from aiogram.enums import ParseMode
 
 from app.bot.commands import set_commands
 from app.bot.middlewares import DbUserMiddleware
-from app.bot.routers import admin, errors, fallback, onboarding, start
+from app.bot.routers import admin, errors, fallback, onboarding, profiles, start
 from app.config import get_settings
 
 log = logging.getLogger("bot")
@@ -27,7 +27,8 @@ async def main() -> None:
     # Сессия базы и пользователь — во все обработчики; FSM пока в памяти (сбрасывается при перезапуске бота)
     dp.update.outer_middleware(DbUserMiddleware())
     # Порядок важен: fallback — последним
-    dp.include_routers(errors.router, start.router, onboarding.router, admin.router, fallback.router)
+    # admin — раньше profiles: файл для рассылки не должен стать резюме
+    dp.include_routers(errors.router, start.router, onboarding.router, admin.router, profiles.router, fallback.router)
     await set_commands(bot)
     await bot.delete_webhook(drop_pending_updates=False)
     await dp.start_polling(bot)

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.callbacks import Tz
 from app.bot.filters import IsMember
+from app.bot.routers.profiles import ask_resume
 from app.bot.texts import t
 from app.bot.views import tz_keyboard
 from app.db.models import User
@@ -27,12 +28,13 @@ class TzForm(StatesGroup):
     text = State()
 
 
-async def _save(message: Message, session: AsyncSession, user: User, tz: str) -> None:
+async def _save(message: Message, session: AsyncSession, user: User, tz: str, state: FSMContext) -> None:
     first_time = user.onboarded_at is None
     await users.set_tz(session, user, tz, datetime.now(UTC))
     await message.answer(t("tz.saved", tz=timezones.describe(tz)))
     if first_time:
         await message.answer(t("onboarding.done"))
+        await ask_resume(message, state)
 
 
 @router.message(Command("tz"))
@@ -51,7 +53,7 @@ async def tz_button(query: CallbackQuery, callback_data: Tz, session: AsyncSessi
     if not 0 <= callback_data.i < len(timezones.POPULAR):
         return
     await query.message.edit_reply_markup(reply_markup=None)
-    await _save(query.message, session, user, timezones.POPULAR[callback_data.i][1])
+    await _save(query.message, session, user, timezones.POPULAR[callback_data.i][1], state)
 
 
 @router.message(StateFilter(TzForm.text), F.text)
@@ -61,4 +63,4 @@ async def tz_text(message: Message, session: AsyncSession, user: User, state: FS
         await message.answer(t("tz.bad", text=html.escape(message.text[:40])))
         return
     await state.clear()
-    await _save(message, session, user, tz)
+    await _save(message, session, user, tz, state)
