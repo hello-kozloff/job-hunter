@@ -751,6 +751,140 @@
       }
     },
     {
+      "id": "1075706c-9b05-13aa-bafc-2fe459503dc4",
+      "name": "Open alerts",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2420,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "alerts"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "workflow",
+              "keyValue": "W1 Collector"
+            },
+            {
+              "keyName": "is_open",
+              "condition": "isTrue"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "23b373f3-1ecc-d56c-e344-8eb644690e95",
+      "name": "Recovered",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Recovered — открытые тревоги workflow → «✅ снова работает» (07.10.2026). Код одной ноды в W1 и W2:\n// успешный запуск закрывает тревоги своего workflow («Close alerts»).\n// Нода: Code, режим «Run Once for All Items». Вход: «Open alerts» — открытые тревоги этого workflow\n// (Always Output Data: пустой item, если их нет). Выход: одно сообщение { text } или [] — закрывать нечего.\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst rows = $input\n  .all()\n  .map((i) => i.json)\n  .filter((r) => r.id);\nif (!rows.length) return [];\n\nconst thai = (ms) => new Date(ms + 7 * 3600 * 1000).toISOString().slice(11, 16);\nconst hits = rows.reduce((n, r) => n + (Number(r.hits) || 1), 0);\nconst first = Math.min(...rows.map((r) => Date.parse(r.first_at) || Date.now()));\nconst last = Math.max(...rows.map((r) => Date.parse(r.last_at) || Date.now()));\nconst span = thai(first) === thai(last) ? thai(first) : `${thai(first)}–${thai(last)}`;\nreturn [{ json: { text: `✅ <b>${esc(rows[0].workflow)}</b> снова работает: ошибок было ${hits} (${span} по Таиланду)` } }];\n"
+      }
+    },
+    {
+      "id": "0d17355d-2ac3-cd90-3034-0c58e999c785",
+      "name": "Send recovered",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2860,
+        0
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $env.TG_CHAT_ID }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true,
+          "disable_notification": true
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterTgBot01",
+          "name": "Telegram bot"
+        }
+      }
+    },
+    {
+      "id": "ce1a4ff6-ec7b-f331-2a59-a5f322600be9",
+      "name": "Close alerts",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3080,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "alerts"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "workflow",
+              "keyValue": "W1 Collector"
+            },
+            {
+              "keyName": "is_open",
+              "condition": "isTrue"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "is_open": "={{ false }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "is_open",
+              "displayName": "is_open",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
       "id": "fa6a54e3-3b91-d136-6412-7b2c27ce7e35",
       "name": "Score",
       "type": "n8n-nodes-base.executeWorkflow",
@@ -1131,6 +1265,50 @@
           },
           {
             "node": "Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finish run": {
+      "main": [
+        [
+          {
+            "node": "Open alerts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Open alerts": {
+      "main": [
+        [
+          {
+            "node": "Recovered",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recovered": {
+      "main": [
+        [
+          {
+            "node": "Send recovered",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send recovered": {
+      "main": [
+        [
+          {
+            "node": "Close alerts",
             "type": "main",
             "index": 0
           }

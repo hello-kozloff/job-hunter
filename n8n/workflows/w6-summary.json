@@ -630,6 +630,38 @@
       }
     },
     {
+      "id": "462de22f-7055-5c08-896e-1642e2bda4fb",
+      "name": "Delete old alerts",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        1200
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "deleteRows",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "alerts"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "last_at",
+              "condition": "lt",
+              "keyValue": "={{ new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "executeOnce": true,
+      "onError": "continueRegularOutput"
+    },
+    {
       "id": "0898adeb-ec02-4e26-033d-8dff01ea8de2",
       "name": "Unstick",
       "type": "n8n-nodes-base.code",
@@ -795,6 +827,11 @@
           },
           {
             "node": "Unstick",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Delete old alerts",
             "type": "main",
             "index": 0
           }
