@@ -4,6 +4,8 @@
 // Выход: те же вакансии со status = new | rejected | seen и причиной в reasons.
 // Правила — решения пользователя от 07.10.2026 (CLAUDE.md §7).
 
+// @include n8n/shared/ai.js
+
 const firstRun = Boolean($('Plan').first().json.firstRun);
 const rows = $('Is new').all().map((i) => i.json);
 
@@ -40,8 +42,26 @@ const RULES = [
   [
     'стоп-слово',
     (r) =>
-      /php|wordpress|bitrix|\bqa\b|\b1c\b|teacher|tutor|instructor|o.?qituvchi/i.test(r.title) ||
+      // Laravel, Symfony, Yii — тот же PHP (07.10.2026: «Laravel + Nuxt» пользователь отклонил)
+      /php|laravel|symfony|\byii\b|wordpress|bitrix|\bqa\b|\b1c\b|teacher|tutor|instructor|o.?qituvchi/i.test(r.title) ||
       ru('(1с|битрикс[а-яё]*|преподавател[а-яё]*|тестировщик[а-яё]*|наставник[а-яё]*)').test(r.title),
+  ],
+  // Поиск frontend по всему тексту приносит чужой бэкенд (07.10.2026): режем по названию, в том числе fullstack
+  // с таким бэкендом (пользователь отклонил «.Net/React»). AI-вакансии не трогаем — их берём на любом стеке
+  [
+    'чужой стек',
+    (r) =>
+      !isAi(r.title) &&
+      (/\bruby\b|\brails\b|c#|\.net\b|\bdotnet\b|\bjava\b(?!\s*script)|\bgo(lang)?\b|\bdwh\b|data[\s-]*engineer/i.test(r.title) ||
+        ru('(дата[\\s-]*инженер[а-яё]*)').test(r.title)),
+  ],
+  [
+    'бэкенд',
+    (r) =>
+      !isAi(r.title) &&
+      (/back[\s-]?end/i.test(r.title) || ru('(б[эе]к[\\s-]?[эе]нд[а-яё]*)').test(r.title)) &&
+      !/full[\s-]?stack|front[\s-]?end/i.test(r.title) &&
+      !ru('(фул+[\\s-]?ст[еэ]к[а-яё]*|фронт[\\s-]?[еэ]нд[а-яё]*)').test(r.title),
   ],
   ['> 3000 откликов', (r) => (r.responses ?? 0) > 3000],
   ['чёрный список', inBlacklist],

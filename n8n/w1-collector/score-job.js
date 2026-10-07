@@ -54,14 +54,20 @@ if (parsed.length) {
 
 const onPages = requests.reduce((n, r) => n + (r.count ?? 0), 0);
 const total = requests[0]?.total;
+// Поиск за сутки (search_period=1): обычно всё найденное умещается на одной странице
+const period = SEARCH_LABELS.search_period?.[SEARCH_QUERY.find(([key]) => key === 'search_period')?.[1]];
 let result = 'все уже в базе';
 if (search.firstRun) result = `первый запуск: ${fresh.length} записано без обработки (бэкфилл)`;
 else if (fresh.length && !rejected.length) result = `новых ${fresh.length}, все на оценку`;
 else if (fresh.length && !scoring) result = `новых ${fresh.length}, все отсеяны фильтром`;
 else if (fresh.length) result = `новых ${fresh.length}: на оценку ${scoring}, отсеяно ${rejected.length}`;
-const countLine =
-  `${total != null ? `hh нашёл ${total}, ` : ''}на ${requests.length > 1 ? 'страницах' : 'странице'} ${onPages}, ` +
-  `без дублей ${search.vacancies?.length ?? 0} — ${result}`;
+const countLine = [
+  total != null ? `hh нашёл${period ? ` ${period}` : ''} ${total}` : '',
+  total == null || onPages < total ? `на ${requests.length > 1 ? 'страницах' : 'странице'} ${onPages}` : '',
+  `без дублей ${search.vacancies?.length ?? 0} — ${result}`,
+]
+  .filter(Boolean)
+  .join(', ');
 
 // Отсеянные: название — ссылка на hh, причины. «только из РФ: «цитата»» показываем с цитатой — видно ложные срабатывания
 const SHOW = 5;
