@@ -8,7 +8,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from app.bot.callbacks import Prof
 from app.bot.texts import t
 from app.db.models import Profile
-from app.domain.hh.roles import IT_ROLES, WORK_FORMATS
+from app.domain.hh.roles import ROLES, WORK_FORMATS
 from app.services.profiles import Loaded
 
 # Кнопки под полем ввода
@@ -39,7 +39,7 @@ def card_text(loaded: Loaded) -> str:
         headline=html.escape(loaded.headline),
         period=t("profile.days", n=c.search.period),
         formats=", ".join(WORK_FORMATS.get(f, f) for f in c.search.work_format),
-        roles=_list([IT_ROLES.get(r, str(r)) for r in c.search.roles]),
+        roles=_list([ROLES.get(r, str(r)) for r in c.search.roles]),
         anywhere=_list(c.search.anywhere),
         in_name=_list(c.search.in_name),
         max_responses=c.filter.max_responses or "∞",
