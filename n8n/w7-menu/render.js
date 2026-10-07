@@ -1,7 +1,7 @@
 // W7 · Render — панель меню бота: список вакансий, карточка, статистика или приветствие с кнопками меню.
 // Нода: Code, режим «Run Once for All Items».
 // Вход: «Job» — что показать (view = list | open | stats | start); «Rows» — вся таблица vacancies;
-//       $input — «Executions»: последние запуски W1 из публичного API n8n (для статистики).
+//       $input — «Runs»: последние записи журнала сборов runs (для статистики).
 // Выход: { route, view, layout, edit, chatId, messageId, text, b, deleteIds, tab, page }
 //   route — выход «Layout» (Switch): раскладка × отправить новое сообщение (чётный) / править панель (нечётный),
 //           10 — приветствие с кнопками под полем ввода;
@@ -20,7 +20,11 @@ const rows = $('Rows')
   .all()
   .map((i) => i.json)
   .filter((r) => r.id);
-const executions = $input.first().json;
+const runs = $input
+  .all()
+  .map((i) => i.json)
+  .filter((r) => r.id)
+  .sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at));
 const state = $getWorkflowStaticData('global');
 const panel = state.panel ?? {};
 
@@ -162,38 +166,38 @@ function openView(id) {
 // ---------- Статистика ----------
 
 function statsView() {
-  const runs = (executions.data ?? [])
-    .filter((e) => e.workflowId === 'jobHunterW1Colle')
-    .sort((a, b) => at(b.startedAt) - at(a.startedAt));
+  // Журнал сборов runs (W1 «Start run» / «Finish run»), свежие сверху
   const last = runs[0];
   const next = nextCollect(now);
 
-  // За сутки — как в утренней сводке W6: окно до «сейчас − 10 мин», только запуски по расписанию
+  // За сутки — как в утренней сводке W6: окно до «сейчас − 10 мин», только сборы по расписанию
   const windowEnd = now - 10 * 60 * 1000;
   const windowStart = windowEnd - DAY;
   const expected = countCollectSlots(windowStart, windowEnd);
   const collected = count(
     runs,
-    (e) => e.status === 'success' && e.mode === 'trigger' && at(e.startedAt) > windowStart && at(e.startedAt) <= windowEnd,
+    (r) =>
+      ['schedule', 'catchup'].includes(r.kind) &&
+      r.status === 'ok' &&
+      at(r.started_at) > windowStart &&
+      at(r.started_at) <= windowEnd,
   );
 
-  let lastLine = '• последний: нет данных — API n8n не ответил';
+  let lastLine = '• последний: сборов ещё не было';
   if (last) {
-    const started = at(last.startedAt);
-    const stopped = at(last.stoppedAt) || now;
-    const fresh = count(
-      rows,
-      (r) => r.status !== 'seen' && at(r.createdAt) >= started - 5000 && at(r.createdAt) <= stopped + 60000,
-    );
+    const started = at(last.started_at);
+    // running дольше 10 мин — сбор упал, не дойдя до «Finish run» (ошибка ушла в W4)
+    const stale = last.status === 'running' && now - started > 10 * 60 * 1000;
+    const error = String(last.error ?? '');
     const result =
-      last.status === 'success'
-        ? `✅ новых ${fresh}`
-        : ['error', 'crashed'].includes(last.status)
-          ? '⚠️ ошибка'
-          : '⏳ идёт';
+      last.status === 'ok'
+        ? `✅ новых ${last.fresh ?? 0}${last.cards ? `, карточек ${last.cards}` : ''}`
+        : last.status === 'error'
+          ? `⚠️ ошибка${error ? `: ${esc(error.length > 80 ? `${error.slice(0, 79)}…` : error)}` : ''}`
+          : stale
+            ? '⚠️ не завершился'
+            : '⏳ идёт';
     lastLine = `• последний: ${thaiMsk(started)}, ${span(now - started)} назад — ${result}`;
-  } else if (executions.data) {
-    lastLine = '• последний: запусков ещё не было';
   }
 
   const found = rows.filter((r) => r.status !== 'seen');
@@ -216,7 +220,7 @@ function statsView() {
     '🔎 <b>Сбор</b> · днём раз в 30 мин, ночью раз в 2 ч',
     lastLine,
     `• следующий: ${thaiMsk(next)}, через ${span(next - now)}`,
-    executions.data ? `• за сутки: ${collected} из ${expected} по расписанию` : '',
+    `• за сутки: ${collected} из ${expected} по расписанию`,
     '',
     `📥 <b>Вакансии</b>: найдено ${found.length}, за сутки +${count(found, (r) => at(r.createdAt) >= now - DAY)}`,
     `• 🚫 отсеяно фильтром: ${status('rejected')} · ⚙️ ждут нейросети: ${status('new') + status('detailed')}`,

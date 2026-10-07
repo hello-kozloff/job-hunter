@@ -105,15 +105,17 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 ```
 [W0 Check hh]  ручная проверка «жив ли hh» (этап 0)
 [W1 Collector] Schedule, МСК: днём 0,30 7-17 (каждые 30 мин), ночью 0 0,2,4,6,18,20,22 (каждые 2 ч) — 29 в сутки
-                 → поиск hh → разбор InitialState → склейка дублей
+                 → Busy + Start: журнал runs (идёт другой сбор — запись running моложе 10 мин — этот пропускаем)
+                 → Start run (запись running) → поиск hh → разбор InitialState → склейка дублей
                  → только новые (нет ни external_id, ни dup_key) → Blacklist + Filter search (правила по выдаче)
                  → Insert (new | rejected) → для new: страница вакансии → Parse vacancy (правила по описанию)
                  → Update (detailed | rejected) → Score job (блок «🔎 Сбор»: запросы к hh, что искали, новые и отсеянные
-                 с причинами, следующий сбор) → W2 (Execute Workflow, без ожидания)
+                 с причинами, следующий сбор) → Finish run (итог в runs) → W2 (Execute Workflow, без ожидания);
+                 поломка → Fail run (status error) → Stop. Успешные запуски W1 не хранятся (итог — в runs)
 [W2 Score]     вызов из W1 после каждого сбора | Manual → detailed → резюме + промпт → Gemini | Claude → apply/maybe/skip + причина
                  → карточка в Telegram с кнопками ✅/🤔/❌ → status = waiting → сообщение о сборе + тревоги (429 и т. п.):
                  были карточки — «🔎 Сбор» сверху итога «📊 Оценено N»; нет — «🔎 Сбор» одним живым сообщением без звука
-                 (прошлое удаляется, static data W2 `liveId`; решение пользователя 07.10.2026)
+                 (прошлое удаляется, static data W2 `liveId`; решение пользователя 07.10.2026); число карточек → runs
 [W3 Telegram]  Telegram Trigger (вебхук через ngrok) → кнопка: my_decision, status, перерисовать карточку,
                  при расхождении с нейросетью «Почему?» → ответ (reply) → my_reason;
                  меню бота (кнопки под полем ввода, /v<id>, кнопки панели) → W7
@@ -122,8 +124,9 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
                  → прежнее письмо (и ответ с пожеланием) удаляется; после «📨 Отправил» — [↩️ Отменить] [📋 К вакансиям]
 [W4 Errors]    Error Trigger → Telegram (строится на этапе 1)
 [W6 Summary]   06:00 МСК (10:00 Таиланд): «⌛ устарела» (3 дня без решения), хвосты → проверка на hh «🔒 закрыта»,
-                 сводка: воронка, хвосты, теневой режим, сбои (публичный API n8n, туннель); без звука, если сбоев нет
-[W7 Bot menu]  вызов из W3 | Manual (приветствие с кнопками) → вся таблица + запуски W1 → панель: список по вкладкам
+                 сводка: воронка, хвосты, теневой режим, сбои (сборы — по runs, ошибки — публичный API n8n, туннель);
+                 без звука, если сбоев нет; чистка: описания отработанных вакансий старше 30 дней, runs старше 90 дней
+[W7 Bot menu]  вызов из W3 | Manual (приветствие с кнопками) → вся таблица + журнал runs → панель: список по вкладкам
                  (8 на странице, /v<id> — карточка с решением), статистика; одна живая панель (docs/bot-menu.md)
 [Страж]        healthchecks.io (OnCalendar = расписание W1, grace 50 мин): W1 шлёт сигнал после поиска; нет сигнала
                  (днём 2 пропуска подряд, ночью 1) → их бот пишет в Telegram
@@ -143,7 +146,12 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - этап 3: `decision` (apply|maybe|skip|error), `llm_reason`, `llm_model`, `my_decision` (кнопка: apply|maybe|skip|earlier), `my_reason` (ответ на «Почему?»), `tg_message_id` (карточка), `tg_ask_id` (вопрос «Почему?»);
 - этап 4: `letter`, `tg_letter_id` (сообщение с письмом — на него отвечают с правкой), `letter_notes` (пожелания к письмам через « | »), `applied_at`;
 - этап 5: `card_at` (когда W2 отправил карточку — от него считаются 3 дня);
+- 07.10.2026: `letter_lock` (защита от двойного ✅), `prompt_v` (версия промпта оценки);
 - таблица `blacklist`: `company, comment`;
+- таблица `runs` — журнал сборов W1: `started_at, finished_at, kind` (schedule | catchup | bot | manual), `status` (running | ok | error), `found, uniq, fresh, rejected, scoring, pages, cards, error`;
+- таблица `settings` — настройки из бота: `name, value_json` (только изменения; значения по умолчанию — в коде);
+- таблица `alerts` — тревоги W4: `alert_key, workflow, message, first_at, last_at, hits, is_open, tg_message_id`;
+- имена колонок обходят служебные слова SQL (key, value, trigger, count, unique, open);
 - `id, createdAt, updatedAt` — встроенные.
 
 **Telegram:**
@@ -185,6 +193,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - execution order v1: ветки одной ноды выполняются по очереди сверху вниз (каждая целиком) — так W2 шлёт сводку после карточек, а W1 вызывает W2 после ветки вакансий.
 - Telegram-нода: число inline-кнопок задаётся при сборке (fixedCollection), выражениями — только подписи и callback_data; неизвестные ключи collection (`is_persistent`, `reply_markup` в Additional Fields) n8n отбрасывает при выполнении (`getNodeParameters`). Telegram-credential нельзя использовать в HTTP Request (токен — в пути URL) → меню W7 на фиксированных раскладках, вакансия открывается командой `/v<id>` в тексте;
 - Telegram: сообщение с ForceReply («Почему?») прячет reply keyboard меню, и сама она не возвращается — нужна новая отправка `ReplyKeyboardMarkup` → в `build-workflows.mjs` `MENU_KEYBOARD` у простых сообщений (W3 «Confirm», W2 и W6 «Send summary», W7 приветствие); inline-кнопки сообщения её не несут (одна разметка на сообщение);
+- Data Table Update возвращает только обновлённые строки: ни одна не подошла под условие — выход пустой. На этом строятся атомарные «захваты» (UPDATE с условием вместо «прочитать → проверить → записать»); Delete — операция `deleteRows`; условия фильтра: eq, neq, like, ilike, gt, gte, lt, lte, isEmpty, isNotEmpty, isTrue, isFalse;
 - `$getWorkflowStaticData` работает в Code-ноде (task runner возвращает изменения) и сохраняется у запусков не из редактора, в том числе integrated (дочерний workflow); Data Table Get не умеет skip — для страниц брать всю таблицу или публичный API `/api/v1/data-tables/{id}/rows` (limit + cursor);
 
 **ngrok (бесплатный тариф, проверено 07.10.2026):** действие `restrict-ips` платное (`ERR_NGROK_2263`, туннель не стартует) → то же через выражение `inCidrRanges(conn.client_ip, [...])` + `custom-response`; домен вида `*.ngrok-free.dev`; `--url` вместо устаревшего `--domain`; токен — `NGROK_AUTHTOKEN` в environment контейнера. Проверка снаружи: любой адрес не с IP Telegram → 403.
@@ -246,7 +255,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
    - `docs/resume.md` — в `.gitignore`.
    - Фикстуры hh тоже не в git: в JSON есть имена HR-менеджеров.
 10. **Другие сайты** → свой сборщик на каждый, выход в единую схему (п. 6).
-11. **Размер страниц** → страница поиска весит ~1,7 МБ, поэтому история запусков хранится 7 дней (`EXECUTIONS_DATA_MAX_AGE=168`). При 29 сборах в сутки база n8n — ~350–400 МБ (07.10.2026 — 66 МБ); станет много — сократить до 72 ч.
+11. **Размер страниц** → страница поиска весит ~1,7 МБ, поэтому история запусков хранится 7 дней (`EXECUTIONS_DATA_MAX_AGE=168`). 07.10.2026 база n8n выросла за день с 66 до 122 МБ → успешные запуски W1 больше не хранятся (итог сбора — в таблице `runs`), `DB_SQLITE_VACUUM_ON_STARTUP` сжимает базу при каждом перезапуске (деплой). Таблицы (лимит 100 МБ): W6 каждое утро убирает описания отработанных вакансий старше 30 дней и записи `runs` старше 90 дней.
 
 ## 9. План
 

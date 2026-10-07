@@ -82,7 +82,7 @@ W3 Telegram  Route → Panel? ─ да → Menu (Execute Workflow W7, без о�
 
 W7 Bot menu  Called by W3 | Manual → Manual job (приветствие)
              → Job → Answer? → Answer query (убрать «часики»)
-             → Work? (p:x — дальше не идём) → Rows (вся таблица) → Executions (запуски W1)
+             → Work? (p:x — дальше не идём) → Rows (вся таблица) → Runs (журнал сборов, 100 последних)
              → Render → Layout (Switch по $json.route) → New: <раскладка> | Edit: <раскладка> → Remember
                       → Delete ids → Delete old (нажатие пользователя и прошлая панель)
 ```

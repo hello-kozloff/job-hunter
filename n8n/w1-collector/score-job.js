@@ -1,8 +1,9 @@
 // W1 · Score job — задание для W2 Score: оценить вакансии сразу после сбора и сообщить о сборе.
 // Нода: Code, режим «Run Once for All Items». Стоит ниже ветки вакансий: n8n (execution order v1)
 // выполняет её последней, когда новые вакансии уже detailed.
-// Выход: один item { report } → «Score» (Execute Workflow, без ожидания). W2 сам берёт строки detailed
-// из таблицы, а без этой ноды в W2 ушёл бы весь результат поиска со 100 вакансиями.
+// Выход: один item { report, runId, run } → «Finish run» (итог в журнал runs) и «Score» (Execute Workflow,
+// без ожидания). W2 сам берёт строки detailed из таблицы, а без этой ноды в W2 ушёл бы весь результат поиска
+// со 100 вакансиями; по runId W2 допишет в журнал число карточек.
 // report — блок «🔎 Сбор» (HTML): запросы к hh, что искали, сколько новых и что отсеял фильтр, следующий сбор.
 // W2 шлёт его одним живым сообщением без звука (прошлое удаляет) или ставит сверху итога «📊 Оценено»
 // (решения пользователя 07.10.2026).
@@ -87,4 +88,14 @@ const report = [
   `Следующий сбор ${thaiMsk(nextCollect(Date.now()))}`,
 ].join('\n');
 
-return [{ json: { report } }];
+// Журнал сборов: запись из «Start run» и итог сбора
+const run = {
+  found: total ?? null,
+  uniq: search.vacancies?.length ?? 0,
+  fresh: fresh.length,
+  rejected: rejected.length,
+  scoring,
+  pages: parsed.length,
+};
+
+return [{ json: { report, runId: $('Start run').first().json.id, run } }];
