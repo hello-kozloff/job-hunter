@@ -2,10 +2,15 @@
 // Нода: Code, режим «Run Once for All Items».
 // Вход: строки из «Parse verdict»; карточка — только для outcome = scored.
 // Выход: { id, text, silent, decision, llm_reason, llm_model } → «Send card» с кнопками ✅ / 🤔 / ❌.
-// Теневой режим: карточка приходит на каждую оценённую вакансию, включая skip.
+// Теневой режим (настройка llm.shadow, ⚙️ → 🤖 Нейросеть): карточка приходит на каждую оценённую вакансию,
+// включая skip. Выключен — skip без карточки: строку закрывает «Quiet skips», в итоге — «🔴 N без карточек».
 // Тихие часы: с 23:00 до 09:00 по Таиланду (UTC+7) карточки приходят без звука.
 
 // @include n8n/shared/card.js
+
+// @include n8n/shared/settings.js
+
+const shadow = loadSettings($('Settings').all())['llm.shadow'];
 
 const thaiHour = (new Date().getUTCHours() + 7) % 24;
 const silent = thaiHour >= 23 || thaiHour < 9;
@@ -13,7 +18,7 @@ const silent = thaiHour >= 23 || thaiHour < 9;
 return $input
   .all()
   .map((i) => i.json)
-  .filter((r) => r.outcome === 'scored')
+  .filter((r) => r.outcome === 'scored' && (shadow || r.decision !== 'skip'))
   .map((r) => ({
     json: {
       id: r.id,
@@ -22,5 +27,6 @@ return $input
       decision: r.decision,
       llm_reason: r.llm_reason,
       llm_model: r.llm_model,
+      prompt_v: r.prompt_v ?? '',
     },
   }));

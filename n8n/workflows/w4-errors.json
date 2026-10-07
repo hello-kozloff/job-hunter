@@ -25,17 +25,198 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// W4 · Format error — текст тревоги для Telegram (Parse Mode = HTML).\n// Нода: Code, режим «Run Once for All Items». Вход: Error Trigger.\n// Без явного parse mode нода Telegram шлёт Markdown, и «_» в тексте ошибки (dup_key) ломает отправку,\n// поэтому шлём HTML и экранируем всё, что пришло из ошибки.\n\nconst e = $input.first().json;\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\n// Ошибка самого триггера приходит в поле trigger, а не execution\nconst error = e.execution?.error ?? e.trigger?.error ?? {};\nconst message = String(error.message ?? 'без текста').slice(0, 1500);\n\nconst lines = [\n  `❗️ <b>${esc(e.workflow?.name ?? 'workflow')}</b>: ошибка`,\n  e.execution?.lastNodeExecuted ? `Нода: ${esc(e.execution.lastNodeExecuted)}` : null,\n  esc(message),\n  e.execution?.url ? esc(e.execution.url) : null,\n].filter(Boolean);\n\nreturn [{ json: { text: lines.join('\\n') } }];\n"
+        "jsCode": "// W4 · Format error — текст тревоги для Telegram (Parse Mode = HTML) и ключ проблемы.\n// Нода: Code, режим «Run Once for All Items». Вход: Error Trigger.\n// Без явного parse mode нода Telegram шлёт Markdown, и «_» в тексте ошибки (dup_key) ломает отправку,\n// поэтому шлём HTML и экранируем всё, что пришло из ошибки.\n// key — workflow + нода + текст ошибки без чисел и ссылок: повтор той же проблемы (hh отвечает 403 на каждом\n// сборе) не шлёт новую тревогу, а правит открытую (07.10.2026, «Alert plan»).\n\nconst e = $input.first().json;\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\n// Ошибка самого триггера приходит в поле trigger, а не execution\nconst error = e.execution?.error ?? e.trigger?.error ?? {};\nconst message = String(error.message ?? 'без текста').slice(0, 1500);\nconst workflow = String(e.workflow?.name ?? 'workflow');\nconst node = String(e.execution?.lastNodeExecuted ?? '');\n\n// n8n строит ссылку от WEBHOOK_URL (домен ngrok), а туннель пускает снаружи только /webhook/* —\n// открываем запуск в n8n на Mac\nconst url = e.execution?.url ? String(e.execution.url).replace(/^https?:\\/\\/[^/]+/, 'http://localhost:5678') : '';\n\nconst lines = [\n  `❗️ <b>${esc(workflow)}</b>: ошибка`,\n  node ? `Нода: ${esc(node)}` : null,\n  esc(message),\n  url ? esc(url) : null,\n].filter(Boolean);\n\nconst norm = message\n  .toLowerCase()\n  .replace(/https?:\\/\\/\\S+/g, '')\n  .replace(/\\d+/g, '#')\n  .replace(/\\s+/g, ' ')\n  .trim()\n  .slice(0, 160);\n\nreturn [{ json: { text: lines.join('\\n'), key: `${workflow}|${node}|${norm}`, workflow, message: message.slice(0, 300) } }];\n"
       }
     },
     {
-      "id": "47f0c554-4699-d330-a191-20992d1a34b1",
-      "name": "Telegram",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
+      "id": "24e600d1-2583-99d0-5f0d-ceb762b7e412",
+      "name": "Find alert",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
       "position": [
         440,
         0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "alerts"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "alert_key",
+              "keyValue": "={{ $json.key }}"
+            },
+            {
+              "keyName": "is_open",
+              "condition": "isTrue"
+            }
+          ]
+        },
+        "returnAll": false,
+        "limit": 1,
+        "orderBy": true,
+        "orderByColumn": "createdAt",
+        "orderByDirection": "DESC"
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "afdcad45-88c7-831c-d021-09250ab38dda",
+      "name": "Alert plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W4 · Alert plan — новая тревога или повтор открытой (07.10.2026: при блоке hh тревога приходила на каждом сборе).\n// Нода: Code, режим «Run Once for All Items».\n// Вход: «Format error» { text, key, workflow, message }; $input — «Find alert»: открытая тревога с тем же ключом\n//       (Always Output Data: пустой item, если её нет или таблица не ответила).\n// Выход: { repeat: false, … } — новая тревога: «Send alert» со звуком → «Save alert»;\n//        { repeat: true, id, tg_message_id, hits, text } — повтор: «Edit alert» правит ту же тревогу (без звука)\n//        → «Save repeat». Открытой считается тревога, которая повторялась последние 6 ч; закрывает её и\n//        успешный запуск того же workflow (W1, W2: «✅ снова работает»).\n\nconst HOLD = 6 * 3600 * 1000;\nconst f = $('Format error').first().json;\nconst nowMs = Date.now();\nconst now = new Date(nowMs).toISOString();\nconst open = $input\n  .all()\n  .map((i) => i.json)\n  .find((r) => r.id && r.is_open && r.tg_message_id && nowMs - (Date.parse(r.last_at) || 0) < HOLD);\n\nif (!open) return [{ json: { repeat: false, text: f.text, key: f.key, workflow: f.workflow, message: f.message, now } }];\n\nconst thai = (iso) => new Date(Date.parse(iso) + 7 * 3600 * 1000).toISOString().slice(11, 16);\nconst hits = (open.hits || 1) + 1;\nreturn [\n  {\n    json: {\n      repeat: true,\n      id: open.id,\n      tg_message_id: open.tg_message_id,\n      hits,\n      now,\n      text: `${f.text}\\n\\n🔁 Повторяется: ×${hits}, с ${thai(open.first_at)} до ${thai(now)} по Таиланду`,\n    },\n  },\n];\n"
+      }
+    },
+    {
+      "id": "41ae71d2-32b9-3ba4-f7e7-0b4feb9b96e1",
+      "name": "Repeat?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "847c4edb-0bd4-d06d-276d-9ba5b4f83a89",
+              "leftValue": "={{ $json.repeat }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "c8e1fbe2-15c9-7d6c-a308-3d46313922bc",
+      "name": "Edit alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1100,
+        -100
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "editMessageText",
+        "messageType": "message",
+        "chatId": "={{ $env.TG_CHAT_ID }}",
+        "messageId": "={{ $json.tg_message_id }}",
+        "text": "={{ $json.text }}",
+        "replyMarkup": "none",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterTgBot01",
+          "name": "Telegram bot"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "14b60ba8-99a5-8099-95be-0f64fd1ba4d7",
+      "name": "Save repeat",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        -100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "alerts"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "keyValue": "={{ $('Alert plan').first().json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "hits": "={{ $('Alert plan').first().json.hits }}",
+            "last_at": "={{ $('Alert plan').first().json.now }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "hits",
+              "displayName": "hits",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "last_at",
+              "displayName": "last_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "6c62ca0e-ffbf-4ce5-f099-a966e01a6b2d",
+      "name": "Send alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1100,
+        100
       ],
       "parameters": {
         "resource": "message",
@@ -54,6 +235,125 @@
           "name": "Telegram bot"
         }
       }
+    },
+    {
+      "id": "f9a70ffe-d9c4-c1c4-963d-0218ab1189f7",
+      "name": "Save alert",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "alerts"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "alert_key": "={{ $('Alert plan').first().json.key }}",
+            "workflow": "={{ $('Alert plan').first().json.workflow }}",
+            "message": "={{ $('Alert plan').first().json.message }}",
+            "first_at": "={{ $('Alert plan').first().json.now }}",
+            "last_at": "={{ $('Alert plan').first().json.now }}",
+            "hits": "={{ 1 }}",
+            "is_open": "={{ true }}",
+            "tg_message_id": "={{ $json.result.message_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "alert_key",
+              "displayName": "alert_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "workflow",
+              "displayName": "workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "message",
+              "displayName": "message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "first_at",
+              "displayName": "first_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "last_at",
+              "displayName": "last_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "hits",
+              "displayName": "hits",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "is_open",
+              "displayName": "is_open",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "tg_message_id",
+              "displayName": "tg_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -72,7 +372,69 @@
       "main": [
         [
           {
-            "node": "Telegram",
+            "node": "Find alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find alert": {
+      "main": [
+        [
+          {
+            "node": "Alert plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert plan": {
+      "main": [
+        [
+          {
+            "node": "Repeat?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Repeat?": {
+      "main": [
+        [
+          {
+            "node": "Edit alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit alert": {
+      "main": [
+        [
+          {
+            "node": "Save repeat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send alert": {
+      "main": [
+        [
+          {
+            "node": "Save alert",
             "type": "main",
             "index": 0
           }

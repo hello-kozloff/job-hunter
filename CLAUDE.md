@@ -40,7 +40,7 @@
 | **HTTP-запросы к сайту hh.ru + парсинг HTML** | ✅ **выбран, проверен** | 06.10.2026 с Mac (тайский домашний IP): поиск и страница вакансии отдаются без капчи |
 | n8n Cloud | ❌ не используем | Пользователь выбрал self-hosted: бесплатно, без лимита executions, домашний IP. Блокирует ли hh облачные IP — не проверяли, не нужно |
 | Кнопки Telegram на локальном n8n | ✅ ngrok + Telegram Trigger (перенесено на этап 3) | Контейнер ngrok в docker compose, бесплатный постоянный домен; наружу только `/webhook/*` с адресов Telegram, интерфейс n8n — только localhost |
-| Нейросеть для оценки | ✅ Gemini Flash-Lite, бесплатный тариф (07.10.2026) | Пользователь выбрал бесплатно; при исчерпании лимитов — ручное переключение на Claude Haiku 4.5 (`LLM_PROVIDER=claude`). В промпт уходит резюме целиком (бесплатный Gemini может учиться на запросах — пользователь согласен) |
+| Нейросеть для оценки | ✅ Gemini Flash-Lite, бесплатный тариф (07.10.2026) | Пользователь выбрал бесплатно; при исчерпании лимитов — переключение на Claude Haiku 4.5 кнопкой в боте (⚙️ → 🤖 Нейросеть, с 07.10.2026; нужен `ANTHROPIC_API_KEY`). В промпт уходит резюме целиком (бесплатный Gemini может учиться на запросах — пользователь согласен) |
 
 Устаревшие артефакты из чата (не использовать): `01_collector.json` (на API hh), `explore_hh_bot.py` (юзербот).
 
@@ -104,32 +104,44 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 
 ```
 [W0 Check hh]  ручная проверка «жив ли hh» (этап 0)
-[W1 Collector] Schedule, МСК: днём 0,30 7-17 (каждые 30 мин), ночью 0 0,2,4,6,18,20,22 (каждые 2 ч) — 29 в сутки
-                 → поиск hh → разбор InitialState → склейка дублей
+[W8 Clock]     Schedule каждые 15 мин → Settings → Due (слот по расписанию из настроек бота прошёл с прошлой отправки?
+                 static data dispatchedAt; после сна — один догоняющий) → W1. По умолчанию, МСК: днём 07:00–17:30 каждые
+                 30 мин, ночью 18, 20, 22, 00, 02, 04, 06 — 29 в сутки (docs/settings.md)
+[W1 Collector] вызов из W8 (kind schedule | catchup) или W7 «🔄 Собрать сейчас» (kind bot) | Manual
+                 → Busy + Start: журнал runs (идёт другой сбор — запись running моложе 10 мин — этот пропускаем)
+                 → Start run (запись running) → поиск hh → разбор InitialState → склейка дублей
                  → только новые (нет ни external_id, ни dup_key) → Blacklist + Filter search (правила по выдаче)
                  → Insert (new | rejected) → для new: страница вакансии → Parse vacancy (правила по описанию)
                  → Update (detailed | rejected) → Score job (блок «🔎 Сбор»: запросы к hh, что искали, новые и отсеянные
-                 с причинами, следующий сбор) → W2 (Execute Workflow, без ожидания)
-[W2 Score]     вызов из W1 после каждого сбора | Manual → detailed → резюме + промпт → Gemini | Claude → apply/maybe/skip + причина
+                 с причинами, следующий сбор) → Finish run (итог в runs) → W2 (Execute Workflow, без ожидания);
+                 поломка → Fail run (status error) → Stop. Успешные запуски W1 не хранятся (итог — в runs)
+[W2 Score]     вызов из W1 после каждого сбора | Manual → detailed → Claim (detailed → scoring одним UPDATE: второй запуск W2
+                 те же строки не возьмёт) → резюме + промпт → Gemini | Claude → apply/maybe/skip + причина
                  → карточка в Telegram с кнопками ✅/🤔/❌ → status = waiting → сообщение о сборе + тревоги (429 и т. п.):
                  были карточки — «🔎 Сбор» сверху итога «📊 Оценено N»; нет — «🔎 Сбор» одним живым сообщением без звука
-                 (прошлое удаляется, static data W2 `liveId`; решение пользователя 07.10.2026)
+                 (прошлое удаляется, static data W2 `liveId`; решение пользователя 07.10.2026); число карточек → runs
 [W3 Telegram]  Telegram Trigger (вебхук через ngrok) → кнопка: my_decision, status, перерисовать карточку,
                  при расхождении с нейросетью «Почему?» → ответ (reply) → my_reason;
-                 меню бота (кнопки под полем ввода, /v<id>, кнопки панели) → W7
-[W5 Letter]    вызов из W3 (✅ / «🔄 Переписать» / ответ на письмо) | Manual → профиль + образец → Gemini | Claude
+                 меню бота (кнопки под полем ввода, /v<id>, кнопки панели, ⚙️ Настройки) → W7
+[W5 Letter]    вызов из W3 (✅ / «🔄 Переписать» / ответ на письмо; W3 сначала ставит letter_lock — UPDATE «где пусто»,
+                 повторное нажатие письмо не запускает; W5 снимает блокировку в конце, зависшую — W3 через 3 мин)
+                 | Manual → профиль + образец → Gemini | Claude
                  → письмо ответом на карточку: [📝 Отклик на hh] [🔗 Вакансия] [🔄 Переписать] [📨 Отправил]
                  → прежнее письмо (и ответ с пожеланием) удаляется; после «📨 Отправил» — [↩️ Отменить] [📋 К вакансиям]
-[W4 Errors]    Error Trigger → Telegram (строится на этапе 1)
+[W4 Errors]    Error Trigger → Format error (ключ: workflow + нода + текст без чисел и ссылок) → Find alert (открытая в alerts)
+                 → новая: тревога со звуком + запись в alerts; повтор в течение 6 ч: правка той же тревоги без звука
+                 «🔁 ×N, с … до …» (07.10.2026). Успешный W1 / W2 закрывает свои тревоги: «✅ снова работает»
 [W6 Summary]   06:00 МСК (10:00 Таиланд): «⌛ устарела» (3 дня без решения), хвосты → проверка на hh «🔒 закрыта»,
-                 сводка: воронка, хвосты, теневой режим, сбои (публичный API n8n, туннель); без звука, если сбоев нет
-[W7 Bot menu]  вызов из W3 | Manual (приветствие с кнопками) → вся таблица + запуски W1 → панель: список по вкладкам
-                 (8 на странице, /v<id> — карточка с решением), статистика; одна живая панель (docs/bot-menu.md)
-[Страж]        healthchecks.io (OnCalendar = расписание W1, grace 50 мин): W1 шлёт сигнал после поиска; нет сигнала
-                 (днём 2 пропуска подряд, ночью 1) → их бот пишет в Telegram
+                 сводка: воронка, хвосты, теневой режим, сбои (сборы — по runs, ошибки — публичный API n8n, туннель);
+                 без звука, если сбоев нет; чистка: описания отработанных вакансий старше 30 дней, runs старше 90 дней
+[W7 Bot menu]  вызов из W3 | Manual (приветствие с кнопками) → вся таблица + журнал runs → панель: список по вкладкам
+                 (8 на странице, /v<id> — карточка с решением), статистика, ⚙️ настройки (сбор: интервалы, «день»,
+                 пауза, «собрать сейчас»; смена расписания → API healthchecks); одна живая панель (docs/bot-menu.md)
+[Страж]        healthchecks.io (OnCalendar = расписание сбора, grace = интервал днём + 20 мин; бот обновляет его через API
+                 при смене расписания): W1 шлёт сигнал после поиска; нет сигнала → их бот пишет в Telegram
 ```
 
-**Статусы:** `seen` (бэкфилл, не обрабатывается) | `new` (прошла выдачу) → `detailed` (прошла все правила; если `error` — страница не открылась, оценка по фрагменту) | `rejected` (+ `reasons`) → `waiting` (W2: решение нейросети, карточка отправлена) → `approved` (✅) | `maybe` (🤔) | `skipped` (❌); `approved` + письмо (W5) → «📨 Отправил» → `applied` (+ `applied_at`); W6: `waiting` 3 дня → `expired`, закрыта на hh → `archived`; этап 6+: `failed | needs_human`.
+**Статусы:** `seen` (бэкфилл, не обрабатывается) | `new` (прошла выдачу) → `detailed` (прошла все правила; если `error` — страница не открылась, оценка по фрагменту) | `rejected` (+ `reasons`) → `scoring` (W2 оценивает; карточка не ушла — «Release» вернёт в `detailed`, застрявшие дольше 30 мин вернёт W6) → `waiting` (W2: решение нейросети, карточка отправлена) → `approved` (✅) | `maybe` (🤔) | `skipped` (❌); `approved` + письмо (W5) → «📨 Отправил» → `applied` (+ `applied_at`); W6: `waiting` 3 дня → `expired`, закрыта на hh → `archived`; этап 6+: `failed | needs_human`.
 
 **Хранилище:** n8n Data Tables, таблица `vacancies`.
 - Лимит поднят до 100 МБ env-переменной.
@@ -143,14 +155,19 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - этап 3: `decision` (apply|maybe|skip|error), `llm_reason`, `llm_model`, `my_decision` (кнопка: apply|maybe|skip|earlier), `my_reason` (ответ на «Почему?»), `tg_message_id` (карточка), `tg_ask_id` (вопрос «Почему?»);
 - этап 4: `letter`, `tg_letter_id` (сообщение с письмом — на него отвечают с правкой), `letter_notes` (пожелания к письмам через « | »), `applied_at`;
 - этап 5: `card_at` (когда W2 отправил карточку — от него считаются 3 дня);
+- 07.10.2026: `letter_lock` (защита от двойного ✅), `prompt_v` (версия промпта оценки: хеш правил без резюме — по нему теневой режим разбирается по версиям);
 - таблица `blacklist`: `company, comment`;
+- таблица `runs` — журнал сборов W1: `started_at, finished_at, kind` (schedule | catchup | bot | manual), `status` (running | ok | error), `found, uniq, fresh, rejected, scoring, pages, cards, error`;
+- таблица `settings` — настройки из бота: `name, value_json` (только изменения; значения по умолчанию — в коде);
+- таблица `alerts` — тревоги W4: `alert_key, workflow, message, first_at, last_at, hits, is_open, tg_message_id`;
+- имена колонок обходят служебные слова SQL (key, value, trigger, count, unique, open);
 - `id, createdAt, updatedAt` — встроенные.
 
 **Telegram:**
 - свой бот (токен в Credentials), один личный чат для всего;
 - chat_id — в `.env` как `TG_CHAT_ID`, в нодах `{{ $env.TG_CHAT_ID }}` (Variables в Community edition нет);
 - кнопки ловит W3 через Telegram Trigger (v1.5: проверяет секретный заголовок, Restrict to Chat IDs = TG_CHAT_ID). Публичный HTTPS → контейнер ngrok (`COMPOSE_PROFILES=tunnel`, `ngrok/policy.yml`), `WEBHOOK_URL=https://<NGROK_DOMAIN>/` (→ `N8N_WEBHOOK_URL`);
-- callback_data кнопок: `v:<id строки>:<apply|maybe|skip|earlier|edit>` — карточка (`earlier` — «📨 Уже откликался», 07.10.2026: status = applied без письма и `applied_at`, без «Почему?», вне теневого режима); `l:<id>:<redo|sent|unsent>` — письмо; панель меню (W7): `p:l:<tab>:<page>`, `p:s`, `p:x`, `p:n` («📋 К вакансиям» под отправленным письмом), `pv:<id>:<choice>:<tab>:<page>`;
+- callback_data кнопок: `v:<id строки>:<apply|maybe|skip|earlier|ban|edit>` — карточка (`ban` — «🚫 В ЧС»: компания в `blacklist`, вакансия — ❌ с причиной «чёрный список») (`earlier` — «📨 Уже откликался», 07.10.2026: status = applied без письма и `applied_at`, без «Почему?», вне теневого режима); `l:<id>:<redo|sent|unsent>` — письмо; панель меню (W7): `p:l:<tab>:<page>`, `p:s`, `p:x`, `p:n` («📋 К вакансиям» под отправленным письмом), `pv:<id>:<choice>:<tab>:<page>`;
 - меню бота (07.10.2026, `docs/bot-menu.md`): кнопки под полем ввода `[📋 Вакансии] [📊 Статистика]` (ставит `/start`), одна живая панель — нажатие пользователя и прошлая панель удаляются, листание правит панель на месте;
 - тихие часы: 23:00–09:00 по Таиланду — карточки и сводка без звука (`disable_notification`), тревоги со звуком;
 - не использовать «Send and wait» на каждую вакансию.
@@ -161,7 +178,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - `./fixtures` → `/home/node/.n8n-files/fixtures`: файловые ноды n8n 2.x видят только `~/.n8n-files`;
 - `./docs` → `/home/node/.n8n-files/docs` (только чтение): резюме для промптов W2/W5, образец письма `docs/letter-example.md` (не в git);
 - сводка и страж: `NGROK_DOMAIN` (проверка туннеля снаружи), `HC_PING_URL` (сигнал healthchecks.io);
-- нейросеть: `LLM_PROVIDER` (gemini | claude), `GEMINI_MODEL` (по умолчанию `gemini-3.5-flash-lite` — закреплена, чтобы оценки не менялись в теневом режиме), `CLAUDE_MODEL` (`claude-haiku-4-5`).
+- нейросеть: провайдер — настройка бота `llm.provider` (с 07.10.2026; `LLM_PROVIDER` больше не читается), `GEMINI_MODEL` (по умолчанию `gemini-3.5-flash-lite` — закреплена, чтобы оценки не менялись в теневом режиме), `CLAUDE_MODEL` (`claude-haiku-4-5`).
 
 **Особенности n8n 2.x (проверено на 2.42.3):**
 - «Publish» вместо «Activate»; импорт workflow через CLI снимает публикацию со всех → `deploy.sh` после импорта публикует рабочие заново (W1, W2, W4, W5, W6; W3 — при туннеле; `--paused` — без W1/W2/W6); CLI-публикацию запущенный n8n видит только после перезапуска (`deploy.sh` перезапускает сам);
@@ -173,6 +190,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - CLI `n8n execute` не грузит модули → Data Table в нём не работает («module is disabled»). Workflow с таблицами запускать через REST `POST /rest/workflows/:id/run` (`scripts/n8n-api.mjs run`); второй CLI-процесс — с `N8N_RUNNERS_BROKER_PORT=5681`;
 - Telegram-нода без `parse_mode` шлёт Markdown (символ `_` ломает отправку) → всегда `parse_mode: HTML` + экранирование;
 - Data Table: таблицу можно указать по имени (`mode: name`), Insert «Map Automatically» пишет все поля item → поля должны совпадать с колонками;
+- Cron у Schedule Trigger зашит в workflow — из таблицы его не прочитать. Расписание из настроек бота → «часы» W8 Clock тикают каждые 15 мин и сами решают, пора ли собирать (07.10.2026);
 - Schedule Trigger 1.4: `misfirePolicy: coalesce` — после сна Mac выполняется последний пропущенный запуск, но **на каждое правило (rule)**; `coalesce_owner` — один на всю ноду. У W1 два правила (день/ночь) → `coalesce_owner`, иначе сон через 18:00 дал бы два параллельных W1 и дубли (проверено по исходникам 2.42.3: `@n8n/scheduler` → `coalesce-group.js`). Деплой сразу после пробуждения пересоздаёт задания — догоняющий запуск теряется;
 - `import:credentials` принимает данные открытым текстом и сам шифрует их ключом из `.env`;
 - вход в REST ограничен по частоте (429 после нескольких логинов подряд) → `n8n-api.mjs` хранит cookie сессии в `.n8n-session` (права 600, не в git);
@@ -185,13 +203,14 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - execution order v1: ветки одной ноды выполняются по очереди сверху вниз (каждая целиком) — так W2 шлёт сводку после карточек, а W1 вызывает W2 после ветки вакансий.
 - Telegram-нода: число inline-кнопок задаётся при сборке (fixedCollection), выражениями — только подписи и callback_data; неизвестные ключи collection (`is_persistent`, `reply_markup` в Additional Fields) n8n отбрасывает при выполнении (`getNodeParameters`). Telegram-credential нельзя использовать в HTTP Request (токен — в пути URL) → меню W7 на фиксированных раскладках, вакансия открывается командой `/v<id>` в тексте;
 - Telegram: сообщение с ForceReply («Почему?») прячет reply keyboard меню, и сама она не возвращается — нужна новая отправка `ReplyKeyboardMarkup` → в `build-workflows.mjs` `MENU_KEYBOARD` у простых сообщений (W3 «Confirm», W2 и W6 «Send summary», W7 приветствие); inline-кнопки сообщения её не несут (одна разметка на сообщение);
+- Data Table Update возвращает только обновлённые строки: ни одна не подошла под условие — выход пустой. На этом строятся атомарные «захваты» (UPDATE с условием вместо «прочитать → проверить → записать»); Delete — операция `deleteRows`; условия фильтра: eq, neq, like, ilike, gt, gte, lt, lte, isEmpty, isNotEmpty, isTrue, isFalse;
 - `$getWorkflowStaticData` работает в Code-ноде (task runner возвращает изменения) и сохраняется у запусков не из редактора, в том числе integrated (дочерний workflow); Data Table Get не умеет skip — для страниц брать всю таблицу или публичный API `/api/v1/data-tables/{id}/rows` (limit + cursor);
 
 **ngrok (бесплатный тариф, проверено 07.10.2026):** действие `restrict-ips` платное (`ERR_NGROK_2263`, туннель не стартует) → то же через выражение `inCidrRanges(conn.client_ip, [...])` + `custom-response`; домен вида `*.ngrok-free.dev`; `--url` вместо устаревшего `--domain`; токен — `NGROK_AUTHTOKEN` в environment контейнера. Проверка снаружи: любой адрес не с IP Telegram → 403.
 
 ## 7. Правила отбора
 
-Решения пользователя (06–07.10.2026). Код: `n8n/w1-collector/filter-search.js` (по выдаче) и `parse-vacancy.js` (по странице вакансии).
+Решения пользователя (06–07.10.2026). Код: `n8n/w1-collector/filter-search.js` (по выдаче) и `parse-vacancy.js` (по странице вакансии). С 07.10.2026 правила включаются и выключаются в боте (⚙️ → 🧹 Фильтр → Правила), там же порог откликов, стоп-слова и чёрный список; слова и период поиска — ⚙️ → 🔎 Поиск (`docs/settings.md`). Ниже — значения по умолчанию.
 
 **Отсекаем по выдаче (Filter search):**
 - опыт «нет опыта»; junior / стажёр / intern / младший;
@@ -208,7 +227,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - «только из РФ / находиться на территории РФ / резидент РФ / located in Russia» (цитата пишется в `reasons`);
 - нет ни React / Next.js, ни Vue / Nuxt — ни в названии, ни в навыках, ни в описании. Кроме AI-вакансий (по названию и навыкам, `n8n/shared/ai.js`) с JS/TS в тексте (Node.js, NestJS, TypeScript, JavaScript); AI без JS/TS → «AI не на JS/TS» (07.10.2026: AI на Python пользователь отклонил).
 
-**Решает нейросеть (W2, промпт `n8n/w2-score/build-prompt.js`; 07.10.2026):**
+**Решает нейросеть (W2, промпт `n8n/w2-score/build-prompt.js`; 07.10.2026):** спорные случаи (список «случай: решение» текстом: встроенные Vue, fullstack, AI на JS/TS, React Native и любые новые), теневой режим и провайдер (Gemini/Claude) — настройки бота (⚙️ → 🤖 Нейросеть, `docs/settings.md`); ниже — значения по умолчанию.
 - skip: основной стек не React и не Vue (React «плюсом» при таком стеке — тоже skip), кроме разработки на AI на JS/TS; AI на Python, Go, Java и т. п.; ML и Data Science (обучение моделей, MLOps, исследования); мобильная разработка, в том числе React Native; английский C1+ или общение только на английском; нужно жить в определённой стране (не только РФ) или ездить в офис; работа ночью по Таиланду (часы США);
 - maybe: основной стек Vue / Nuxt без React (07.10.2026: пользователь готов работать на Vue, решает сам); любой fullstack (бэкенд на любом языке, включая Node.js), кроме разработки на AI; английский B2; мягкие требования к стране/офису («желательно»); мало данных;
 - apply: React/Next.js — основной стек (в том числе вместе с Vue: «React, Vue»), удалёнка без привязки к стране; разработка на AI на JS/TS (07.10.2026: интеграции LLM, AI-агенты, RAG, AI-first/AI-native — главное в роли; Node.js, NestJS, TypeScript, в том числе бэкенд без React), если удалёнка без привязки и нет других причин для skip/maybe. AI как инструмент («используем ChatGPT») — не разработка на AI. Если в названии или навыках есть AI, W2 добавляет к вакансии подсказку с этим правилом (Flash-Lite иначе держится за «чистый бэкенд → skip»);
@@ -246,7 +265,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
    - `docs/resume.md` — в `.gitignore`.
    - Фикстуры hh тоже не в git: в JSON есть имена HR-менеджеров.
 10. **Другие сайты** → свой сборщик на каждый, выход в единую схему (п. 6).
-11. **Размер страниц** → страница поиска весит ~1,7 МБ, поэтому история запусков хранится 7 дней (`EXECUTIONS_DATA_MAX_AGE=168`). При 29 сборах в сутки база n8n — ~350–400 МБ (07.10.2026 — 66 МБ); станет много — сократить до 72 ч.
+11. **Размер страниц** → страница поиска весит ~1,7 МБ, поэтому история запусков хранится 7 дней (`EXECUTIONS_DATA_MAX_AGE=168`). 07.10.2026 база n8n выросла за день с 66 до 122 МБ → успешные запуски W1 больше не хранятся (итог сбора — в таблице `runs`), `DB_SQLITE_VACUUM_ON_STARTUP` сжимает базу при каждом перезапуске (деплой). Таблицы (лимит 100 МБ): W6 каждое утро убирает описания отработанных вакансий старше 30 дней и записи `runs` старше 90 дней.
 
 ## 9. План
 
@@ -293,6 +312,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - **Пауза (решение пользователя 07.10.2026):** новых этапов не начинаем, пока утренняя сводка не покажет «🧪 50/50». Потом пользователь пишет «разбор теневого режима».
 - **После 50 оценок:** отчёт о совпадениях (decision vs my_decision, my_reason), правка промпта W2, выключать ли теневой режим; затем выбрать следующее: новые источники (рекомендация), робот-отклик на hh или внешние формы. Кандидат в правку: fullstack «с уклоном во фронтенд» — пользователь откликается на такие (Novakid: 🤖 maybe → 👤 ✅); решено не менять до отчёта.
 - **Меню бота (07.10.2026):** пользователь проверяет на живых нажатиях — список, вкладки, `/v<id>` с решением, статистика (`docs/bot-menu.md`).
+- **Настройки из бота (07.10.2026, `docs/settings.md`):** пользователь проверяет ⚙️ на живых нажатиях — 🕐 сбор (интервалы, «день», пауза, «собрать сейчас»), 🔎 поиск (период, ✏️ слова), 🧹 фильтр (правила, порог, стоп-слова, чёрный список, «🚫 В ЧС» на карточке), 🤖 нейросеть. Разовое действие: ключ API healthchecks → `HC_API_KEY` в `.env` → деплой, тогда смена расписания обновляет стража. Дальше по разбору системы (07.10.2026): бэкап таблиц (рекомендация), воронка после отклика, настройки «Уведомления», новые источники.
 - **Этап 4:** пользователь проверяет письма на реальных ✅; пожелания копятся в `letter_notes` → правка промпта `n8n/w5-letter/build-letter.js`.
 - **Этап 5:** проверить по первым утренним сводкам, что цифры сходятся с таблицей («Сборов N из 29» — с 07.10.2026 сбор днём раз в 30 мин), а страж ловит простои; расписание стража в healthchecks.io пользователь меняет на OnCalendar (`docs/stages/stage-5.md`).
 - **Этап 6:** нужен ли VPS, если Mac с домашним IP справится сам.
@@ -306,13 +326,15 @@ docs/letter-example.md              образец письма пользова
 docs/stages/stage-N.md              устройство этапов и ручная сборка
 docs/git-flow.md                    ветки, PR, релизы, правила коммитов
 docs/bot-menu.md                    меню бота: кнопки, панель, вкладки, callback_data, ограничения
+docs/settings.md                    настройки из бота: таблица settings, схема, «часы» W8, страж через API
 n8n/w0-check/*.js                   код Code-нод W0
 n8n/w1-collector/*.js               код Code-нод W1
 n8n/w2-score/*.js                   код Code-нод W2 (промпт, разбор ответа, карточки, сводка)
 n8n/w3-telegram/*.js                код Code-нод W3 (кнопки, «Почему?», кнопки письма)
 n8n/w5-letter/*.js                  код Code-нод W5 (промпт письма, разбор, сообщение)
 n8n/w6-summary/*.js                 код Code-нод W6 (устаревшие, закрытые на hh, сводка)
-n8n/w7-menu/*.js                    код Code-нод W7 (меню бота: список, карточка, статистика)
+n8n/w7-menu/*.js                    код Code-нод W7 (меню бота: список, карточка, статистика, настройки)
+n8n/w8-clock/*.js                   код Code-нод W8 («часы» сбора)
 n8n/shared/*.js                     общий код Code-нод (карточка, письмо, разбор страницы hh, меню, расписание W1,
                                     поисковый запрос hh, признак AI-вакансии),
                                     подключается строкой // @include
@@ -339,15 +361,16 @@ Workflow в n8n (постоянные id):
 | `jobHunterS0Setup` | S0 Setup | создать таблицы `vacancies` и `blacklist` (если нет) |
 | `jobHunterS1TgTst` | S1 Telegram test | проверочное сообщение в Telegram |
 | `jobHunterW0Check` | W0 Check hh | ручная проверка «жив ли hh» |
-| `jobHunterW1Colle` | W1 Collector | сбор: днём каждые 30 мин (07:00–17:30 МСК), ночью каждые 2 ч |
+| `jobHunterW1Colle` | W1 Collector | сбор (запускают W8 Clock и «🔄 Собрать сейчас» в боте) |
 | `jobHunterW2Score` | W2 Score | оценка нейросетью и карточки (вызывает W1 после каждого сбора) |
 | `jobHunterW3Teleg` | W3 Telegram | кнопки и ответы «Почему?» (вебхук) |
 | `jobHunterW4Error` | W4 Errors | тревоги |
 | `jobHunterW5Lettr` | W5 Letter | сопроводительные письма (вызывает W3; Manual — письма ко всем ✅ без письма) |
 | `jobHunterW6Summ1` | W6 Summary | утренняя сводка, устаревшие и закрытые карточки |
 | `jobHunterW7Menu1` | W7 Bot menu | меню бота: список вакансий, карточка с решением, статистика (вызывает W3; Manual — приветствие с кнопками) |
+| `jobHunterW8Clock` | W8 Clock | «часы» сбора: каждые 15 мин решают по настройкам бота, пора ли запускать W1 |
 
-Credentials: `jobHunterTgBot01` «Telegram bot», `jobHunterGemini1` «Gemini», `jobHunterClaude1` «Claude», `jobHunterN8nApi1` «n8n API» (ключ публичного API, создаёт `n8n-api.mjs api-key`).
+Credentials: `jobHunterTgBot01` «Telegram bot», `jobHunterGemini1` «Gemini», `jobHunterClaude1` «Claude», `jobHunterN8nApi1` «n8n API» (ключ публичного API, создаёт `n8n-api.mjs api-key`), `jobHunterHcApi01` «healthchecks API» (`HC_API_KEY`, если есть в `.env`).
 
 ## 14. Git
 

@@ -10,6 +10,7 @@
 //     ✅ и письма ещё нет → need_letter: W5 напишет письмо (этап 4).
 //   📨 Уже откликался (choice = earlier) — status = applied без письма; «почему?» не спрашиваем:
 //     отклик был до бота, в теневой режим не идёт.
+//   🚫 В ЧС (choice = ban, 07.10.2026) — ❌ с причиной «чёрный список» без «почему?»; ban = компания → «Ban company».
 //   ↩️ Изменить (choice = edit) — вернуть кнопки выбора (keyboard = choose), решение не меняется.
 
 // @include n8n/shared/card.js
@@ -20,6 +21,8 @@ const row = $input.first().json;
 const out = {
   id: row.id,
   my_decision: row.my_decision ?? '',
+  // Причину не затираем: «Save choice» пишет её всегда
+  my_reason: row.my_reason ?? '',
   status: row.status,
   keyboard: 'choose',
   ask: '',
@@ -29,9 +32,17 @@ const out = {
   messageId: action.panel ? row.tg_message_id : action.messageId,
   queryId: action.queryId,
   panel: action.panel ?? null,
+  ban: null,
 };
 
-if (action.choice !== 'edit') {
+if (action.choice === 'ban') {
+  out.my_decision = 'skip';
+  out.my_reason = BAN_REASON;
+  out.status = STATUS_BY_CHOICE.skip;
+  out.keyboard = 'decided';
+  out.toast = `🚫 ${row.company || 'Компания'} — в чёрном списке`;
+  out.ban = { company: row.company ?? '', company_id: row.company_id ?? '', title: row.title ?? '' };
+} else if (action.choice !== 'edit') {
   out.my_decision = action.choice;
   out.status = STATUS_BY_CHOICE[action.choice];
   out.keyboard = 'decided';
@@ -44,6 +55,6 @@ if (action.choice !== 'edit') {
       'Почему? Ответь на это сообщение одной фразой — по ответам поправлю правила.';
   }
 }
-out.text = cardText({ ...row, my_decision: out.my_decision });
+out.text = cardText({ ...row, my_decision: out.my_decision, my_reason: out.my_reason });
 
 return [{ json: out }];

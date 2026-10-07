@@ -26,7 +26,10 @@ const IDS = {
   letter: 'jobHunterW5Lettr',
   summary: 'jobHunterW6Summ1',
   menu: 'jobHunterW7Menu1',
+  clock: 'jobHunterW8Clock',
   n8nApiCredential: 'jobHunterN8nApi1',
+  // Ключ API healthchecks.io (HC_API_KEY в .env) — бот обновляет расписание стража (07.10.2026)
+  hcCredential: 'jobHunterHcApi01',
   telegramCredential: 'jobHunterTgBot01',
   geminiCredential: 'jobHunterGemini1',
   claudeCredential: 'jobHunterClaude1',
@@ -71,8 +74,12 @@ const workflow = (id, name, nodes, links, settings = {}) => ({
 
 // ---------- Общие куски ----------
 
-// Поисковый запрос hh — из n8n/shared/search.js (его же показывает сообщение о сборе W1 → W2)
-const { SEARCH_URL, SEARCH_QUERY } = new Function(`${read('n8n/shared/search.js')}\nreturn { SEARCH_URL, SEARCH_QUERY };`)();
+// Поисковый запрос hh — из n8n/shared/search.js. Слова и период — настройки бота (⚙️ → 🔎 Поиск):
+// W1 «Plan» берёт их из таблицы settings, W0 (ручная проверка) — значения по умолчанию
+const { SEARCH_URL, searchQuery, loadSettings } = new Function(
+  `${read('n8n/shared/settings.js')}\n${read('n8n/shared/search.js')}\nreturn { SEARCH_URL, searchQuery, loadSettings };`,
+)();
+const SEARCH_QUERY = searchQuery(loadSettings([]));
 
 const BROWSER_HEADERS = [
   ['User-Agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'],
@@ -129,7 +136,7 @@ const { MENU } = new Function(`${read('n8n/shared/menu.js')}\nreturn { MENU };`)
 // «✍️ Записал причину» (W3), сообщение о сборе и итог после карточек (W2), утренняя сводка (W6)
 const MENU_KEYBOARD = {
   replyMarkup: 'replyKeyboard',
-  replyKeyboard: replyKeyboard([[MENU.list, MENU.stats]]),
+  replyKeyboard: replyKeyboard([[MENU.list, MENU.stats], [MENU.settings]]),
   replyKeyboardOptions: { resize_keyboard: true },
 };
 
@@ -193,6 +200,20 @@ const ifTrue = (wf, expression) => ({
 
 const VACANCIES = { __rl: true, mode: 'name', value: 'vacancies' };
 const BLACKLIST = { __rl: true, mode: 'name', value: 'blacklist' };
+const RUNS = { __rl: true, mode: 'name', value: 'runs' };
+const ALERTS = { __rl: true, mode: 'name', value: 'alerts' };
+const SETTINGS_TABLE = { __rl: true, mode: 'name', value: 'settings' };
+// Настройки бота (⚙️): все строки таблицы settings, один раз на запуск; пустая — значения по умолчанию
+const settingsNode = (wf, position) =>
+  node(
+    wf,
+    'Settings',
+    'dataTable',
+    1.1,
+    position,
+    { resource: 'row', operation: 'get', dataTableId: SETTINGS_TABLE, returnAll: true },
+    { executeOnce: true, alwaysOutputData: true },
+  );
 
 // Insert/Update пишут все поля item в одноимённые колонки
 const AUTO_MAP = {
@@ -205,7 +226,7 @@ const AUTO_MAP = {
 };
 
 // Update только перечисленных колонок: { колонка: выражение }
-const COLUMN_TYPES = Object.fromEntries(TABLES.vacancies);
+const COLUMN_TYPES = Object.fromEntries(Object.values(TABLES).flat());
 const setColumns = (values) => ({
   mappingMode: 'defineBelow',
   value: values,
@@ -269,7 +290,10 @@ const PANEL_LAYOUTS = [
         ['🤔 Возможно', panelButton('maybe')],
         ['❌ Мимо', panelButton('skip')],
       ],
-      [['📨 Уже откликался', panelButton('earlier')]],
+      [
+        ['📨 Уже откликался', panelButton('earlier')],
+        ['🚫 В ЧС', panelButton('ban')],
+      ],
       [
         ['🔗 На hh', { url: panelButton('url') }],
         ['⬅️ К списку', panelButton('back')],
@@ -304,6 +328,96 @@ const PANEL_LAYOUTS = [
       ],
     ],
   ],
+  // ⚙️ Настройки (07.10.2026): корень и разделы; «▸» — следующее значение по кругу
+  [
+    'settings',
+    [
+      [
+        ['🕐 Сбор', panelButton('collect.cb')],
+        ['🔎 Поиск', panelButton('search.cb')],
+      ],
+      [
+        ['🧹 Фильтр', panelButton('filter.cb')],
+        ['🤖 Нейросеть', panelButton('llm.cb')],
+      ],
+    ],
+  ],
+  [
+    'set collect',
+    [
+      [
+        [panelButton('day.text'), panelButton('day.cb')],
+        [panelButton('night.text'), panelButton('night.cb')],
+      ],
+      [[panelButton('window.text'), panelButton('window.cb')]],
+      [
+        [panelButton('pause.text'), panelButton('pause.cb')],
+        ['🔄 Собрать сейчас', 'sn'],
+      ],
+      [['⬅️ Настройки', 's:root']],
+    ],
+  ],
+  [
+    'set search',
+    [
+      [[panelButton('period.text'), panelButton('period.cb')]],
+      [
+        ['✏️ Везде в тексте', 'sw:search.anywhere'],
+        ['✏️ В названии', 'sw:search.in_name'],
+      ],
+      [
+        ['🔗 Открыть поиск', { url: panelButton('url') }],
+        ['⬅️ Настройки', 's:root'],
+      ],
+    ],
+  ],
+  [
+    'set filter',
+    [
+      [
+        [panelButton('responses.text'), panelButton('responses.cb')],
+        ['✏️ Стоп-слова', 'sw:filter.stop_words'],
+      ],
+      [
+        ['⚙️ Правила', 's:rules'],
+        [panelButton('blacklist.text'), 's:blacklist'],
+      ],
+      [['⬅️ Настройки', 's:root']],
+    ],
+  ],
+  // 10 правил фильтра (n8n/shared/settings.js → FILTER_RULES), по два в ряд
+  [
+    'set rules',
+    [
+      ...[0, 2, 4, 6, 8].map((i) => [
+        [panelButton(`r${i}.text`), panelButton(`r${i}.cb`)],
+        [panelButton(`r${i + 1}.text`), panelButton(`r${i + 1}.cb`)],
+      ]),
+      [['⬅️ Фильтр', 's:filter']],
+    ],
+  ],
+  ['set blacklist', [[['⬅️ Фильтр', 's:filter']]]],
+  [
+    'set confirm',
+    [
+      [
+        ['🗑 Убрать', panelButton('yes')],
+        ['Отмена', 's:blacklist'],
+      ],
+    ],
+  ],
+  [
+    'set llm',
+    [
+      [
+        [panelButton('provider.text'), panelButton('provider.cb')],
+        [panelButton('shadow.text'), panelButton('shadow.cb')],
+      ],
+      // Спорные случаи — списком «случай: решение» (решение пользователя 07.10.2026: текстом, а не кнопками)
+      [['✏️ Спорные случаи', 'sw:llm.cases']],
+      [['⬅️ Настройки', 's:root']],
+    ],
+  ],
 ];
 
 // W3: состояние после нажатия кнопки, которое посчитали ноды «Apply choice» и «Apply sent»
@@ -331,6 +445,59 @@ const telegramEdit = (wf, name, position, { messageId, text }) =>
     },
     { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
   );
+
+// Успешный запуск закрывает тревоги своего workflow (07.10.2026): «Open alerts» → «Recovered» («✅ снова работает»)
+// → «Send recovered» → «Close alerts». Возвращает ноды и связи; from — нода, после которой идёт цепочка
+const recoveryChain = (wf, workflowName, from, [x, y]) => {
+  const openFilter = {
+    matchType: 'allConditions',
+    filters: {
+      conditions: [
+        { keyName: 'workflow', keyValue: workflowName },
+        { keyName: 'is_open', condition: 'isTrue' },
+      ],
+    },
+  };
+  return {
+    nodes: [
+      node(
+        wf,
+        'Open alerts',
+        'dataTable',
+        1.1,
+        [x, y],
+        { resource: 'row', operation: 'get', dataTableId: ALERTS, ...openFilter, returnAll: true },
+        { executeOnce: true, alwaysOutputData: true, onError: 'continueRegularOutput' },
+      ),
+      code(wf, 'Recovered', 'n8n/w4-errors/recovered.js', [x + 220, y]),
+      telegram(wf, 'Send recovered', [x + 440, y], { fields: { disable_notification: true } }),
+      node(
+        wf,
+        'Close alerts',
+        'dataTable',
+        1.1,
+        [x + 660, y],
+        {
+          resource: 'row',
+          operation: 'update',
+          dataTableId: ALERTS,
+          ...openFilter,
+          columns: setColumns({ is_open: '={{ false }}' }),
+          options: {},
+        },
+        { onError: 'continueRegularOutput' },
+      ),
+    ],
+    links: [
+      [from, 'Open alerts'],
+      ['Open alerts', 'Recovered'],
+      ['Recovered', 'Send recovered'],
+      ['Send recovered', 'Close alerts'],
+    ],
+  };
+};
+const W1_RECOVERY = recoveryChain('W1', 'W1 Collector', 'Finish run', [2420, 0]);
+const W2_RECOVERY = recoveryChain('W2', 'W2 Score', 'Called by W1', [1980, 900]);
 
 // Перерисовать сообщение — текст и кнопки (rows = null — убрать все кнопки). По умолчанию — нода W3
 const editMessage = (name, position, { chatId, messageId, text, rows }, wf = 'W3', extra = {}) =>
@@ -452,62 +619,84 @@ const workflows = {
     IDS.collector,
     'W1 Collector',
     [
-      // МСК: днём 07:00–17:30 каждые 30 мин, ночью 18, 20, 22, 00, 02, 04, 06 — 29 сборов в сутки
-      // (решение пользователя 07.10.2026). Меняешь расписание — поправь isCollectSlot в n8n/w6-summary/summary.js
-      node('W1', 'Schedule', 'scheduleTrigger', 1.4, [0, -100], {
-        rule: {
-          interval: [
-            { field: 'cronExpression', expression: '0,30 7-17 * * *' },
-            { field: 'cronExpression', expression: '0 0,2,4,6,18,20,22 * * *' },
-          ],
-        },
-        // Mac спал во время запуска → после пробуждения выполнить последний пропущенный.
-        // coalesce_owner — один догоняющий запуск на всю ноду: с coalesce (на каждое правило) сон через 18:00
-        // запустил бы W1 дважды параллельно → дубли строк и карточек
-        misfirePolicy: 'coalesce_owner',
-      }),
+      // С 07.10.2026 сбор запускают «часы» W8 Clock по расписанию из настроек бота (⚙️ → 🕐 Сбор) и кнопка
+      // «🔄 Собрать сейчас» (W7). Они передают kind: schedule | catchup | bot
+      node('W1', 'Called', 'executeWorkflowTrigger', 1.1, [0, -100], { inputSource: 'passthrough' }),
       node('W1', 'Manual', 'manualTrigger', 1, [0, 100], {}),
+      // Журнал сборов (07.10.2026): другой сбор ещё идёт — запись running моложе 10 мин → этот пропускаем
+      node(
+        'W1',
+        'Busy',
+        'dataTable',
+        1.1,
+        [220, 0],
+        {
+          resource: 'row',
+          operation: 'get',
+          dataTableId: RUNS,
+          matchType: 'allConditions',
+          filters: { conditions: [{ keyName: 'status', keyValue: 'running' }] },
+          returnAll: true,
+        },
+        { executeOnce: true, alwaysOutputData: true },
+      ),
+      code('W1', 'Start', 'n8n/w1-collector/start.js', [440, 0]),
+      node('W1', 'Start run', 'dataTable', 1.1, [660, 0], {
+        resource: 'row',
+        operation: 'insert',
+        dataTableId: RUNS,
+        columns: AUTO_MAP,
+        options: {},
+      }),
       node(
         'W1',
         'Any row',
         'dataTable',
         1.1,
-        [220, 0],
+        [880, 0],
         { resource: 'row', operation: 'get', dataTableId: VACANCIES, returnAll: false, limit: 1 },
-        { alwaysOutputData: true },
+        { alwaysOutputData: true, executeOnce: true },
       ),
-      code('W1', 'Plan', 'n8n/w1-collector/plan.js', [440, 0]),
+      settingsNode('W1', [770, 150]),
+      code('W1', 'Plan', 'n8n/w1-collector/plan.js', [1100, 0]),
       node(
         'W1',
         'Search hh',
         'httpRequest',
         4.5,
-        [660, 0],
+        [1320, 0],
         hhRequest({
           url: SEARCH_URL,
-          query: [...SEARCH_QUERY, ['page', '={{ $json.page }}']],
+          // Слова и период — из «Plan» (настройки бота)
+          query: [
+            ...SEARCH_QUERY.map(([key, value]) => [
+              key,
+              { text: '={{ $json.text }}', search_period: '={{ $json.period }}' }[key] ?? value,
+            ]),
+            ['page', '={{ $json.page }}'],
+          ],
           batching: true,
         }),
       ),
-      code('W1', 'Parse search', 'n8n/w1-collector/parse-search.js', [880, 0]),
-      node('W1', 'OK?', 'if', 2.3, [1100, 0], ifTrue('W1', '={{ $json.ok }}')),
+      code('W1', 'Parse search', 'n8n/w1-collector/parse-search.js', [1540, 0]),
+      node('W1', 'OK?', 'if', 2.3, [1760, 0], ifTrue('W1', '={{ $json.ok }}')),
       // Сигнал стражу healthchecks.io: поиск прошёл. Нет сигнала дольше нормы — страж сам пишет в Telegram
-      node('W1', 'HC ping?', 'if', 2.3, [1320, -300], ifTrue('W1', '={{ Boolean($env.HC_PING_URL) }}')),
+      node('W1', 'HC ping?', 'if', 2.3, [1980, -300], ifTrue('W1', '={{ Boolean($env.HC_PING_URL) }}')),
       node(
         'W1',
         'HC ping',
         'httpRequest',
         4.5,
-        [1540, -300],
+        [2200, -300],
         { method: 'GET', url: '={{ $env.HC_PING_URL }}', options: { timeout: 10000 } },
         { onError: 'continueRegularOutput' },
       ),
-      node('W1', 'Split vacancies', 'splitOut', 1, [1320, -100], {
+      node('W1', 'Split vacancies', 'splitOut', 1, [1980, -100], {
         fieldToSplitOut: 'vacancies',
         include: 'noOtherFields',
         options: {},
       }),
-      node('W1', 'Is new', 'dataTable', 1.1, [1540, -100], {
+      node('W1', 'Is new', 'dataTable', 1.1, [2200, -100], {
         resource: 'row',
         operation: 'rowNotExists',
         dataTableId: VACANCIES,
@@ -524,33 +713,33 @@ const workflows = {
         'Blacklist',
         'dataTable',
         1.1,
-        [1760, -100],
+        [2420, -100],
         { resource: 'row', operation: 'get', dataTableId: BLACKLIST, returnAll: true },
         { executeOnce: true, alwaysOutputData: true },
       ),
-      code('W1', 'Filter search', 'n8n/w1-collector/filter-search.js', [1980, -100]),
-      node('W1', 'Insert', 'dataTable', 1.1, [2200, -100], {
+      code('W1', 'Filter search', 'n8n/w1-collector/filter-search.js', [2640, -100]),
+      node('W1', 'Insert', 'dataTable', 1.1, [2860, -100], {
         resource: 'row',
         operation: 'insert',
         dataTableId: VACANCIES,
         columns: AUTO_MAP,
         options: {},
       }),
-      node('W1', 'Is candidate', 'if', 2.3, [2420, -100], ifTrue('W1', "={{ $json.status === 'new' }}")),
+      node('W1', 'Is candidate', 'if', 2.3, [3080, -100], ifTrue('W1', "={{ $json.status === 'new' }}")),
       node(
         'W1',
         'Vacancy page',
         'httpRequest',
         4.5,
-        [2640, -200],
+        [3300, -200],
         hhRequest({
           url: '={{ $json.url }}',
           headers: [...BROWSER_HEADERS, ['Referer', 'https://hh.ru/search/vacancy']],
           batching: true,
         }),
       ),
-      code('W1', 'Parse vacancy', 'n8n/w1-collector/parse-vacancy.js', [2860, -200]),
-      node('W1', 'Update', 'dataTable', 1.1, [3080, -200], {
+      code('W1', 'Parse vacancy', 'n8n/w1-collector/parse-vacancy.js', [3520, -200]),
+      node('W1', 'Update', 'dataTable', 1.1, [3740, -200], {
         resource: 'row',
         operation: 'update',
         dataTableId: VACANCIES,
@@ -561,28 +750,72 @@ const workflows = {
       }),
       // Оценка сразу после сбора. Ниже ветки вакансий: n8n (execution order v1) выполняет её последней,
       // когда новые вакансии уже detailed. Вызывается на каждом успешном сборе — так дооцениваются и хвосты после сбоев
-      code('W1', 'Score job', 'n8n/w1-collector/score-job.js', [1320, 0]),
-      runWorkflow('W1', 'Score', [1540, 0], IDS.score),
-      node('W1', 'To file', 'convertToFile', 1.1, [1320, 100], {
+      code('W1', 'Score job', 'n8n/w1-collector/score-job.js', [1980, 0]),
+      // Итог сбора — в журнал. Выше «Score»: n8n (execution order v1) запишет его до вызова W2
+      node('W1', 'Finish run', 'dataTable', 1.1, [2200, 0], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: RUNS,
+        ...byId('={{ $json.runId }}'),
+        columns: setColumns({
+          status: 'ok',
+          finished_at: '={{ new Date().toISOString() }}',
+          found: '={{ $json.run.found }}',
+          uniq: '={{ $json.run.uniq }}',
+          fresh: '={{ $json.run.fresh }}',
+          rejected: '={{ $json.run.rejected }}',
+          scoring: '={{ $json.run.scoring }}',
+          pages: '={{ $json.run.pages }}',
+        }),
+        options: {},
+      }),
+      ...W1_RECOVERY.nodes,
+      runWorkflow('W1', 'Score', [2200, 150], IDS.score),
+      node('W1', 'To file', 'convertToFile', 1.1, [1980, 300], {
         operation: 'toText',
         sourceProperty: 'html',
         binaryPropertyName: 'data',
         options: { fileName: 'hh-fail.html' },
       }),
-      node('W1', 'Save fixture', 'readWriteFile', 1.1, [1540, 100], {
+      node('W1', 'Save fixture', 'readWriteFile', 1.1, [2200, 300], {
         operation: 'write',
         fileName: "=/home/node/.n8n-files/fixtures/hh-fail-{{ $now.toFormat('yyyyLLdd-HHmmss') }}.html",
         dataPropertyName: 'data',
         options: {},
       }),
-      node('W1', 'Stop', 'stopAndError', 1, [1760, 100], {
+      // Поломка — тоже в журнал (ошибка записи журнала не должна спрятать саму поломку)
+      node(
+        'W1',
+        'Fail run',
+        'dataTable',
+        1.1,
+        [2420, 300],
+        {
+          resource: 'row',
+          operation: 'update',
+          dataTableId: RUNS,
+          ...byId("={{ $('Start run').first().json.id }}"),
+          columns: setColumns({
+            status: 'error',
+            finished_at: '={{ new Date().toISOString() }}',
+            error: "={{ $('Parse search').first().json.reason }}",
+          }),
+          options: {},
+        },
+        { onError: 'continueRegularOutput' },
+      ),
+      node('W1', 'Stop', 'stopAndError', 1, [2640, 300], {
         errorType: 'errorMessage',
         errorMessage: "={{ $('Parse search').first().json.reason }}",
       }),
     ],
     [
-      ['Schedule', 'Any row'],
-      ['Manual', 'Any row'],
+      ['Called', 'Busy'],
+      ['Manual', 'Busy'],
+      ['Busy', 'Start'],
+      ['Start', 'Start run'],
+      ['Start run', 'Settings'],
+      ['Settings', 'Any row'],
       ['Any row', 'Plan'],
       ['Plan', 'Search hh'],
       ['Search hh', 'Parse search'],
@@ -599,12 +832,17 @@ const workflows = {
       ['Vacancy page', 'Parse vacancy'],
       ['Parse vacancy', 'Update'],
       ['OK?', 'Score job', 0],
+      ['Score job', 'Finish run'],
+      ...W1_RECOVERY.links,
       ['Score job', 'Score'],
       ['OK?', 'To file', 1],
       ['To file', 'Save fixture'],
-      ['Save fixture', 'Stop'],
+      ['Save fixture', 'Fail run'],
+      ['Fail run', 'Stop'],
     ],
-    { timezone: 'Europe/Moscow', errorWorkflow: IDS.errors },
+    // Успешные запуски не храним (07.10.2026): каждый несёт страницу поиска hh (~1,7 МБ), а итог сбора лежит
+    // в журнале runs. Ошибки сохраняются и идут в W4
+    { timezone: 'Europe/Moscow', errorWorkflow: IDS.errors, saveDataSuccessExecution: 'none' },
   ),
 
   'w2-score': workflow(
@@ -627,29 +865,45 @@ const workflows = {
         orderByColumn: 'createdAt',
         orderByDirection: 'ASC',
       }),
+      // Захват (07.10.2026): detailed → scoring одним UPDATE с условием — второй запуск W2 эти строки уже не возьмёт
+      // (Update отдаёт только обновлённые строки). Карточка не ушла — «Release» вернёт строку в detailed
+      node('W2', 'Claim', 'dataTable', 1.1, [440, 0], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        matchType: 'allConditions',
+        filters: {
+          conditions: [
+            { keyName: 'id', keyValue: '={{ $json.id }}' },
+            { keyName: 'status', keyValue: 'detailed' },
+          ],
+        },
+        columns: setColumns({ status: 'scoring' }),
+        options: {},
+      }),
       node(
         'W2',
         'Resume',
         'readWriteFile',
         1.1,
-        [440, 0],
+        [660, 0],
         { operation: 'read', fileSelector: '/home/node/.n8n-files/docs/resume.md', options: {} },
         { executeOnce: true },
       ),
-      node('W2', 'Resume text', 'extractFromFile', 1.1, [660, 0], {
+      node('W2', 'Resume text', 'extractFromFile', 1.1, [880, 0], {
         operation: 'text',
         binaryPropertyName: 'data',
         destinationKey: 'resume',
         options: {},
       }),
-      code('W2', 'Build prompt', 'n8n/w2-score/build-prompt.js', [880, 0]),
-      node('W2', 'Claude?', 'if', 2.3, [1100, 0], ifTrue('W2', "={{ $json.provider === 'claude' }}")),
+      code('W2', 'Build prompt', 'n8n/w2-score/build-prompt.js', [1100, 0]),
+      node('W2', 'Claude?', 'if', 2.3, [1320, 0], ifTrue('W2', "={{ $json.provider === 'claude' }}")),
       node(
         'W2',
         'Claude',
         'httpRequest',
         4.5,
-        [1320, -100],
+        [1540, -100],
         llmRequest({
           url: 'https://api.anthropic.com/v1/messages',
           credential: 'anthropicApi',
@@ -663,7 +917,7 @@ const workflows = {
         'Gemini',
         'httpRequest',
         4.5,
-        [1320, 100],
+        [1540, 100],
         llmRequest({
           url: '=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.model }}:generateContent',
           credential: 'googlePalmApi',
@@ -672,9 +926,11 @@ const workflows = {
         }),
         { credentials: { googlePalmApi: { id: IDS.geminiCredential, name: 'Gemini' } }, onError: 'continueRegularOutput' },
       ),
-      code('W2', 'Parse verdict', 'n8n/w2-score/parse-verdict.js', [1540, 0]),
-      code('W2', 'Format card', 'n8n/w2-score/format-card.js', [1760, -100]),
-      telegram('W2', 'Send card', [1980, -100], {
+      code('W2', 'Parse verdict', 'n8n/w2-score/parse-verdict.js', [1760, 0]),
+      // Настройки бота: провайдер и правила (Build prompt), теневой режим (Format card, Quiet skips)
+      settingsNode('W2', [550, 150]),
+      code('W2', 'Format card', 'n8n/w2-score/format-card.js', [1980, -100]),
+      telegram('W2', 'Send card', [2200, -100], {
         markup: {
           replyMarkup: 'inlineKeyboard',
           inlineKeyboard: keyboard([
@@ -683,16 +939,19 @@ const workflows = {
               ['🤔 Возможно', '=v:{{ $json.id }}:maybe'],
               ['❌ Мимо', '=v:{{ $json.id }}:skip'],
             ],
-            // Откликался до бота: без письма, вне теневого режима
-            [['📨 Уже откликался', '=v:{{ $json.id }}:earlier']],
+            // Откликался до бота: без письма, вне теневого режима. «🚫 В ЧС» — компания в чёрный список, вакансия — ❌
+            [
+              ['📨 Уже откликался', '=v:{{ $json.id }}:earlier'],
+              ['🚫 В ЧС', '=v:{{ $json.id }}:ban'],
+            ],
           ]),
         },
         fields: { disable_notification: '={{ $json.silent }}' },
         // Ошибка одной карточки не должна терять остальные: Card sent запишет только отправленные
         extra: { onError: 'continueRegularOutput' },
       }),
-      code('W2', 'Card sent', 'n8n/w2-score/card-sent.js', [2200, -100]),
-      node('W2', 'Save cards', 'dataTable', 1.1, [2420, -100], {
+      code('W2', 'Card sent', 'n8n/w2-score/card-sent.js', [2420, -100]),
+      node('W2', 'Save cards', 'dataTable', 1.1, [2640, -100], {
         resource: 'row',
         operation: 'update',
         dataTableId: VACANCIES,
@@ -702,22 +961,76 @@ const workflows = {
       }),
       // Сообщения после запуска: о сборе («🔎 Сбор» из W1), итог оценки, тревоги. Своя ветка от триггера ниже ветки
       // карточек: n8n (execution order v1) выполняет её последней, даже если «Pending» пуст и карточек не было
-      code('W2', 'Summary', 'n8n/w2-score/summary.js', [1760, 300]),
-      telegram('W2', 'Send summary', [1980, 300], {
+      // Теневой режим выключен: skip без карточки — строка сразу skipped (ветка ниже карточек)
+      code('W2', 'Quiet skips', 'n8n/w2-score/quiet-skips.js', [1980, 150]),
+      node('W2', 'Save quiet skips', 'dataTable', 1.1, [2200, 150], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        ...byId('={{ $json.id }}'),
+        columns: AUTO_MAP,
+        options: {},
+      }),
+      code('W2', 'Summary', 'n8n/w2-score/summary.js', [1980, 300]),
+      telegram('W2', 'Send summary', [2200, 300], {
         fields: { disable_notification: '={{ $json.silent }}' },
         markup: MENU_KEYBOARD,
       }),
       // Сообщение о сборе одно: прошлое удаляется (решение пользователя 07.10.2026)
-      code('W2', 'Live report', 'n8n/w2-score/live-report.js', [2200, 300]),
+      code('W2', 'Live report', 'n8n/w2-score/live-report.js', [2420, 300]),
       node(
         'W2',
         'Delete report',
         'telegram',
         1.2,
-        [2420, 300],
+        [2640, 300],
         { resource: 'message', operation: 'deleteMessage', chatId: '={{ $env.TG_CHAT_ID }}', messageId: '={{ $json.messageId }}' },
         // Сообщение старше 48 ч Telegram не удалит — это не ошибка
         { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
+      ),
+      // Успешный запуск закрывает тревоги W2 (самая нижняя ветка)
+      ...W2_RECOVERY.nodes,
+      // Захваченные строки без отправленной карточки → снова detailed
+      code('W2', 'Release', 'n8n/w2-score/release.js', [1980, 700]),
+      node(
+        'W2',
+        'Save release',
+        'dataTable',
+        1.1,
+        [2200, 700],
+        {
+          resource: 'row',
+          operation: 'update',
+          dataTableId: VACANCIES,
+          matchType: 'allConditions',
+          filters: {
+            conditions: [
+              { keyName: 'id', keyValue: '={{ $json.id }}' },
+              { keyName: 'status', keyValue: 'scoring' },
+            ],
+          },
+          columns: setColumns({ status: 'detailed' }),
+          options: {},
+        },
+        { onError: 'continueRegularOutput' },
+      ),
+      // Журнал сборов: число карточек этого сбора (ниже «Summary» — выполняется последней)
+      code('W2', 'Run stats', 'n8n/w2-score/run-stats.js', [1980, 500]),
+      node(
+        'W2',
+        'Save run stats',
+        'dataTable',
+        1.1,
+        [2200, 500],
+        {
+          resource: 'row',
+          operation: 'update',
+          dataTableId: RUNS,
+          ...byId('={{ $json.id }}'),
+          columns: setColumns({ cards: '={{ $json.cards }}' }),
+          options: {},
+        },
+        { onError: 'continueRegularOutput' },
       ),
     ],
     [
@@ -725,7 +1038,15 @@ const workflows = {
       ['Manual', 'Pending'],
       ['Called by W1', 'Summary'],
       ['Manual', 'Summary'],
-      ['Pending', 'Resume'],
+      ['Called by W1', 'Run stats'],
+      ['Run stats', 'Save run stats'],
+      ['Called by W1', 'Release'],
+      ['Manual', 'Release'],
+      ['Release', 'Save release'],
+      ...W2_RECOVERY.links,
+      ['Pending', 'Claim'],
+      ['Claim', 'Settings'],
+      ['Settings', 'Resume'],
       ['Resume', 'Resume text'],
       ['Resume text', 'Build prompt'],
       ['Build prompt', 'Claude?'],
@@ -734,6 +1055,8 @@ const workflows = {
       ['Claude', 'Parse verdict'],
       ['Gemini', 'Parse verdict'],
       ['Parse verdict', 'Format card'],
+      ['Parse verdict', 'Quiet skips'],
+      ['Quiet skips', 'Save quiet skips'],
       ['Format card', 'Send card'],
       ['Send card', 'Card sent'],
       ['Card sent', 'Save cards'],
@@ -777,7 +1100,11 @@ const workflows = {
         operation: 'update',
         dataTableId: VACANCIES,
         ...byId('={{ $json.id }}'),
-        columns: setColumns({ my_decision: '={{ $json.my_decision }}', status: '={{ $json.status }}' }),
+        columns: setColumns({
+          my_decision: '={{ $json.my_decision }}',
+          status: '={{ $json.status }}',
+          my_reason: '={{ $json.my_reason }}',
+        }),
         options: {},
       }),
       node(
@@ -802,7 +1129,10 @@ const workflows = {
           ['🤔 Возможно', `=v:{{ ${CHOICE}.id }}:maybe`],
           ['❌ Мимо', `=v:{{ ${CHOICE}.id }}:skip`],
         ],
-        [['📨 Уже откликался', `=v:{{ ${CHOICE}.id }}:earlier`]],
+        [
+          ['📨 Уже откликался', `=v:{{ ${CHOICE}.id }}:earlier`],
+          ['🚫 В ЧС', `=v:{{ ${CHOICE}.id }}:ban`],
+        ],
       ]),
       node('W3', 'Ask?', 'if', 2.3, [1980, -200], ifTrue('W3', `={{ Boolean(${CHOICE}.ask) }}`)),
       telegram('W3', 'Ask why', [2200, -200], {
@@ -909,11 +1239,74 @@ const workflows = {
       // Решение принято в карточке на панели меню: после правки исходной карточки — перерисовать панель (W7).
       // Ветка ниже «Decided?»: n8n (execution order v1) выполняет её последней
       node('W3', 'From panel?', 'if', 2.3, [1540, 150], ifTrue('W3', `={{ Boolean(${CHOICE}.panel) }}`)),
+      // «🚫 В ЧС» (07.10.2026): компания — в чёрный список (название как в карточке; id на hh — в комментарии)
+      node('W3', 'Ban?', 'if', 2.3, [1540, 800], ifTrue('W3', `={{ Boolean(${CHOICE}.ban) }}`)),
+      node(
+        'W3',
+        'Ban company',
+        'dataTable',
+        1.1,
+        [1760, 800],
+        {
+          resource: 'row',
+          operation: 'insert',
+          dataTableId: BLACKLIST,
+          columns: setColumns({
+            company: `={{ ${CHOICE}.ban.company }}`,
+            comment: `={{ 'кнопка «🚫 В ЧС» ' + $now.toFormat('dd.MM') + (${CHOICE}.ban.company_id ? ' · hh ' + ${CHOICE}.ban.company_id : '') + ' · ' + ${CHOICE}.ban.title }}`,
+          }),
+          options: {},
+        },
+        { onError: 'continueRegularOutput' },
+      ),
       code('W3', 'Panel job', 'n8n/w3-telegram/panel-job.js', [1760, 150]),
       runWorkflow('W3', 'Panel refresh', [1980, 150], IDS.menu),
       // Письмо: одна нода на три ветки (✅, «🔄 Переписать», ответ на письмо) → W5 Letter
       code('W3', 'Letter job', 'n8n/w3-telegram/letter-job.js', [2200, 100]),
-      runWorkflow('W3', 'Write letter', [2420, 100], IDS.letter),
+      // Письмо уже пишется (07.10.2026): второе нажатие ✅ или «🔄» не запускает второй W5. Блокировка — letter_lock,
+      // захват — UPDATE «где пусто». Зависшая блокировка (W5 упал, не дойдя до «Unlock») старше 3 мин снимается
+      node(
+        'W3',
+        'Unlock stale',
+        'dataTable',
+        1.1,
+        [2420, 100],
+        {
+          resource: 'row',
+          operation: 'update',
+          dataTableId: VACANCIES,
+          matchType: 'allConditions',
+          filters: {
+            conditions: [
+              { keyName: 'id', keyValue: '={{ $json.id }}' },
+              {
+                keyName: 'letter_lock',
+                condition: 'lt',
+                keyValue: '={{ new Date(Date.now() - 3 * 60 * 1000).toISOString() }}',
+              },
+            ],
+          },
+          columns: setColumns({ letter_lock: '' }),
+          options: {},
+        },
+        { alwaysOutputData: true },
+      ),
+      node('W3', 'Letter lock', 'dataTable', 1.1, [2640, 100], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        matchType: 'allConditions',
+        filters: {
+          conditions: [
+            { keyName: 'id', keyValue: "={{ $('Letter job').first().json.id }}" },
+            { keyName: 'letter_lock', condition: 'isEmpty' },
+          ],
+        },
+        columns: setColumns({ letter_lock: '={{ new Date().toISOString() }}' }),
+        options: {},
+      }),
+      code('W3', 'Locked job', 'n8n/w3-telegram/locked-job.js', [2860, 100]),
+      runWorkflow('W3', 'Write letter', [3080, 100], IDS.letter),
     ],
     [
       ['Telegram Trigger', 'Route'],
@@ -926,6 +1319,8 @@ const workflows = {
       ['Save choice', 'Answer'],
       ['Answer', 'Decided?'],
       ['Answer', 'From panel?'],
+      ['Answer', 'Ban?'],
+      ['Ban?', 'Ban company', 0],
       ['From panel?', 'Panel job', 0],
       ['From panel?', 'Sync job', 1],
       ['Panel job', 'Panel refresh'],
@@ -958,7 +1353,10 @@ const workflows = {
       ['Revise?', 'Letter job', 0],
       ['Revise?', 'Save reason', 1],
       ['Save reason', 'Confirm'],
-      ['Letter job', 'Write letter'],
+      ['Letter job', 'Unlock stale'],
+      ['Unlock stale', 'Letter lock'],
+      ['Letter lock', 'Locked job'],
+      ['Locked job', 'Write letter'],
     ],
     { errorWorkflow: IDS.errors },
   ),
@@ -1023,6 +1421,8 @@ const workflows = {
         destinationKey: 'example',
         options: {},
       }),
+      // Провайдер нейросети — из настроек бота (⚙️ → 🤖 Нейросеть)
+      settingsNode('W5', [770, 150]),
       code('W5', 'Build letter', 'n8n/w5-letter/build-letter.js', [1760, 0]),
       node('W5', 'Claude?', 'if', 2.3, [1980, 0], ifTrue('W5', "={{ $json.provider === 'claude' }}")),
       node(
@@ -1082,13 +1482,32 @@ const workflows = {
         { resource: 'message', operation: 'deleteMessage', chatId: '={{ $env.TG_CHAT_ID }}', messageId: '={{ $json.messageId }}' },
         { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
       ),
+      // Письмо готово или не получилось — снять блокировку W3 «Letter lock». Ветка ниже — выполняется последней
+      node(
+        'W5',
+        'Unlock',
+        'dataTable',
+        1.1,
+        [440, 600],
+        {
+          resource: 'row',
+          operation: 'update',
+          dataTableId: VACANCIES,
+          ...byId('={{ $json.id }}'),
+          columns: setColumns({ letter_lock: '' }),
+          options: {},
+        },
+        { onError: 'continueRegularOutput' },
+      ),
     ],
     [
       ['Called by W3', 'Jobs'],
+      ['Called by W3', 'Unlock'],
       ['Manual', 'Approved'],
       ['Approved', 'Jobs'],
       ['Jobs', 'Vacancy'],
-      ['Vacancy', 'Resume'],
+      ['Vacancy', 'Settings'],
+      ['Settings', 'Resume'],
       ['Resume', 'Resume text'],
       ['Resume text', 'Example'],
       ['Example', 'Example text'],
@@ -1164,13 +1583,34 @@ const workflows = {
       }),
       node('W6', 'Has letter?', 'if', 2.3, [1320, 50], ifTrue('W6', '={{ Boolean($json.tg_letter_id) }}')),
       telegramEdit('W6', 'Letter: archived', [1540, 50], { messageId: '={{ $json.tg_letter_id }}', text: '={{ $json.letterText }}' }),
-      // Запуски n8n за сутки — публичный API (ключ в credential «n8n API»)
+      // Расписание и пауза — из настроек бота: сколько сборов положено
+      settingsNode('W6', [660, 250]),
+      // Журнал сборов за последние сутки с запасом — «сборов N из M»
+      node(
+        'W6',
+        'Runs',
+        'dataTable',
+        1.1,
+        [880, 250],
+        {
+          resource: 'row',
+          operation: 'get',
+          dataTableId: RUNS,
+          returnAll: false,
+          limit: 200,
+          orderBy: true,
+          orderByColumn: 'createdAt',
+          orderByDirection: 'DESC',
+        },
+        { executeOnce: true, alwaysOutputData: true },
+      ),
+      // Запуски n8n за сутки — публичный API (ключ в credential «n8n API»): ошибки всех workflow
       node(
         'W6',
         'Executions',
         'httpRequest',
         4.5,
-        [660, 250],
+        [1100, 250],
         {
           method: 'GET',
           url: 'http://localhost:5678/api/v1/executions',
@@ -1193,7 +1633,7 @@ const workflows = {
         'Tunnel',
         'httpRequest',
         4.5,
-        [880, 250],
+        [1320, 250],
         {
           method: 'GET',
           url: '=https://{{ $env.NGROK_DOMAIN }}/',
@@ -1201,11 +1641,85 @@ const workflows = {
         },
         { onError: 'continueRegularOutput' },
       ),
-      code('W6', 'Summary', 'n8n/w6-summary/summary.js', [1100, 250]),
-      telegram('W6', 'Send summary', [1320, 250], {
+      code('W6', 'Summary', 'n8n/w6-summary/summary.js', [1540, 250]),
+      telegram('W6', 'Send summary', [1760, 250], {
         fields: { disable_notification: '={{ $json.silent }}' },
         markup: MENU_KEYBOARD,
       }),
+      // Чистка — ниже сводки, выполняется последней: описания отработанных вакансий старше 30 дней
+      // и журнал сборов старше 90 дней
+      code('W6', 'Cleanup', 'n8n/w6-summary/cleanup.js', [660, 600]),
+      node('W6', 'Save stripped', 'dataTable', 1.1, [880, 600], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        ...byId('={{ $json.id }}'),
+        columns: setColumns({ description: '', snippet: '' }),
+        options: {},
+      }),
+      node(
+        'W6',
+        'Delete old alerts',
+        'dataTable',
+        1.1,
+        [660, 1200],
+        {
+          resource: 'row',
+          operation: 'deleteRows',
+          dataTableId: ALERTS,
+          matchType: 'allConditions',
+          filters: {
+            conditions: [
+              {
+                keyName: 'last_at',
+                condition: 'lt',
+                keyValue: '={{ new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString() }}',
+              },
+            ],
+          },
+          options: {},
+        },
+        { executeOnce: true, onError: 'continueRegularOutput' },
+      ),
+      code('W6', 'Unstick', 'n8n/w6-summary/unstick.js', [660, 1000]),
+      node('W6', 'Save unstuck', 'dataTable', 1.1, [880, 1000], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        matchType: 'allConditions',
+        filters: {
+          conditions: [
+            { keyName: 'id', keyValue: '={{ $json.id }}' },
+            { keyName: 'status', keyValue: 'scoring' },
+          ],
+        },
+        columns: setColumns({ status: 'detailed' }),
+        options: {},
+      }),
+      node(
+        'W6',
+        'Delete old runs',
+        'dataTable',
+        1.1,
+        [660, 800],
+        {
+          resource: 'row',
+          operation: 'deleteRows',
+          dataTableId: RUNS,
+          matchType: 'allConditions',
+          filters: {
+            conditions: [
+              {
+                keyName: 'started_at',
+                condition: 'lt',
+                keyValue: '={{ new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString() }}',
+              },
+            ],
+          },
+          options: {},
+        },
+        { executeOnce: true, onError: 'continueRegularOutput' },
+      ),
     ],
     [
       ['Schedule', 'All rows'],
@@ -1223,10 +1737,18 @@ const workflows = {
       ['Archived done', 'Save archived'],
       ['Archive status', 'Has letter?'],
       ['Has letter?', 'Letter: archived', 0],
-      ['Plan', 'Executions'],
+      ['Plan', 'Settings'],
+      ['Settings', 'Runs'],
+      ['Runs', 'Executions'],
       ['Executions', 'Tunnel'],
       ['Tunnel', 'Summary'],
       ['Summary', 'Send summary'],
+      ['Plan', 'Cleanup'],
+      ['Cleanup', 'Save stripped'],
+      ['Plan', 'Delete old runs'],
+      ['Plan', 'Unstick'],
+      ['Plan', 'Delete old alerts'],
+      ['Unstick', 'Save unstuck'],
     ],
     { timezone: 'Europe/Moscow', errorWorkflow: IDS.errors },
   ),
@@ -1248,46 +1770,97 @@ const workflows = {
       }),
       // p:x — неактивная кнопка: только убрать «часики»
       node('W7', 'Work?', 'if', 2.3, [1100, 0], ifTrue('W7', "={{ $('Job').first().json.view !== 'noop' }}")),
+      settingsNode('W7', [1320, 0]),
+      // ⚙️ Настройки (07.10.2026). Ветки выше «Rows» выполняются раньше: «Render» покажет новое значение
+      code('W7', 'Setting change', 'n8n/w7-menu/setting-change.js', [1540, -1300]),
+      node('W7', 'Save setting', 'dataTable', 1.1, [1760, -1300], {
+        resource: 'row',
+        operation: 'upsert',
+        dataTableId: SETTINGS_TABLE,
+        matchType: 'allConditions',
+        filters: { conditions: [{ keyName: 'name', keyValue: '={{ $json.name }}' }] },
+        columns: setColumns({ name: '={{ $json.name }}', value_json: '={{ $json.value_json }}' }),
+        options: {},
+      }),
+      // Расписание поменялось — страж healthchecks.io получает новый OnCalendar (или паузу) через свой API
+      code('W7', 'HC plan', 'n8n/w7-menu/hc-plan.js', [1980, -1300]),
+      node(
+        'W7',
+        'HC sync',
+        'httpRequest',
+        4.5,
+        [2200, -1300],
+        {
+          method: 'POST',
+          url: '={{ $json.url }}',
+          authentication: 'genericCredentialType',
+          genericAuthType: 'httpHeaderAuth',
+          sendBody: true,
+          contentType: 'json',
+          specifyBody: 'json',
+          jsonBody: '={{ JSON.stringify($json.body) }}',
+          options: { timeout: 15000 },
+        },
+        {
+          credentials: { httpHeaderAuth: { id: IDS.hcCredential, name: 'healthchecks API' } },
+          onError: 'continueRegularOutput',
+        },
+      ),
+      code('W7', 'Collect now', 'n8n/w7-menu/collect-now.js', [1540, -1100]),
+      runWorkflow('W7', 'Run W1', [1760, -1100], IDS.collector),
+      // Чёрный список — для ⚙️ → 🧹 Фильтр; «🗑 Убрать» удаляет строку до «Render»
+      node(
+        'W7',
+        'Blacklist',
+        'dataTable',
+        1.1,
+        [1430, 150],
+        { resource: 'row', operation: 'get', dataTableId: BLACKLIST, returnAll: true },
+        { executeOnce: true, alwaysOutputData: true },
+      ),
+      code('W7', 'Unban', 'n8n/w7-menu/unban.js', [1540, -900]),
+      node(
+        'W7',
+        'Delete ban',
+        'dataTable',
+        1.1,
+        [1760, -900],
+        { resource: 'row', operation: 'deleteRows', dataTableId: BLACKLIST, ...byId('={{ $json.id }}'), options: {} },
+        { onError: 'continueRegularOutput' },
+      ),
       node(
         'W7',
         'Rows',
         'dataTable',
         1.1,
-        [1320, 0],
+        [1540, 0],
         { resource: 'row', operation: 'get', dataTableId: VACANCIES, returnAll: true },
         { executeOnce: true, alwaysOutputData: true },
       ),
-      // Последние запуски W1 — для статистики (публичный API n8n, ключ в credential «n8n API»)
+      // Журнал сборов — для статистики: последние 100 записей (сутки — это 29 сборов)
       node(
         'W7',
-        'Executions',
-        'httpRequest',
-        4.5,
-        [1540, 0],
+        'Runs',
+        'dataTable',
+        1.1,
+        [1760, 0],
         {
-          method: 'GET',
-          url: 'http://localhost:5678/api/v1/executions',
-          authentication: 'predefinedCredentialType',
-          nodeCredentialType: 'n8nApi',
-          sendQuery: true,
-          specifyQuery: 'keypair',
-          queryParameters: pairs([
-            ['workflowId', IDS.collector],
-            ['limit', '60'],
-          ]),
-          options: { timeout: 15000 },
+          resource: 'row',
+          operation: 'get',
+          dataTableId: RUNS,
+          returnAll: false,
+          limit: 100,
+          orderBy: true,
+          orderByColumn: 'createdAt',
+          orderByDirection: 'DESC',
         },
-        {
-          credentials: { n8nApi: { id: IDS.n8nApiCredential, name: 'n8n API' } },
-          onError: 'continueRegularOutput',
-          executeOnce: true,
-        },
+        { executeOnce: true, alwaysOutputData: true },
       ),
-      code('W7', 'Render', 'n8n/w7-menu/render.js', [1760, 0]),
+      code('W7', 'Render', 'n8n/w7-menu/render.js', [1980, 0]),
       // Выход = $json.route (render.js): раскладка × новое сообщение (чётный) / правка панели (нечётный), 10 — приветствие
       node('W7', 'Layout', 'switch', 3.4, [1980, -300], {
         mode: 'expression',
-        numberOutputs: PANEL_LAYOUTS.length * 2 + 1,
+        numberOutputs: PANEL_LAYOUTS.length * 2 + 2,
         output: '={{ $json.route }}',
         options: {},
       }),
@@ -1310,6 +1883,11 @@ const workflows = {
         fields: { disable_notification: true },
         markup: MENU_KEYBOARD,
       }),
+      // «✏️» в ⚙️: вопрос со списком — ответ сообщением (ForceReply); панель не трогаем, в Remember не идёт
+      telegram('W7', 'New: prompt', [2200, -600 + PANEL_LAYOUTS.length * 300], {
+        fields: { disable_notification: true },
+        markup: { replyMarkup: 'forceReply', forceReply: { force_reply: true } },
+      }),
       code('W7', 'Remember', 'n8n/w7-menu/remember.js', [2420, -300]),
       // Ветка ниже «Layout»: старая панель и нажатие пользователя удаляются после отправки новой
       code('W7', 'Delete ids', 'n8n/w7-menu/delete-ids.js', [1980, 900]),
@@ -1331,9 +1909,19 @@ const workflows = {
       ['Answer?', 'Answer query', 0],
       ['Answer query', 'Work?'],
       ['Answer?', 'Work?', 1],
-      ['Work?', 'Rows', 0],
-      ['Rows', 'Executions'],
-      ['Executions', 'Render'],
+      ['Work?', 'Settings', 0],
+      ['Settings', 'Blacklist'],
+      ['Blacklist', 'Setting change'],
+      ['Setting change', 'Save setting'],
+      ['Save setting', 'HC plan'],
+      ['HC plan', 'HC sync'],
+      ['Blacklist', 'Collect now'],
+      ['Collect now', 'Run W1'],
+      ['Blacklist', 'Unban'],
+      ['Unban', 'Delete ban'],
+      ['Blacklist', 'Rows'],
+      ['Rows', 'Runs'],
+      ['Runs', 'Render'],
       ['Render', 'Layout'],
       ...PANEL_LAYOUTS.flatMap(([layout], i) => [
         ['Layout', `New: ${layout}`, i * 2],
@@ -1342,6 +1930,7 @@ const workflows = {
         [`Edit: ${layout}`, 'Remember'],
       ]),
       ['Layout', 'New: start', PANEL_LAYOUTS.length * 2],
+      ['Layout', 'New: prompt', PANEL_LAYOUTS.length * 2 + 1],
       ['New: start', 'Remember'],
       ['Render', 'Delete ids'],
       ['Delete ids', 'Delete old'],
@@ -1350,17 +1939,122 @@ const workflows = {
     { errorWorkflow: IDS.errors, saveDataSuccessExecution: 'none' },
   ),
 
+  'w8-clock': workflow(
+    IDS.clock,
+    'W8 Clock',
+    [
+      // «Часы» (07.10.2026): тикают каждые 15 мин, а когда собирать — решают настройки бота (⚙️ → 🕐 Сбор).
+      // Mac спал — после пробуждения один догоняющий тик (coalesce), и «Due» запустит один догоняющий сбор
+      node('W8', 'Schedule', 'scheduleTrigger', 1.4, [0, -100], {
+        rule: { interval: [{ field: 'cronExpression', expression: '*/15 * * * *' }] },
+        misfirePolicy: 'coalesce',
+      }),
+      node('W8', 'Manual', 'manualTrigger', 1, [0, 100], {}),
+      settingsNode('W8', [220, 0]),
+      code('W8', 'Due', 'n8n/w8-clock/due.js', [440, 0]),
+      runWorkflow('W8', 'Collect', [660, 0], IDS.collector),
+    ],
+    [
+      ['Schedule', 'Settings'],
+      ['Manual', 'Settings'],
+      ['Settings', 'Due'],
+      ['Due', 'Collect'],
+    ],
+    // Тики без сбора не храним: 96 запусков в сутки. Static data (dispatchedAt) сохраняется и так
+    { timezone: 'Europe/Moscow', errorWorkflow: IDS.errors, saveDataSuccessExecution: 'none' },
+  ),
+
   'w4-errors': workflow(
     IDS.errors,
     'W4 Errors',
     [
       node('W4', 'Error Trigger', 'errorTrigger', 1, [0, 0], {}),
       code('W4', 'Format error', 'n8n/w4-errors/format-error.js', [220, 0]),
-      telegram('W4', 'Telegram', [440, 0]),
+      // Открытая тревога с тем же ключом — повтор той же проблемы (07.10.2026). Таблица не ответила —
+      // тревога уходит как новая: лучше лишняя тревога, чем потерянная
+      node(
+        'W4',
+        'Find alert',
+        'dataTable',
+        1.1,
+        [440, 0],
+        {
+          resource: 'row',
+          operation: 'get',
+          dataTableId: ALERTS,
+          matchType: 'allConditions',
+          filters: {
+            conditions: [
+              { keyName: 'alert_key', keyValue: '={{ $json.key }}' },
+              { keyName: 'is_open', condition: 'isTrue' },
+            ],
+          },
+          returnAll: false,
+          limit: 1,
+          orderBy: true,
+          orderByColumn: 'createdAt',
+          orderByDirection: 'DESC',
+        },
+        { alwaysOutputData: true, onError: 'continueRegularOutput' },
+      ),
+      code('W4', 'Alert plan', 'n8n/w4-errors/alert-plan.js', [660, 0]),
+      node('W4', 'Repeat?', 'if', 2.3, [880, 0], ifTrue('W4', '={{ $json.repeat }}')),
+      // Повтор: правка той же тревоги — без звука, счётчик и время
+      telegramEdit('W4', 'Edit alert', [1100, -100], { messageId: '={{ $json.tg_message_id }}', text: '={{ $json.text }}' }),
+      node(
+        'W4',
+        'Save repeat',
+        'dataTable',
+        1.1,
+        [1320, -100],
+        {
+          resource: 'row',
+          operation: 'update',
+          dataTableId: ALERTS,
+          ...byId("={{ $('Alert plan').first().json.id }}"),
+          columns: setColumns({
+            hits: "={{ $('Alert plan').first().json.hits }}",
+            last_at: "={{ $('Alert plan').first().json.now }}",
+          }),
+          options: {},
+        },
+        { onError: 'continueRegularOutput' },
+      ),
+      telegram('W4', 'Send alert', [1100, 100]),
+      node(
+        'W4',
+        'Save alert',
+        'dataTable',
+        1.1,
+        [1320, 100],
+        {
+          resource: 'row',
+          operation: 'insert',
+          dataTableId: ALERTS,
+          columns: setColumns({
+            alert_key: "={{ $('Alert plan').first().json.key }}",
+            workflow: "={{ $('Alert plan').first().json.workflow }}",
+            message: "={{ $('Alert plan').first().json.message }}",
+            first_at: "={{ $('Alert plan').first().json.now }}",
+            last_at: "={{ $('Alert plan').first().json.now }}",
+            hits: '={{ 1 }}',
+            is_open: '={{ true }}',
+            tg_message_id: '={{ $json.result.message_id }}',
+          }),
+          options: {},
+        },
+        { onError: 'continueRegularOutput' },
+      ),
     ],
     [
       ['Error Trigger', 'Format error'],
-      ['Format error', 'Telegram'],
+      ['Format error', 'Find alert'],
+      ['Find alert', 'Alert plan'],
+      ['Alert plan', 'Repeat?'],
+      ['Repeat?', 'Edit alert', 0],
+      ['Edit alert', 'Save repeat'],
+      ['Repeat?', 'Send alert', 1],
+      ['Send alert', 'Save alert'],
     ],
   ),
 };

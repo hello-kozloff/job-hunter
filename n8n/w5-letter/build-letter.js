@@ -11,6 +11,8 @@
 // 07.10.2026: письмо не должно звучать как нейросеть — без тире, штампов и обзора всего стека.
 // В тексте промпта нет ни одного тире: Flash-Lite копирует типографику промпта.
 
+// @include n8n/shared/settings.js
+
 const jobs = $('Jobs').all().map((i) => i.json);
 const rows = new Map($('Vacancy').all().map((i) => [i.json.id, i.json]));
 const profile = String($('Resume text').first().json.resume ?? '').trim();
@@ -20,7 +22,8 @@ const example = String($('Example text').first().json.example ?? '')
   .trim();
 if (!profile) throw new Error('Пустой профиль: проверь docs/resume.md и том ./docs в docker-compose.yml');
 
-const provider = String($env.LLM_PROVIDER || 'gemini').toLowerCase() === 'claude' ? 'claude' : 'gemini';
+// Провайдер — настройка бота llm.provider (⚙️ → 🤖 Нейросеть; до 07.10.2026 — $env.LLM_PROVIDER)
+const provider = loadSettings($('Settings').all())['llm.provider'];
 const model = provider === 'claude' ? $env.CLAUDE_MODEL || 'claude-haiku-4-5' : $env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 
 const SYSTEM = `Ты пишешь сопроводительное письмо к отклику на вакансию hh.ru от имени Никиты, фронтенд-разработчика. Пиши так, как он сам набрал бы его в форме отклика: просто, по делу, своими словами. Письмо не должно звучать как текст нейросети.

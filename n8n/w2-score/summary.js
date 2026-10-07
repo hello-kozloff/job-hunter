@@ -34,7 +34,14 @@ if (scored.length) {
   const count = (d) => scored.filter((r) => r.decision === d).length;
   const parts = [`🟢 ${count('apply')}`, `🟡 ${count('maybe')}`, `🔴 ${count('skip')}`];
   if (count('error')) parts.push(`⚠️ ${count('error')}`);
-  const text = `📊 Оценено ${scored.length}: ${parts.join(' · ')}`;
+  // Теневой режим выключен — skip без карточек (W2 «Quiet skips»)
+  let quiet = 0;
+  try {
+    quiet = $('Quiet skips').all().length;
+  } catch {
+    // теневой режим включён — ветка не выполнялась
+  }
+  const text = `📊 Оценено ${scored.length}: ${parts.join(' · ')}${quiet ? `\n🔴 ${quiet} без карточек — теневой режим выключен, они в меню на вкладке ❌` : ''}`;
   messages.push({ text: report ? `${report}\n\n${text}` : text, silent: quiet, report: Boolean(report), live: false });
 } else if (report) {
   messages.push({ text: report, silent: true, report: true, live: true });
@@ -49,7 +56,7 @@ if (quota.length) {
   alerts.push(
     `⚠️ ${provider}: ${perDay ? 'исчерпан дневной лимит запросов' : 'превышен лимит запросов в минуту'} (HTTP 429). ` +
       `Не оценено ${quota.length} — оценятся в следующий запуск.` +
-      (perDay && provider === 'Gemini' ? '\nЕсли повторяется каждый день — переключить на Claude: LLM_PROVIDER=claude в .env.' : ''),
+      (perDay && provider === 'Gemini' ? '\nЕсли повторяется каждый день — переключить на Claude: ⚙️ Настройки → 🤖 Нейросеть (нужен ANTHROPIC_API_KEY в .env).' : ''),
   );
 }
 const problems = {};
