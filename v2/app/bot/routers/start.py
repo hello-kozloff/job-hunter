@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import CommandObject, CommandStart
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,10 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bot.callbacks import Decide, RequestAccess
 from app.bot.commands import set_admin_commands
 from app.bot.filters import IsAdmin
+from app.bot.profile_view import MENU
+from app.bot.routers.profiles import ask_resume
 from app.bot.texts import t
 from app.bot.views import tz_keyboard, who
 from app.db.models import User
-from app.services import access, invites, users
+from app.services import access, invites, profiles, users
 
 log = logging.getLogger(__name__)
 router = Router(name="start")
@@ -42,7 +45,9 @@ async def begin_onboarding(bot: Bot, chat_id: int) -> None:
 
 
 @router.message(CommandStart())
-async def start(message: Message, command: CommandObject, session: AsyncSession, user: User | None, bot: Bot) -> None:
+async def start(
+    message: Message, command: CommandObject, session: AsyncSession, user: User | None, bot: Bot, state: FSMContext
+) -> None:
     sender = message.from_user
     if sender is None:
         return
@@ -55,9 +60,11 @@ async def start(message: Message, command: CommandObject, session: AsyncSession,
         elif user.onboarded_at is None:
             await begin_onboarding(bot, message.chat.id)
         else:
-            await message.answer(t("start.welcome_back"))
+            await message.answer(t("start.welcome_back"), reply_markup=MENU)
             if user.role == "admin":
                 await message.answer(t("start.admin"))
+            if not await profiles.list_for_user(session, user.id):
+                await ask_resume(message, state)
         return
 
     code = invites.code_from_payload(command.args)

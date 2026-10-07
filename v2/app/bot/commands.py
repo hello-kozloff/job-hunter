@@ -10,7 +10,11 @@ from app.config import get_settings
 
 log = logging.getLogger(__name__)
 
-COMMON = [BotCommand(command="start", description="Главная"), BotCommand(command="tz", description="Часовой пояс")]
+COMMON = [
+    BotCommand(command="start", description="Главная"),
+    BotCommand(command="resumes", description="Мои резюме"),
+    BotCommand(command="tz", description="Часовой пояс"),
+]
 ADMIN = [*COMMON, BotCommand(command="admin", description="Администрирование")]
 
 
