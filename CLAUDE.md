@@ -113,6 +113,7 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
                  меню бота (кнопки под полем ввода, /v<id>, кнопки панели) → W7
 [W5 Letter]    вызов из W3 (✅ / «🔄 Переписать» / ответ на письмо) | Manual → профиль + образец → Gemini | Claude
                  → письмо ответом на карточку: [📝 Отклик на hh] [🔗 Вакансия] [🔄 Переписать] [📨 Отправил]
+                 → прежнее письмо (и ответ с пожеланием) удаляется; после «📨 Отправил» — [↩️ Отменить] [📋 К вакансиям]
 [W4 Errors]    Error Trigger → Telegram (строится на этапе 1)
 [W6 Summary]   06:00 МСК (10:00 Таиланд): «⌛ устарела» (3 дня без решения), хвосты → проверка на hh «🔒 закрыта»,
                  сводка: воронка, хвосты, теневой режим, сбои (публичный API n8n, туннель); без звука, если сбоев нет
@@ -143,7 +144,7 @@ https://hh.ru/search/vacancy?text=NAME:(frontend OR front-end OR фронтен�
 - свой бот (токен в Credentials), один личный чат для всего;
 - chat_id — в `.env` как `TG_CHAT_ID`, в нодах `{{ $env.TG_CHAT_ID }}` (Variables в Community edition нет);
 - кнопки ловит W3 через Telegram Trigger (v1.5: проверяет секретный заголовок, Restrict to Chat IDs = TG_CHAT_ID). Публичный HTTPS → контейнер ngrok (`COMPOSE_PROFILES=tunnel`, `ngrok/policy.yml`), `WEBHOOK_URL=https://<NGROK_DOMAIN>/` (→ `N8N_WEBHOOK_URL`);
-- callback_data кнопок: `v:<id строки>:<apply|maybe|skip|edit>` — карточка; `l:<id>:<redo|sent|unsent>` — письмо; панель меню (W7): `p:l:<tab>:<page>`, `p:s`, `p:x`, `pv:<id>:<choice>:<tab>:<page>`;
+- callback_data кнопок: `v:<id строки>:<apply|maybe|skip|edit>` — карточка; `l:<id>:<redo|sent|unsent>` — письмо; панель меню (W7): `p:l:<tab>:<page>`, `p:s`, `p:x`, `p:n` («📋 К вакансиям» под отправленным письмом), `pv:<id>:<choice>:<tab>:<page>`;
 - меню бота (07.10.2026, `docs/bot-menu.md`): кнопки под полем ввода `[📋 Вакансии] [📊 Статистика]` (ставит `/start`), одна живая панель — нажатие пользователя и прошлая панель удаляются, листание правит панель на месте;
 - тихие часы: 23:00–09:00 по Таиланду — карточки и сводка без звука (`disable_notification`), тревоги со звуком;
 - не использовать «Send and wait» на каждую вакансию.
