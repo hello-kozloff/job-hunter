@@ -40,7 +40,64 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// W3 · Route — разбор обновления от Telegram Trigger (callback_query и message).\n// Нода: Code, режим «Run Once for All Items».\n// Выход: один item или [] (не наше — игнорируем):\n//   { action: 'choice', id, choice, queryId, chatId, messageId } — нажата кнопка карточки.\n//      callback_data = v:<id строки>:<apply|maybe|skip|edit>; messageId — id карточки.\n//   { action: 'letter', id, op, queryId, chatId, messageId } — кнопка под письмом (W5):\n//      callback_data = l:<id строки>:<redo|sent|unsent>; messageId — сообщение с письмом.\n//   { action: 'reply', replyTo, messageId, chatId, text } — ответ (reply) на вопрос «почему?», карточку или письмо.\n// Чужие чаты отсекает сам Telegram Trigger (Restrict to Chat IDs = TG_CHAT_ID); здесь — вторая проверка.\n\nconst update = $input.first().json;\nconst allowed = String($env.TG_CHAT_ID ?? '');\nconst ours = (chatId) => !allowed || String(chatId) === allowed;\n\nconst cb = update.callback_query;\nif (cb) {\n  if (!ours(cb.message?.chat?.id)) return [];\n  const letter = String(cb.data ?? '').match(/^l:(\\d+):(redo|sent|unsent)$/);\n  if (letter) {\n    return [\n      {\n        json: {\n          action: 'letter',\n          id: Number(letter[1]),\n          op: letter[2],\n          queryId: cb.id,\n          chatId: String(cb.message.chat.id),\n          messageId: cb.message.message_id,\n        },\n      },\n    ];\n  }\n  const match = String(cb.data ?? '').match(/^v:(\\d+):(apply|maybe|skip|edit)$/);\n  if (!match) return [];\n  return [\n    {\n      json: {\n        action: 'choice',\n        id: Number(match[1]),\n        choice: match[2],\n        queryId: cb.id,\n        chatId: String(cb.message.chat.id),\n        messageId: cb.message.message_id,\n      },\n    },\n  ];\n}\n\nconst msg = update.message;\nconst text = String(msg?.text ?? '').trim();\n// Команды бота (/start и т. п.) и сообщения без reply не обрабатываем\nif (msg?.reply_to_message && text && !text.startsWith('/') && ours(msg.chat?.id)) {\n  return [\n    {\n      json: {\n        action: 'reply',\n        replyTo: msg.reply_to_message.message_id,\n        messageId: msg.message_id,\n        chatId: String(msg.chat.id),\n        text: text.slice(0, 500),\n      },\n    },\n  ];\n}\nreturn [];\n"
+        "jsCode": "// W3 · Route — разбор обновления от Telegram Trigger (callback_query и message).\n// Нода: Code, режим «Run Once for All Items».\n// Выход: один item или [] (не наше — игнорируем):\n//   { action: 'choice', id, choice, queryId, chatId, messageId, panel } — нажата кнопка решения.\n//      callback_data = v:<id строки>:<apply|maybe|skip|edit> — на карточке; messageId — id карточки, panel = null;\n//      callback_data = pv:<id>:<choice>:<tab>:<page> — в карточке на панели меню (W7):\n//      panel = { messageId, tab, page } — панель перерисуется после решения.\n//   { action: 'letter', id, op, queryId, chatId, messageId } — кнопка под письмом (W5):\n//      callback_data = l:<id строки>:<redo|sent|unsent>; messageId — сообщение с письмом.\n//   { action: 'reply', replyTo, messageId, chatId, text } — ответ (reply) на вопрос «почему?», карточку или письмо.\n//   { action: 'panel', view, tab, page, id, chatId, queryId, messageId, userMessageId } — меню бота → W7 Bot menu:\n//      кнопки под полем ввода («📋 Вакансии», «📊 Статистика»), команды /start, /menu, /vacancies, /stats, /v<id>\n//      и кнопки панели (callback_data p:…). view = list | stats | start | open | noop;\n//      messageId — панель, где нажали кнопку (правим её); userMessageId — сообщение пользователя (удалить).\n// Чужие чаты отсекает сам Telegram Trigger (Restrict to Chat IDs = TG_CHAT_ID); здесь — вторая проверка.\n\n// Меню бота: кнопки под полем ввода и вкладки списка вакансий (решения пользователя 07.10.2026).\n// Общий код W3 «Route» и W7 «Render»: строка «// @include n8n/shared/menu.js».\n//\n// callback_data кнопок панели (Telegram — не длиннее 64 байт):\n//   p:l:<tab>:<page>  — список: вкладка и страница;   p:s — статистика;   p:x — неактивная кнопка\n//   pv:<id>:<apply|maybe|skip|edit>:<tab>:<page> — решение в карточке на панели: W3 правит исходную карточку\n//   в ленте, потом W7 перерисовывает панель. <tab>:<page> — куда вернёт «⬅️ К списку».\n\n// Кнопки под полем ввода: Telegram присылает их текст обычным сообщением\nconst MENU = { list: '📋 Вакансии', stats: '📊 Статистика' };\n\n// Вкладки списка: статусы строк (statuses = null — всё, кроме бэкфилла seen), порядок кнопок — порядок ключей\nconst TABS = {\n  wait: { icon: '⏳', name: 'Ждут решения', statuses: ['waiting'] },\n  todo: { icon: '✅', name: 'Откликнусь и 🤔', statuses: ['approved', 'maybe'] },\n  sent: { icon: '📨', name: 'Отправлено', statuses: ['applied'] },\n  skip: { icon: '❌', name: 'Мимо и устаревшие', statuses: ['skipped', 'expired', 'archived'] },\n  rej: { icon: '🚫', name: 'Отсеяно фильтром', statuses: ['rejected'] },\n  all: { icon: '📋', name: 'Все', statuses: null },\n};\n\n// Значки строки списка: решение нейросети + статус\nconst VERDICT_ICON = { apply: '🟢', maybe: '🟡', skip: '🔴', error: '⚠️' };\nconst STATUS_ICON = {\n  new: '⚙️',\n  detailed: '⚙️',\n  waiting: '⏳',\n  approved: '✅',\n  maybe: '🤔',\n  skipped: '❌',\n  applied: '📨',\n  expired: '⌛',\n  archived: '🔒',\n  rejected: '🚫',\n};\n\nconst update = $input.first().json;\nconst allowed = String($env.TG_CHAT_ID ?? '');\nconst ours = (chatId) => !allowed || String(chatId) === allowed;\nconst panel = (fields) => [\n  { json: { action: 'panel', tab: '', page: 1, id: 0, queryId: '', messageId: 0, userMessageId: 0, ...fields } },\n];\n\nconst cb = update.callback_query;\nif (cb) {\n  if (!ours(cb.message?.chat?.id)) return [];\n  const data = String(cb.data ?? '');\n  const chatId = String(cb.message.chat.id);\n  const pressed = { chatId, queryId: cb.id, messageId: cb.message.message_id };\n\n  const list = data.match(/^p:l:([a-z]+):(\\d+)$/);\n  if (list && TABS[list[1]]) return panel({ ...pressed, view: 'list', tab: list[1], page: Number(list[2]) });\n  if (data === 'p:s') return panel({ ...pressed, view: 'stats' });\n  if (data === 'p:x') return panel({ ...pressed, view: 'noop' });\n\n  const letter = data.match(/^l:(\\d+):(redo|sent|unsent)$/);\n  if (letter) {\n    return [{ json: { action: 'letter', id: Number(letter[1]), op: letter[2], ...pressed } }];\n  }\n  const fromPanel = data.match(/^pv:(\\d+):(apply|maybe|skip|edit):([a-z]+):(\\d+)$/);\n  if (fromPanel) {\n    const tab = TABS[fromPanel[3]] ? fromPanel[3] : 'all';\n    return [\n      {\n        json: {\n          action: 'choice',\n          id: Number(fromPanel[1]),\n          choice: fromPanel[2],\n          ...pressed,\n          panel: { messageId: cb.message.message_id, tab, page: Number(fromPanel[4]) },\n        },\n      },\n    ];\n  }\n  const match = data.match(/^v:(\\d+):(apply|maybe|skip|edit)$/);\n  if (!match) return [];\n  return [{ json: { action: 'choice', id: Number(match[1]), choice: match[2], ...pressed, panel: null } }];\n}\n\nconst msg = update.message;\nif (!msg || !ours(msg.chat?.id)) return [];\nconst text = String(msg.text ?? '').trim();\nconst typed = { chatId: String(msg.chat.id), userMessageId: msg.message_id };\n\n// Кнопки под полем ввода и команды: /v169 → [v, 169], /stats@bot → [stats, '']\nconst command = text.match(/^\\/([a-z]+)(\\d*)(?:@\\w+)?(?:\\s|$)/i);\nconst name = command?.[1].toLowerCase();\nif (text === MENU.list || name === 'vacancies') return panel({ ...typed, view: 'list' });\nif (text === MENU.stats || name === 'stats') return panel({ ...typed, view: 'stats' });\nif (name === 'start' || name === 'menu') return panel({ ...typed, view: 'start' });\nif (name === 'v' && command[2]) return panel({ ...typed, view: 'open', id: Number(command[2]) });\n\n// Остальные команды и сообщения без reply не обрабатываем\nif (msg.reply_to_message && text && !text.startsWith('/')) {\n  return [\n    {\n      json: {\n        action: 'reply',\n        replyTo: msg.reply_to_message.message_id,\n        messageId: msg.message_id,\n        chatId: typed.chatId,\n        text: text.slice(0, 500),\n      },\n    },\n  ];\n}\nreturn [];\n"
+      }
+    },
+    {
+      "id": "f4c93886-e3da-4a59-a0cb-70122687f120",
+      "name": "Panel?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        440,
+        -400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "bacf165d-6f4b-1c8a-2819-520da1e7fc4a",
+              "leftValue": "={{ $json.action === 'panel' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "85c12e09-ee87-ac93-9152-53b04e902622",
+      "name": "Menu",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        -500
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "jobHunterW7Menu1"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": false
+        }
       }
     },
     {
@@ -120,7 +177,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// W3 · Apply choice — нажатие кнопки на карточке → новое состояние строки и карточки.\n// Нода: Code, режим «Run Once for All Items».\n// Вход: строка вакансии из «Vacancy»; что нажато — из «Route».\n// Выход: { id, my_decision, status, text, keyboard, ask, toast, need_letter, chatId, messageId, queryId }\n//   ✅ / 🤔 / ❌ — записать решение, кнопки сменить на «↩️ Изменить» (keyboard = decided).\n//     Решение расходится с нейросетью и причины ещё нет → ask: вопрос «почему?» ответом на карточку.\n//     ✅ и письма ещё нет → need_letter: W5 напишет письмо (этап 4).\n//   ↩️ Изменить (choice = edit) — вернуть кнопки выбора (keyboard = choose), решение не меняется.\n\n// Общий код карточки вакансии в Telegram: W2 «Format card» и W3 «Apply choice».\n// В Code-ноду попадает при сборке: строка «// @include n8n/shared/card.js» заменяется этим файлом\n// (scripts/build-workflows.mjs, scripts/run-code-node.mjs).\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst EXPERIENCE = { noExperience: 'без опыта', between1And3: '1–3 г.', between3And6: '3–6 л.', moreThan6: '6+ л.' };\nconst CURRENCY = { RUR: '₽', USD: '$', EUR: '€', KZT: '₸', BYR: 'Br', UZS: 'сум' };\n\n// Решение нейросети (колонка decision)\nconst VERDICT = { apply: '🟢 apply', maybe: '🟡 maybe', skip: '🔴 skip', error: '⚠️ не оценено' };\n// Кнопки пользователя: callback_data = v:<id строки>:<choice>, решение — в колонку my_decision\nconst CHOICE = { apply: '✅ Откликнусь', maybe: '🤔 Возможно', skip: '❌ Мимо' };\nconst STATUS_BY_CHOICE = { apply: 'approved', maybe: 'maybe', skip: 'skipped' };\n\nconst short = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));\n\nfunction salary(r) {\n  if (!r.salary_from && !r.salary_to) return '';\n  const range =\n    r.salary_from && r.salary_to\n      ? `${short(r.salary_from)}–${short(r.salary_to)}`\n      : r.salary_from\n        ? `от ${short(r.salary_from)}`\n        : `до ${short(r.salary_to)}`;\n  return `💰 ${range} ${CURRENCY[r.currency] ?? r.currency ?? ''}${r.salary_gross ? ' до налогов' : ''}`;\n}\n\n// «Москва, Сербия, Грузия, Армения» → «Москва, Сербия +2»\nfunction areas(s) {\n  const list = String(s ?? '').split(', ').filter(Boolean);\n  return list.length > 2 ? `${list.slice(0, 2).join(', ')} +${list.length - 2}` : list.join(', ');\n}\n\n// '2026-10-06T13:22:00+0300' → '06.10'\nfunction published(s) {\n  const m = String(s ?? '').match(/^\\d{4}-(\\d{2})-(\\d{2})/);\n  return m ? `${m[2]}.${m[1]}` : '';\n}\n\n// Момент в UTC (applied_at) → дата по Таиланду (UTC+7): '2026-10-06T21:17:55Z' → '07.10'\nconst thaiDate = (iso) => (Date.parse(iso) ? published(new Date(Date.parse(iso) + 7 * 3600 * 1000).toISOString()) : '');\n\n// Итоговые состояния без кнопок: W3 «📨 Отправил», W6 «⌛ устарела» и «🔒 закрыта на hh»\nconst FINAL = { expired: '⌛ Устарела: 3 дня без решения', archived: '🔒 Вакансия закрыта на hh' };\n\n// Текст карточки (Parse Mode = HTML). Строка «👤 …» появляется после нажатия кнопки,\n// «📨 …» — после «Отправил» под письмом (W3, status = applied), FINAL — после W6\nfunction cardText(r) {\n  const date = published(r.published_at);\n  const meta = [esc(r.company), salary(r), EXPERIENCE[r.experience] ?? '', esc(areas(r.areas)), date && `📅 ${date}`]\n    .filter(Boolean)\n    .join(' · ');\n  const flags = [\n    r.has_test && '📝 тест',\n    r.letter_required && '✉️ письмо обязательно',\n    r.responses != null && `👥 ${r.responses}`,\n    r.error && `⚠️ ${esc(r.error)}`,\n  ]\n    .filter(Boolean)\n    .join(' · ');\n  const verdict = `🤖 ${VERDICT[r.decision] ?? esc(r.decision)}${r.llm_reason ? ` — ${esc(r.llm_reason)}` : ''}`;\n  const mine = CHOICE[r.my_decision] ? `👤 ${CHOICE[r.my_decision]}` : '';\n  const sent = r.status === 'applied' ? `📨 Отклик отправлен${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}` : '';\n  return [`<a href=\"${r.url}\"><b>${esc(r.title)}</b></a>`, meta, flags, verdict, mine, sent, FINAL[r.status] ?? '']\n    .filter(Boolean)\n    .join('\\n');\n}\n\nconst action = $('Route').first().json;\nconst row = $input.first().json;\n\nconst out = {\n  id: row.id,\n  my_decision: row.my_decision ?? '',\n  status: row.status,\n  keyboard: 'choose',\n  ask: '',\n  toast: '',\n  need_letter: false,\n  chatId: action.chatId,\n  messageId: action.messageId,\n  queryId: action.queryId,\n};\n\nif (action.choice !== 'edit') {\n  out.my_decision = action.choice;\n  out.status = STATUS_BY_CHOICE[action.choice];\n  out.keyboard = 'decided';\n  out.toast = `Записал: ${CHOICE[action.choice]}`;\n  out.need_letter = action.choice === 'apply' && !row.letter;\n  const known = ['apply', 'maybe', 'skip'].includes(row.decision);\n  if (known && row.decision !== action.choice && !row.my_reason) {\n    out.ask =\n      `🤖 ${VERDICT[row.decision]} · 👤 ${CHOICE[action.choice]}\\n` +\n      'Почему? Ответь на это сообщение одной фразой — по ответам поправлю правила.';\n  }\n}\nout.text = cardText({ ...row, my_decision: out.my_decision });\n\nreturn [{ json: out }];\n"
+        "jsCode": "// W3 · Apply choice — нажатие кнопки на карточке → новое состояние строки и карточки.\n// Нода: Code, режим «Run Once for All Items».\n// Вход: строка вакансии из «Vacancy»; что нажато — из «Route».\n// Выход: { id, my_decision, status, text, keyboard, ask, toast, need_letter, chatId, messageId, queryId, panel }\n//   messageId — исходная карточка в ленте: её перерисовывают «Card: …», на неё отвечает «Почему?».\n//   Решение из карточки на панели меню (panel, callback_data pv:…) — тоже правит исходную карточку\n//   (row.tg_message_id), а панель потом перерисует W7 («From panel?» → «Panel job»).\n//   ✅ / 🤔 / ❌ — записать решение, кнопки сменить на «↩️ Изменить» (keyboard = decided).\n//     Решение расходится с нейросетью и причины ещё нет → ask: вопрос «почему?» ответом на карточку.\n//     ✅ и письма ещё нет → need_letter: W5 напишет письмо (этап 4).\n//   ↩️ Изменить (choice = edit) — вернуть кнопки выбора (keyboard = choose), решение не меняется.\n\n// Общий код карточки вакансии в Telegram: W2 «Format card» и W3 «Apply choice».\n// В Code-ноду попадает при сборке: строка «// @include n8n/shared/card.js» заменяется этим файлом\n// (scripts/build-workflows.mjs, scripts/run-code-node.mjs).\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst EXPERIENCE = { noExperience: 'без опыта', between1And3: '1–3 г.', between3And6: '3–6 л.', moreThan6: '6+ л.' };\nconst CURRENCY = { RUR: '₽', USD: '$', EUR: '€', KZT: '₸', BYR: 'Br', UZS: 'сум' };\n\n// Решение нейросети (колонка decision)\nconst VERDICT = { apply: '🟢 apply', maybe: '🟡 maybe', skip: '🔴 skip', error: '⚠️ не оценено' };\n// Кнопки пользователя: callback_data = v:<id строки>:<choice>, решение — в колонку my_decision\nconst CHOICE = { apply: '✅ Откликнусь', maybe: '🤔 Возможно', skip: '❌ Мимо' };\nconst STATUS_BY_CHOICE = { apply: 'approved', maybe: 'maybe', skip: 'skipped' };\n\nconst short = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));\n\nfunction salary(r) {\n  if (!r.salary_from && !r.salary_to) return '';\n  const range =\n    r.salary_from && r.salary_to\n      ? `${short(r.salary_from)}–${short(r.salary_to)}`\n      : r.salary_from\n        ? `от ${short(r.salary_from)}`\n        : `до ${short(r.salary_to)}`;\n  return `💰 ${range} ${CURRENCY[r.currency] ?? r.currency ?? ''}${r.salary_gross ? ' до налогов' : ''}`;\n}\n\n// «Москва, Сербия, Грузия, Армения» → «Москва, Сербия +2»\nfunction areas(s) {\n  const list = String(s ?? '').split(', ').filter(Boolean);\n  return list.length > 2 ? `${list.slice(0, 2).join(', ')} +${list.length - 2}` : list.join(', ');\n}\n\n// '2026-10-06T13:22:00+0300' → '06.10'\nfunction published(s) {\n  const m = String(s ?? '').match(/^\\d{4}-(\\d{2})-(\\d{2})/);\n  return m ? `${m[2]}.${m[1]}` : '';\n}\n\n// Момент в UTC (applied_at) → дата по Таиланду (UTC+7): '2026-10-06T21:17:55Z' → '07.10'\nconst thaiDate = (iso) => (Date.parse(iso) ? published(new Date(Date.parse(iso) + 7 * 3600 * 1000).toISOString()) : '');\n\n// Итоговые состояния без кнопок: W3 «📨 Отправил», W6 «⌛ устарела» и «🔒 закрыта на hh»\nconst FINAL = { expired: '⌛ Устарела: 3 дня без решения', archived: '🔒 Вакансия закрыта на hh' };\n\n// Текст карточки (Parse Mode = HTML). Строка «👤 …» появляется после нажатия кнопки,\n// «📨 …» — после «Отправил» под письмом (W3, status = applied), FINAL — после W6\nfunction cardText(r) {\n  const date = published(r.published_at);\n  const meta = [esc(r.company), salary(r), EXPERIENCE[r.experience] ?? '', esc(areas(r.areas)), date && `📅 ${date}`]\n    .filter(Boolean)\n    .join(' · ');\n  const flags = [\n    r.has_test && '📝 тест',\n    r.letter_required && '✉️ письмо обязательно',\n    r.responses != null && `👥 ${r.responses}`,\n    r.error && `⚠️ ${esc(r.error)}`,\n  ]\n    .filter(Boolean)\n    .join(' · ');\n  const verdict = `🤖 ${VERDICT[r.decision] ?? esc(r.decision)}${r.llm_reason ? ` — ${esc(r.llm_reason)}` : ''}`;\n  const mine = CHOICE[r.my_decision] ? `👤 ${CHOICE[r.my_decision]}` : '';\n  const sent = r.status === 'applied' ? `📨 Отклик отправлен${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}` : '';\n  return [`<a href=\"${r.url}\"><b>${esc(r.title)}</b></a>`, meta, flags, verdict, mine, sent, FINAL[r.status] ?? '']\n    .filter(Boolean)\n    .join('\\n');\n}\n\nconst action = $('Route').first().json;\nconst row = $input.first().json;\n\nconst out = {\n  id: row.id,\n  my_decision: row.my_decision ?? '',\n  status: row.status,\n  keyboard: 'choose',\n  ask: '',\n  toast: '',\n  need_letter: false,\n  chatId: action.chatId,\n  messageId: action.panel ? row.tg_message_id : action.messageId,\n  queryId: action.queryId,\n  panel: action.panel ?? null,\n};\n\nif (action.choice !== 'edit') {\n  out.my_decision = action.choice;\n  out.status = STATUS_BY_CHOICE[action.choice];\n  out.keyboard = 'decided';\n  out.toast = `Записал: ${CHOICE[action.choice]}`;\n  out.need_letter = action.choice === 'apply' && !row.letter;\n  const known = ['apply', 'maybe', 'skip'].includes(row.decision);\n  if (known && row.decision !== action.choice && !row.my_reason) {\n    out.ask =\n      `🤖 ${VERDICT[row.decision]} · 👤 ${CHOICE[action.choice]}\\n` +\n      'Почему? Ответь на это сообщение одной фразой — по ответам поправлю правила.';\n  }\n}\nout.text = cardText({ ...row, my_decision: out.my_decision });\n\nreturn [{ json: out }];\n"
       }
     },
     {
@@ -1112,6 +1169,78 @@
       }
     },
     {
+      "id": "6e22fe2b-1017-3cdd-ddaa-ce3686f520c5",
+      "name": "From panel?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1540,
+        150
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1ec79e2e-48ca-9ffe-8027-f5800f73a177",
+              "leftValue": "={{ Boolean($('Apply choice').first().json.panel) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "45e0e070-a00b-e17b-1adb-6eff0f065fec",
+      "name": "Panel job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        150
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W3 · Panel job — перерисовать панель меню (W7 Bot menu) после решения, принятого в карточке на панели.\n// Нода: Code, режим «Run Once for All Items». Выполняется последней: исходная карточка уже перерисована,\n// «Почему?» и письмо запущены, строка в таблице записана.\n// Выход: задание для W7 { action: 'panel', view: 'open', … } → «Panel refresh» (Execute Workflow, без ожидания).\n//   choose = true — нажали «↩️ Изменить»: на панели снова кнопки выбора, хотя решение в строке осталось.\n\nconst c = $('Apply choice').first().json;\n\nreturn [\n  {\n    json: {\n      action: 'panel',\n      view: 'open',\n      id: c.id,\n      tab: c.panel.tab,\n      page: c.panel.page,\n      chatId: c.chatId,\n      messageId: c.panel.messageId,\n      userMessageId: 0,\n      queryId: '',\n      choose: c.keyboard === 'choose',\n    },\n  },\n];\n"
+      }
+    },
+    {
+      "id": "26de22d3-92e7-1c73-480e-fb3eddb05a32",
+      "name": "Panel refresh",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1980,
+        150
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "jobHunterW7Menu1"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      }
+    },
+    {
       "id": "024f14fa-883f-71a9-b332-83ba13ef1e89",
       "name": "Letter job",
       "type": "n8n-nodes-base.code",
@@ -1163,6 +1292,24 @@
     },
     "Route": {
       "main": [
+        [
+          {
+            "node": "Panel?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Panel?": {
+      "main": [
+        [
+          {
+            "node": "Menu",
+            "type": "main",
+            "index": 0
+          }
+        ],
         [
           {
             "node": "Button?",
@@ -1228,6 +1375,33 @@
         [
           {
             "node": "Decided?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "From panel?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "From panel?": {
+      "main": [
+        [
+          {
+            "node": "Panel job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Panel job": {
+      "main": [
+        [
+          {
+            "node": "Panel refresh",
             "type": "main",
             "index": 0
           }

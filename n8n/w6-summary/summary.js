@@ -4,6 +4,8 @@
 //       «Executions» — запуски n8n из публичного API, $input — «Tunnel» (проверка туннеля ngrok).
 // Выход: одно сообщение { text, silent }. Без звука, если сбоев нет (решение пользователя 07.10.2026).
 
+// @include n8n/shared/schedule.js
+
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const from = (name) => {
   try {
@@ -63,6 +65,7 @@ const NAMES = {
   jobHunterW3Teleg: 'W3 кнопки',
   jobHunterW5Lettr: 'W5 письма',
   jobHunterW6Summ1: 'W6 сводка',
+  jobHunterW7Menu1: 'W7 меню',
 };
 const executionsBody = $('Executions').first().json;
 const executions = (executionsBody.data ?? []).filter((e) => at(e.startedAt) >= since);
@@ -70,20 +73,11 @@ const errors = executions.filter((e) => e.status === 'error' || e.status === 'cr
 const errorsBy = {};
 for (const e of errors) errorsBy[NAMES[e.workflowId] ?? e.workflowId] = (errorsBy[NAMES[e.workflowId] ?? e.workflowId] ?? 0) + 1;
 
-// Сборы W1 по расписанию (МСК, держать в синхроне с Schedule W1 в scripts/build-workflows.mjs):
-// днём 07:00–17:30 каждые 30 мин, ночью 18, 20, 22, 00, 02, 04, 06 — 29 в сутки.
-// Окно — сутки до «сейчас − 10 мин»: сбор в 06:00 идёт одновременно со сводкой и ещё не закончился
-const SLOT = 30 * 60 * 1000;
-const isCollectSlot = (t) => {
-  const msk = new Date(t + 3 * 3600 * 1000);
-  const h = msk.getUTCHours();
-  const m = msk.getUTCMinutes();
-  return h >= 7 && h < 18 ? m % 30 === 0 : m === 0 && h % 2 === 0;
-};
+// Сборы W1 по расписанию (n8n/shared/schedule.js). Окно — сутки до «сейчас − 10 мин»:
+// сбор в 06:00 идёт одновременно со сводкой и ещё не закончился
 const windowEnd = now - 10 * 60 * 1000;
 const windowStart = windowEnd - DAY;
-let expected = 0;
-for (let t = Math.floor(windowStart / SLOT) * SLOT + SLOT; t <= windowEnd; t += SLOT) if (isCollectSlot(t)) expected++;
+const expected = countCollectSlots(windowStart, windowEnd);
 const collected = count(
   executionsBody.data ?? [],
   (e) =>
