@@ -55,12 +55,12 @@ W1 Collector  OK? → HC ping? → HC ping (GET $env.HC_PING_URL) — сигна
      'cat > /tmp/c.json && n8n import:credentials --input=/tmp/c.json; rm -f /tmp/c.json'
    ```
 2. **healthchecks.io** (пользователь):
-   - https://healthchecks.io → бесплатный аккаунт → **Add Check**: Name `job-hunter W1`; Schedule **OnCalendar** — две строки (= расписание W1, часовой пояс в конце строки):
+   - https://healthchecks.io → бесплатный аккаунт → **Add Check**: Name `job-hunter W1`; Schedule **OnCalendar** — две строки (= расписание W1), Server's Time Zone **Europe/Moscow** (тот же пояс и в конце строк):
      ```
      07..17:00,30 Europe/Moscow
      00,02,04,06,18,20,22:00 Europe/Moscow
      ```
-     Grace Time **50 минут** (нет на слайдере — 45; ровно 60 не ставить: тревога совпадёт со следующим сбором). Сверить предпросмотр ближайших пингов. До 07.10.2026 было Cron `0 9-21/2 * * *`, grace 30 минут;
+     Grace Time **50 минут** (нет на слайдере — 45; ровно 60 не ставить: тревога совпадёт со следующим сбором). Предпросмотр должен показать днём каждые 30 минут по МСК (13:00, 13:30, 14:00…). Настроено пользователем 07.10.2026. До 07.10.2026 было Cron `0 9-21/2 * * *`, grace 30 минут;
    - **Integrations → Telegram** → @HealthchecksBot → Start;
    - Ping URL → `.env`: `HC_PING_URL=https://hc-ping.com/…`.
 3. Деплой: `node scripts/n8n-api.mjs migrate && scripts/deploy.sh --publish`.
