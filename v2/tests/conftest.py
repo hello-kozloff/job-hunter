@@ -41,3 +41,31 @@ async def session(engine):
         async with maker() as s:
             yield s
         await trans.rollback()
+
+
+@pytest.fixture(autouse=True)
+def no_outside_world(monkeypatch):
+    """В контейнере тестов настоящие TG_BOT_TOKEN и GEMINI_API_KEY из v2/.env — ничего наружу не шлём.
+
+    Отправленные сообщения копятся в sent: [(chat_id, text)].
+    """
+    from app.services import llm, notify
+
+    sent: list[tuple[int, str]] = []
+
+    async def send(chat_id, text, **kw):
+        sent.append((chat_id, text))
+        return len(sent)
+
+    async def edit(chat_id, message_id, text):
+        sent.append((chat_id, text))
+        return True
+
+    async def no_llm(*a, **kw):
+        raise AssertionError("тест полез в настоящую нейросеть — подмени llm.ask")
+
+    monkeypatch.setattr(notify, "send", send)
+    monkeypatch.setattr(notify, "edit", edit)
+    monkeypatch.setattr(llm, "_gemini", no_llm)
+    monkeypatch.setattr(llm, "_claude", no_llm)
+    return sent

@@ -36,6 +36,19 @@ docker compose build -q
 docker compose up -d --wait postgres
 docker compose run --rm --no-deps api alembic upgrade head
 docker compose up -d --wait --remove-orphans
+
+# Workflow n8n v2: сборка → импорт (снимает публикацию со всех) → публикация → перезапуск n8n v2
+# (CLI-публикацию запущенный n8n видит только после перезапуска; webhook «v2-collect» регистрируется при старте)
+N8N=job-hunter-v2-n8n
+node scripts/build-workflows.mjs
+docker exec -u root "$N8N" rm -rf /tmp/workflows
+docker cp n8n/workflows "$N8N":/tmp/workflows
+docker exec "$N8N" n8n import:workflow --separate --input=/tmp/workflows
+for id in jobHunterV2Error jobHunterV2Collc; do
+  docker exec "$N8N" n8n publish:workflow --id="$id"
+done
+docker compose restart n8n
+until curl -sf localhost:5679/healthz >/dev/null; do sleep 2; done
 docker compose ps --format 'table {{.Name}}\t{{.Status}}'
 
 if ! grep -q '^TG_BOT_TOKEN=..*' .env; then

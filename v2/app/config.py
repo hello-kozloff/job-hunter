@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     gemini_model: str = "gemini-3.5-flash-lite"
     claude_model: str = "claude-haiku-4-5"
+    # hh: потолок запросов v2 за сутки (v1 бьёт с того же IP ещё ~30–80) и пауза после капчи
+    hh_daily_cap: int = 800
+    hh_block_pause_minutes: int = 120
+    # Запуск сбора из бота: webhook n8n v2 (внутренняя сеть compose)
+    n8n_collect_webhook: str = "http://n8n:5678/webhook/v2-collect"
 
 
 @lru_cache

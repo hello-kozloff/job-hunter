@@ -1,0 +1,66 @@
+{
+  "id": "jobHunterV2Error",
+  "name": "V2 Errors",
+  "nodes": [
+    {
+      "id": "24886a0b-6764-f56d-8f5d-9c4e5412f3eb",
+      "name": "On error",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "914b2c58-44b1-e270-9126-97facd893270",
+      "name": "Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CORE_URL }}/internal/alert",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Token",
+              "value": "={{ $env.INTERNAL_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ source: 'n8n: ' + $json.workflow.name, message: (($json.execution.error || {}).message || 'ошибка') + ' (нода ' + ($json.execution.lastNodeExecuted || '?') + ')' }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    }
+  ],
+  "connections": {
+    "On error": {
+      "main": [
+        [
+          {
+            "node": "Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "active": false,
+  "tags": []
+}
