@@ -75,7 +75,7 @@ const hhGet = (url, headers = BROWSER_HEADERS) => ({
 });
 
 // POST в ядро: тело — выражение, ответ — JSON; ошибка ядра роняет запуск → V2 Errors → тревога
-const core = (path, body) => ({
+const core = (path, body, timeout = 120000) => ({
   method: 'POST',
   url: `={{ $env.CORE_URL }}/internal/${path}`,
   sendHeaders: true,
@@ -84,7 +84,7 @@ const core = (path, body) => ({
   sendBody: true,
   specifyBody: 'json',
   jsonBody: `={{ JSON.stringify(${body}) }}`,
-  options: { timeout: 120000 },
+  options: { timeout },
 });
 
 // Запрос сбора: от расписания — {kind: schedule}; от бота (webhook) — проверка секрета и {kind, profile_id, chat_id}
@@ -136,6 +136,8 @@ const W = {
       node('collect', 'Finish', 'httpRequest', 4.2, [880, 300], core('collect/finish', "{ run_id: $('Plan').first().json.run_id }"), {
         executeOnce: true,
       }),
+      // Оценка нейросетью — после сбора и на каждом тике без сбора (доедает остаток); ядро работает ~100 с за вызов
+      node('collect', 'Score', 'httpRequest', 4.2, [1100, 300], core('score/run', '{}', 180000), { executeOnce: true }),
     ],
     [
       ['Every 5 min', 'Request'],
@@ -144,6 +146,8 @@ const W = {
       ['Plan', 'Has run'],
       ['Has run', 'Tasks'],
       ['Has run', 'Finish'],
+      ['Has run', 'Score', 1],
+      ['Finish', 'Score'],
       ['Tasks', 'Search hh'],
       ['Search hh', 'Ingest search'],
       ['Ingest search', 'Pages'],

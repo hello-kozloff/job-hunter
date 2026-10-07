@@ -32,12 +32,12 @@ async def send(chat_id: int, text: str, **kwargs) -> int | None:
         return None
 
 
-async def edit(chat_id: int, message_id: int, text: str) -> bool:
+async def edit(chat_id: int, message_id: int, text: str, **kwargs) -> bool:
     b = bot()
     if b is None:
         return False
     try:
-        await b.edit_message_text(text, chat_id=chat_id, message_id=message_id, disable_web_page_preview=True)
+        await b.edit_message_text(text, chat_id=chat_id, message_id=message_id, disable_web_page_preview=True, **kwargs)
         return True
     except TelegramAPIError as e:
         log.info("edit %s/%s failed: %s", chat_id, message_id, e)

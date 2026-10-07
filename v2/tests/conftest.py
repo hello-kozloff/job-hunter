@@ -57,7 +57,7 @@ def no_outside_world(monkeypatch):
         sent.append((chat_id, text))
         return len(sent)
 
-    async def edit(chat_id, message_id, text):
+    async def edit(chat_id, message_id, text, **kw):
         sent.append((chat_id, text))
         return True
 

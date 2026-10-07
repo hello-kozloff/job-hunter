@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db.session import session_scope
-from app.services import alerts, collect, notify
+from app.services import alerts, collect, notify, score
 
 
 def require_internal(x_internal_token: str = Header(default="")) -> None:
@@ -80,6 +80,12 @@ class FinishIn(BaseModel):
 @router.post("/collect/finish")
 async def collect_finish(body: FinishIn, session: AsyncSession = Depends(session_scope)) -> dict:
     return await collect.finish(session, body.run_id, now()) if body.run_id else {}
+
+
+@router.post("/score/run")
+async def score_run(session: AsyncSession = Depends(session_scope)) -> dict:
+    """Оценить ждущие совпадения (≈100 с за вызов; остаток — в следующий вызов n8n)."""
+    return await score.run(session)
 
 
 class AlertIn(BaseModel):

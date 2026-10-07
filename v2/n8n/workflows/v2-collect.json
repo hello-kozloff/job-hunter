@@ -346,6 +346,37 @@
         }
       },
       "executeOnce": true
+    },
+    {
+      "id": "4cf32164-c1c6-b40b-cbbb-ae5c811e2e75",
+      "name": "Score",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CORE_URL }}/internal/score/run",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Token",
+              "value": "={{ $env.INTERNAL_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({}) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "executeOnce": true
     }
   ],
   "connections": {
@@ -403,6 +434,24 @@
           },
           {
             "node": "Finish",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finish": {
+      "main": [
+        [
+          {
+            "node": "Score",
             "type": "main",
             "index": 0
           }

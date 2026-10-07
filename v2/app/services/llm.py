@@ -5,6 +5,7 @@
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import TypeVar
 
@@ -22,6 +23,23 @@ class LlmError(Exception):
     """Нейросеть не ответила или ответила не по схеме — сообщение показывается пользователю."""
 
 
+class LlmUnavailable(LlmError):
+    """Сеть, 5xx или лимит провайдера (quota = 429): запрос стоит повторить позже, а не ставить оценку «ошибка»."""
+
+    def __init__(self, message: str, quota: str | None = None):
+        super().__init__(message)
+        # None — не лимит; "minute" — лимит в минуту (пройдёт сам); "day" — суточный (тревога админу)
+        self.quota = quota
+
+
+def _quota(e: Exception) -> str | None:
+    text = f"{type(e).__name__} {e}"
+    if not re.search(r"429|RESOURCE_EXHAUSTED|RateLimit|rate.limit", text, re.I):
+        return None
+    # Gemini пишет в деталях, какой лимит кончился: …PerDay… или …PerMinute…
+    return "day" if re.search(r"PerDay", text, re.I) else "minute"
+
+
 @dataclass
 class Usage:
     provider: str
@@ -30,7 +48,7 @@ class Usage:
     output_tokens: int | None
 
 
-async def _gemini(system: str, prompt: str, schema: type[T]) -> tuple[T, Usage]:
+async def _gemini(system: str, prompt: str, schema: type[T], temperature: float) -> tuple[T, Usage]:
     from google import genai
     from google.genai import types
 
@@ -43,7 +61,7 @@ async def _gemini(system: str, prompt: str, schema: type[T]) -> tuple[T, Usage]:
         contents=prompt,
         config=types.GenerateContentConfig(
             system_instruction=system,
-            temperature=0.2,
+            temperature=temperature,
             response_mime_type="application/json",
             response_json_schema=schema.model_json_schema(),
             # Инструментов нет — автовызов функций SDK не нужен (и пишет предупреждение в лог)
@@ -59,7 +77,7 @@ async def _gemini(system: str, prompt: str, schema: type[T]) -> tuple[T, Usage]:
         raise LlmError("нейросеть ответила не по схеме") from e
 
 
-async def _claude(system: str, prompt: str, schema: type[T]) -> tuple[T, Usage]:
+async def _claude(system: str, prompt: str, schema: type[T], temperature: float) -> tuple[T, Usage]:
     from anthropic import AsyncAnthropic
 
     s = get_settings()
@@ -70,6 +88,7 @@ async def _claude(system: str, prompt: str, schema: type[T]) -> tuple[T, Usage]:
     message = await client.messages.create(
         model=s.claude_model,
         max_tokens=8000,
+        temperature=temperature,
         system=system,
         messages=[{"role": "user", "content": prompt}],
         tools=[{"name": "answer", "description": "Ответ строго по схеме", "input_schema": schema.model_json_schema()}],
@@ -94,10 +113,11 @@ async def ask(
     provider: str = "gemini",
     user_id: int | None = None,
     profile_id: int | None = None,
+    temperature: float = 0.2,
 ) -> T:
     call = _claude if provider == "claude" else _gemini
     try:
-        result, usage = await call(system, prompt, schema)
+        result, usage = await call(system, prompt, schema, temperature)
     except LlmError as e:
         session.add(LlmUsage(user_id=user_id, profile_id=profile_id, kind=kind, provider=provider, model="?", ok=False, error=str(e)))
         await session.commit()
@@ -108,7 +128,8 @@ async def ask(
             LlmUsage(user_id=user_id, profile_id=profile_id, kind=kind, provider=provider, model="?", ok=False, error=str(e)[:500])
         )
         await session.commit()
-        raise LlmError("нейросеть недоступна, попробуй позже") from e
+        quota = _quota(e)
+        raise LlmUnavailable("лимит запросов к нейросети" if quota else "нейросеть недоступна, попробуй позже", quota) from e
     session.add(
         LlmUsage(
             user_id=user_id,
