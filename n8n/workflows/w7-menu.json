@@ -152,12 +152,192 @@
       }
     },
     {
+      "id": "a83b343e-058f-cac5-078a-ea7b86bc0bfa",
+      "name": "Settings",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "settings"
+        },
+        "returnAll": true
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "e08feb6f-a1d2-0a4b-69fc-b861b2c29d68",
+      "name": "Setting change",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        -1300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W7 · Setting change — нажата кнопка настройки «▸»: следующее значение по кругу (07.10.2026).\n// Нода: Code, режим «Run Once for All Items». Ветка выше «Rows»: выполняется до «Render», и панель покажет новое значение.\n// Вход: «Job» (change = { name }), «Settings» — строки таблицы settings.\n// Выход: [{ name, value_json, value, previous }] → «Save setting» (upsert по name) или [] — менять нечего.\n\n// Настройки из бота (⚙️ Настройки, решения пользователя 07.10.2026): схема, значения по умолчанию, чтение.\n// В таблице settings (name, value_json) лежат только изменения пользователя: пустая таблица — значения по умолчанию,\n// то есть поведение до появления настроек. Значение, которое не проходит проверку схемы, заменяется значением\n// по умолчанию — битая строка в таблице не ломает сбор.\n// Общий код W1, W6, W7, W8: строка «// @include n8n/shared/settings.js» (перед n8n/shared/schedule.js).\n\nconst SETTINGS = {\n  // Сбор (W8 Clock): интервал днём и ночью (мин, 0 — ночью не собирать), «день» по Москве, пауза\n  'collect.day_every': { default: 30, options: [15, 30, 60] },\n  'collect.night_every': { default: 120, options: [60, 120, 240, 0] },\n  'collect.day_window': { default: '07-18', options: ['07-18', '08-20', '06-22', '09-18'] },\n  'collect.paused': { default: false, options: [false, true] },\n};\n\n// items — $('Settings').all() (строки таблицы settings) → { имя: значение }\nfunction loadSettings(items) {\n  const stored = {};\n  for (const item of items ?? []) {\n    const row = item?.json ?? item;\n    if (!row?.name || !(row.name in SETTINGS)) continue;\n    try {\n      stored[row.name] = JSON.parse(row.value_json);\n    } catch {\n      // битое значение — останется по умолчанию\n    }\n  }\n  const out = {};\n  for (const [name, spec] of Object.entries(SETTINGS)) {\n    const value = stored[name];\n    out[name] = value !== undefined && spec.options.some((o) => o === value) ? value : spec.default;\n  }\n  return out;\n}\n\n// Следующее значение по кругу — кнопка «▸»\nfunction nextSetting(name, current) {\n  const { options } = SETTINGS[name];\n  return options[(options.findIndex((o) => o === current) + 1) % options.length];\n}\n\n// Расписание сбора для n8n/shared/schedule.js\nfunction scheduleFrom(s) {\n  const [dayFrom, dayTo] = String(s['collect.day_window']).split('-').map(Number);\n  return {\n    dayFrom,\n    dayTo,\n    dayEvery: s['collect.day_every'],\n    nightEvery: s['collect.night_every'],\n    paused: s['collect.paused'],\n  };\n}\n\nconst job = $('Job').first().json;\nconst name = job.change?.name;\nif (!name || !(name in SETTINGS)) return [];\n\nconst previous = loadSettings($('Settings').all())[name];\nconst value = nextSetting(name, previous);\nreturn [{ json: { name, value_json: JSON.stringify(value), value, previous } }];\n"
+      }
+    },
+    {
+      "id": "b405c6da-3b2d-de4f-8fbd-e5a4c776ac5a",
+      "name": "Save setting",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        -1300
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "settings"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "keyValue": "={{ $json.name }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "name": "={{ $json.name }}",
+            "value_json": "={{ $json.value_json }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "value_json",
+              "displayName": "value_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a3c5c338-e51e-e234-f9dc-37307d47771c",
+      "name": "HC plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        -1300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W7 · HC plan — расписание сбора поменялось → обновить стража healthchecks.io через его API (07.10.2026).\n// Нода: Code, режим «Run Once for All Items». Вход: «Setting change» (что поменяли), «Settings» (остальные значения).\n// Выход: [{ url, body, what }] → «HC sync» (POST, ключ — credential «healthchecks API» = HC_API_KEY из .env)\n//   пауза → POST …/pause (пинг после возобновления снимет паузу сам); иначе → новый OnCalendar и grace;\n//   [] — поменяли не расписание или в .env нет HC_PING_URL (стража нет).\n\n// Настройки из бота (⚙️ Настройки, решения пользователя 07.10.2026): схема, значения по умолчанию, чтение.\n// В таблице settings (name, value_json) лежат только изменения пользователя: пустая таблица — значения по умолчанию,\n// то есть поведение до появления настроек. Значение, которое не проходит проверку схемы, заменяется значением\n// по умолчанию — битая строка в таблице не ломает сбор.\n// Общий код W1, W6, W7, W8: строка «// @include n8n/shared/settings.js» (перед n8n/shared/schedule.js).\n\nconst SETTINGS = {\n  // Сбор (W8 Clock): интервал днём и ночью (мин, 0 — ночью не собирать), «день» по Москве, пауза\n  'collect.day_every': { default: 30, options: [15, 30, 60] },\n  'collect.night_every': { default: 120, options: [60, 120, 240, 0] },\n  'collect.day_window': { default: '07-18', options: ['07-18', '08-20', '06-22', '09-18'] },\n  'collect.paused': { default: false, options: [false, true] },\n};\n\n// items — $('Settings').all() (строки таблицы settings) → { имя: значение }\nfunction loadSettings(items) {\n  const stored = {};\n  for (const item of items ?? []) {\n    const row = item?.json ?? item;\n    if (!row?.name || !(row.name in SETTINGS)) continue;\n    try {\n      stored[row.name] = JSON.parse(row.value_json);\n    } catch {\n      // битое значение — останется по умолчанию\n    }\n  }\n  const out = {};\n  for (const [name, spec] of Object.entries(SETTINGS)) {\n    const value = stored[name];\n    out[name] = value !== undefined && spec.options.some((o) => o === value) ? value : spec.default;\n  }\n  return out;\n}\n\n// Следующее значение по кругу — кнопка «▸»\nfunction nextSetting(name, current) {\n  const { options } = SETTINGS[name];\n  return options[(options.findIndex((o) => o === current) + 1) % options.length];\n}\n\n// Расписание сбора для n8n/shared/schedule.js\nfunction scheduleFrom(s) {\n  const [dayFrom, dayTo] = String(s['collect.day_window']).split('-').map(Number);\n  return {\n    dayFrom,\n    dayTo,\n    dayEvery: s['collect.day_every'],\n    nightEvery: s['collect.night_every'],\n    paused: s['collect.paused'],\n  };\n}\n\n// Расписание сбора W1 по Москве (UTC+3, без перехода на летнее время). С 07.10.2026 задаётся в боте\n// (⚙️ Настройки → 🕐 Сбор, n8n/shared/settings.js → scheduleFrom), сбор запускают «часы» W8 Clock.\n// sch = { dayFrom, dayTo, dayEvery, nightEvery, paused }: днём [dayFrom, dayTo) — каждые dayEvery мин, ночью — каждые\n// nightEvery мин (0 — ночью не собирать). Слоты выровнены по полуночи МСК, шаг сетки — 15 мин.\n// По умолчанию (решение пользователя 07.10.2026) — 29 сборов в сутки: днём 07:00–17:30 каждые 30 мин,\n// ночью 18, 20, 22, 00, 02, 04, 06.\n// Общий код W1 «Score job», W6 «Summary», W7 «Render», W8 «Due»: строка «// @include n8n/shared/schedule.js».\n\nconst COLLECT_STEP = 15 * 60 * 1000;\nconst DEFAULT_SCHEDULE = { dayFrom: 7, dayTo: 18, dayEvery: 30, nightEvery: 120, paused: false };\n\n// Момент t (мс, кратен 15 мин) — сбор по расписанию?\nfunction isCollectSlot(t, sch = DEFAULT_SCHEDULE) {\n  if (sch.paused) return false;\n  const msk = new Date(t + 3 * 3600 * 1000);\n  const hour = msk.getUTCHours();\n  const every = hour >= sch.dayFrom && hour < sch.dayTo ? sch.dayEvery : sch.nightEvery;\n  return every > 0 && (hour * 60 + msk.getUTCMinutes()) % every === 0;\n}\n\n// Сколько сборов по расписанию в промежутке (from, to]\nfunction countCollectSlots(from, to, sch = DEFAULT_SCHEDULE) {\n  let n = 0;\n  for (let t = Math.floor(from / COLLECT_STEP) * COLLECT_STEP + COLLECT_STEP; t <= to; t += COLLECT_STEP) {\n    if (isCollectSlot(t, sch)) n++;\n  }\n  return n;\n}\n\n// Ближайший сбор по расписанию после момента t; null — на паузе\nfunction nextCollect(t, sch = DEFAULT_SCHEDULE) {\n  if (sch.paused) return null;\n  let s = Math.floor(t / COLLECT_STEP) * COLLECT_STEP + COLLECT_STEP;\n  for (let i = 0; i < 2 * 96; i++, s += COLLECT_STEP) if (isCollectSlot(s, sch)) return s;\n  return null;\n}\n\n// Сборов в сутки по расписанию\nconst collectsPerDay = (sch = DEFAULT_SCHEDULE) => countCollectSlots(0, 24 * 3600 * 1000, { ...sch, paused: false });\n\n// Расписание словами: «днём 07–18 МСК каждые 30 мин, ночью каждые 2 ч»\nfunction describeSchedule(sch = DEFAULT_SCHEDULE) {\n  const every = (m) => (m % 60 ? `${m} мин` : `${m / 60} ч`);\n  const pad = (n) => String(n).padStart(2, '0');\n  const night = sch.nightEvery > 0 ? `ночью каждые ${every(sch.nightEvery)}` : 'ночью не собирать';\n  return `днём ${pad(sch.dayFrom)}–${pad(sch.dayTo)} МСК каждые ${every(sch.dayEvery)}, ${night}`;\n}\n\n// Расписание стража healthchecks.io: OnCalendar (строка дня и строка ночи) и запас (grace, с)\nfunction onCalendar(sch = DEFAULT_SCHEDULE) {\n  const pad = (n) => String(n).padStart(2, '0');\n  const minutes = [];\n  for (let m = 0; m < 60; m += Math.min(sch.dayEvery, 60)) minutes.push(pad(m));\n  const lines = [`${pad(sch.dayFrom)}..${pad(sch.dayTo - 1)}:${minutes.join(',')} Europe/Moscow`];\n  if (sch.nightEvery > 0) {\n    const hours = [];\n    for (let h = 0; h < 24; h++) {\n      if ((h < sch.dayFrom || h >= sch.dayTo) && (h * 60) % sch.nightEvery === 0) hours.push(pad(h));\n    }\n    if (hours.length) lines.push(`${hours.join(',')}:00 Europe/Moscow`);\n  }\n  return { schedule: lines.join('\\n'), grace: (sch.dayEvery + 20) * 60 };\n}\n\nconst change = $('Setting change').first().json;\nconst uuid = String($env.HC_PING_URL ?? '').match(/([0-9a-f-]{36})\\/?$/i)?.[1];\nif (!change.name.startsWith('collect.') || !uuid) return [];\n\nconst s = { ...loadSettings($('Settings').all()), [change.name]: change.value };\nconst sch = scheduleFrom(s);\nconst url = `https://healthchecks.io/api/v3/checks/${uuid}`;\nif (sch.paused) return [{ json: { url: `${url}/pause`, body: {}, what: 'pause' } }];\nconst { schedule, grace } = onCalendar(sch);\nreturn [{ json: { url, body: { schedule, tz: 'Europe/Moscow', grace }, what: 'schedule' } }];\n"
+      }
+    },
+    {
+      "id": "7e91b7c4-6fb6-1765-8765-d61302dbaa5d",
+      "name": "HC sync",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2200,
+        -1300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "jobHunterHcApi01",
+          "name": "healthchecks API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "d9504b79-8435-08ee-f062-7d409c4c4a11",
+      "name": "Collect now",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        -1100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W7 · Collect now — «🔄 Собрать сейчас» в ⚙️ Настройках → W1 (без ожидания), kind = bot (07.10.2026).\n// Нода: Code, режим «Run Once for All Items». Идёт ли уже сбор — проверит сам W1 (журнал runs).\n// Выход: [{ kind: 'bot' }] → «Run W1» или [] — кнопку не нажимали.\n\nreturn $('Job').first().json.collectNow ? [{ json: { kind: 'bot' } }] : [];\n"
+      }
+    },
+    {
+      "id": "896a593d-799c-8071-ee16-b6a5e1a800c4",
+      "name": "Run W1",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1760,
+        -1100
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "jobHunterW1Colle"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      }
+    },
+    {
       "id": "087ec90e-3124-a242-3c38-765c4dfa6445",
       "name": "Rows",
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        1320,
+        1540,
         0
       ],
       "parameters": {
@@ -179,7 +359,7 @@
       "type": "n8n-nodes-base.dataTable",
       "typeVersion": 1.1,
       "position": [
-        1540,
+        1760,
         0
       ],
       "parameters": {
@@ -205,13 +385,13 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1760,
+        1980,
         0
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// W7 · Render — панель меню бота: список вакансий, карточка, статистика или приветствие с кнопками меню.\n// Нода: Code, режим «Run Once for All Items».\n// Вход: «Job» — что показать (view = list | open | stats | start); «Rows» — вся таблица vacancies;\n//       $input — «Runs»: последние записи журнала сборов runs (для статистики).\n// Выход: { route, view, layout, edit, chatId, messageId, text, b, deleteIds, tab, page }\n//   route — выход «Layout» (Switch): раскладка × отправить новое сообщение (чётный) / править панель (нечётный),\n//           10 — приветствие с кнопками под полем ввода;\n//   b — подписи и callback_data кнопок: раскладки фиксированные (Telegram-нода не умеет менять число кнопок);\n//   deleteIds — что удалить после отправки: нажатие пользователя и прошлую панель (одна живая панель в чате).\n// Static data (global): panel = { messageId, view, id, tab, page } — текущая панель: что на ней (list | open | stats,\n//                       id — открытая вакансия) и вкладка, куда вернут «⬅️ К списку» и «📋 К вакансиям»;\n//                       greetingId — приветствие (при новом /start старое удаляется).\n\n// Общий код карточки вакансии в Telegram: W2 «Format card» и W3 «Apply choice».\n// В Code-ноду попадает при сборке: строка «// @include n8n/shared/card.js» заменяется этим файлом\n// (scripts/build-workflows.mjs, scripts/run-code-node.mjs).\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst EXPERIENCE = { noExperience: 'без опыта', between1And3: '1–3 г.', between3And6: '3–6 л.', moreThan6: '6+ л.' };\nconst CURRENCY = { RUR: '₽', USD: '$', EUR: '€', KZT: '₸', BYR: 'Br', UZS: 'сум' };\n\n// Решение нейросети (колонка decision)\nconst VERDICT = { apply: '🟢 apply', maybe: '🟡 maybe', skip: '🔴 skip', error: '⚠️ не оценено' };\n// Кнопки пользователя: callback_data = v:<id строки>:<choice>, решение — в колонку my_decision.\n// earlier — «📨 Уже откликался» (до бота, 07.10.2026): status = applied без письма и без applied_at,\n// без «Почему?» и вне теневого режима (сравниваются только apply / maybe / skip)\nconst CHOICE = { apply: '✅ Откликнусь', maybe: '🤔 Возможно', skip: '❌ Мимо', earlier: '📨 Откликался раньше' };\nconst STATUS_BY_CHOICE = { apply: 'approved', maybe: 'maybe', skip: 'skipped', earlier: 'applied' };\n\nconst short = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));\n\nfunction salary(r) {\n  if (!r.salary_from && !r.salary_to) return '';\n  const range =\n    r.salary_from && r.salary_to\n      ? `${short(r.salary_from)}–${short(r.salary_to)}`\n      : r.salary_from\n        ? `от ${short(r.salary_from)}`\n        : `до ${short(r.salary_to)}`;\n  return `💰 ${range} ${CURRENCY[r.currency] ?? r.currency ?? ''}${r.salary_gross ? ' до налогов' : ''}`;\n}\n\n// «Москва, Сербия, Грузия, Армения» → «Москва, Сербия +2»\nfunction areas(s) {\n  const list = String(s ?? '').split(', ').filter(Boolean);\n  return list.length > 2 ? `${list.slice(0, 2).join(', ')} +${list.length - 2}` : list.join(', ');\n}\n\n// '2026-10-06T13:22:00+0300' → '06.10'\nfunction published(s) {\n  const m = String(s ?? '').match(/^\\d{4}-(\\d{2})-(\\d{2})/);\n  return m ? `${m[2]}.${m[1]}` : '';\n}\n\n// Момент в UTC (applied_at) → дата по Таиланду (UTC+7): '2026-10-06T21:17:55Z' → '07.10'\nconst thaiDate = (iso) => (Date.parse(iso) ? published(new Date(Date.parse(iso) + 7 * 3600 * 1000).toISOString()) : '');\n\n// Итоговые состояния без кнопок: W3 «📨 Отправил», W6 «⌛ устарела» и «🔒 закрыта на hh»\nconst FINAL = { expired: '⌛ Устарела: 3 дня без решения', archived: '🔒 Вакансия закрыта на hh' };\n\n// Текст карточки (Parse Mode = HTML). Строка «👤 …» появляется после нажатия кнопки,\n// «📨 …» — после «Отправил» под письмом (W3, status = applied), FINAL — после W6\nfunction cardText(r) {\n  const date = published(r.published_at);\n  const meta = [esc(r.company), salary(r), EXPERIENCE[r.experience] ?? '', esc(areas(r.areas)), date && `📅 ${date}`]\n    .filter(Boolean)\n    .join(' · ');\n  const flags = [\n    r.has_test && '📝 тест',\n    r.letter_required && '✉️ письмо обязательно',\n    r.responses != null && `👥 ${r.responses}`,\n    r.error && `⚠️ ${esc(r.error)}`,\n  ]\n    .filter(Boolean)\n    .join(' · ');\n  const verdict = `🤖 ${VERDICT[r.decision] ?? esc(r.decision)}${r.llm_reason ? ` — ${esc(r.llm_reason)}` : ''}`;\n  const mine = CHOICE[r.my_decision] ? `👤 ${CHOICE[r.my_decision]}` : '';\n  // «📨 Откликался раньше» уже в строке «👤 …» — второй раз не пишем\n  const sent =\n    r.status === 'applied' && r.my_decision !== 'earlier'\n      ? `📨 Отклик отправлен${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}`\n      : '';\n  return [`<a href=\"${r.url}\"><b>${esc(r.title)}</b></a>`, meta, flags, verdict, mine, sent, FINAL[r.status] ?? '']\n    .filter(Boolean)\n    .join('\\n');\n}\n// Меню бота: кнопки под полем ввода и вкладки списка вакансий (решения пользователя 07.10.2026).\n// Общий код W3 «Route» и W7 «Render»: строка «// @include n8n/shared/menu.js».\n//\n// callback_data кнопок панели (Telegram — не длиннее 64 байт):\n//   p:l:<tab>:<page>  — список: вкладка и страница;   p:s — статистика;   p:x — неактивная кнопка\n//   p:n — новая панель со списком там, где был (кнопка «📋 К вакансиям» под отправленным письмом)\n//   pv:<id>:<apply|maybe|skip|earlier|edit>:<tab>:<page> — решение в карточке на панели: W3 правит исходную карточку\n//   в ленте, потом W7 перерисовывает панель. <tab>:<page> — куда вернёт «⬅️ К списку».\n\n// Кнопки под полем ввода: Telegram присылает их текст обычным сообщением\nconst MENU = { list: '📋 Вакансии', stats: '📊 Статистика' };\n\n// Вкладки списка: статусы строк (statuses = null — всё, кроме бэкфилла seen), порядок кнопок — порядок ключей\nconst TABS = {\n  wait: { icon: '⏳', name: 'Ждут решения', statuses: ['waiting'] },\n  todo: { icon: '✅', name: 'Откликнусь и 🤔', statuses: ['approved', 'maybe'] },\n  sent: { icon: '📨', name: 'Отправлено', statuses: ['applied'] },\n  skip: { icon: '❌', name: 'Мимо и устаревшие', statuses: ['skipped', 'expired', 'archived'] },\n  rej: { icon: '🚫', name: 'Отсеяно фильтром', statuses: ['rejected'] },\n  all: { icon: '📋', name: 'Все', statuses: null },\n};\n\n// Значки строки списка: решение нейросети + статус\nconst VERDICT_ICON = { apply: '🟢', maybe: '🟡', skip: '🔴', error: '⚠️' };\nconst STATUS_ICON = {\n  new: '⚙️',\n  detailed: '⚙️',\n  scoring: '⚙️',\n  waiting: '⏳',\n  approved: '✅',\n  maybe: '🤔',\n  skipped: '❌',\n  applied: '📨',\n  expired: '⌛',\n  archived: '🔒',\n  rejected: '🚫',\n};\n// Расписание сбора W1 по Москве (UTC+3, без перехода на летнее время), решение пользователя 07.10.2026:\n// днём 07:00–17:30 каждые 30 мин, ночью 18, 20, 22, 00, 02, 04, 06 — 29 сборов в сутки.\n// Держать в синхроне с Schedule W1 в scripts/build-workflows.mjs.\n// Общий код W1 «Score job» (следующий сбор), W6 «Summary» и W7 «Render»: строка «// @include n8n/shared/schedule.js».\n\nconst COLLECT_STEP = 30 * 60 * 1000;\n\n// Момент t (мс, кратен 30 мин) — сбор по расписанию?\nfunction isCollectSlot(t) {\n  const msk = new Date(t + 3 * 3600 * 1000);\n  const h = msk.getUTCHours();\n  const m = msk.getUTCMinutes();\n  return h >= 7 && h < 18 ? m % 30 === 0 : m === 0 && h % 2 === 0;\n}\n\n// Сколько сборов по расписанию в промежутке (from, to]\nfunction countCollectSlots(from, to) {\n  let n = 0;\n  for (let t = Math.floor(from / COLLECT_STEP) * COLLECT_STEP + COLLECT_STEP; t <= to; t += COLLECT_STEP) {\n    if (isCollectSlot(t)) n++;\n  }\n  return n;\n}\n\n// Ближайший сбор по расписанию после момента t\nfunction nextCollect(t) {\n  let s = Math.floor(t / COLLECT_STEP) * COLLECT_STEP + COLLECT_STEP;\n  while (!isCollectSlot(s)) s += COLLECT_STEP;\n  return s;\n}\n\nconst job = $('Job').first().json;\nconst rows = $('Rows')\n  .all()\n  .map((i) => i.json)\n  .filter((r) => r.id);\nconst runs = $input\n  .all()\n  .map((i) => i.json)\n  .filter((r) => r.id)\n  .sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at));\nconst state = $getWorkflowStaticData('global');\nconst panel = state.panel ?? {};\n\nconst now = Date.now();\nconst DAY = 24 * 3600 * 1000;\nconst PAGE = 8;\nconst LAYOUTS = ['list', 'open_choose', 'open_decided', 'open_plain', 'stats'];\nconst chatId = String(job.chatId || $env.TG_CHAT_ID);\n// sync — после «📨 Отправил» / «↩️ Отменить» под письмом (W3 «Sync job»): перерисовать панель,\n// только если на ней открыта эта вакансия — иначе на ней нечего обновлять\nif (job.view === 'sync' && !(panel.view === 'open' && Number(panel.id) === Number(job.id) && panel.messageId)) {\n  return [];\n}\n// Кнопка в панели, перерисовка после решения, sync — правим панель; кнопка меню, /v…, «📋 К вакансиям» — новая\nconst target = job.view === 'sync' ? panel.messageId : job.messageId;\nconst edit = Boolean(target);\nconst at = (s) => Date.parse(s) || 0;\nconst count = (list, f) => list.filter(f).length;\nconst pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);\n\n// Время: по Таиланду (UTC+7), в скобках — по Москве (UTC+3)\nconst hhmm = (t, offset) => new Date(t + offset * 3600 * 1000).toISOString().slice(11, 16);\nconst thaiMsk = (t) => `${hhmm(t, 7)} (${hhmm(t, 3)} МСК)`;\nfunction span(ms) {\n  const m = Math.max(0, Math.round(ms / 60000));\n  if (m < 1) return 'меньше минуты';\n  if (m < 60) return `${m} мин`;\n  const h = Math.floor(m / 60);\n  if (h < 24) return h < 3 && m % 60 ? `${h} ч ${m % 60} мин` : `${h} ч`;\n  return `${Math.floor(h / 24)} д`;\n}\n\n// ---------- Список ----------\n\nconst inTab = (key) => {\n  const statuses = TABS[key].statuses;\n  return rows.filter((r) => (statuses ? statuses.includes(r.status) : r.status !== 'seen'));\n};\nconst counts = Object.fromEntries(Object.keys(TABS).map((key) => [key, inTab(key).length]));\n\nfunction itemLines(r, n) {\n  const icons = `${VERDICT_ICON[r.decision] ?? ''}${STATUS_ICON[r.status] ?? ''}`;\n  const age = now - at(r.createdAt);\n  const meta = [\n    esc(r.company),\n    r.status === 'rejected' ? `🚫 ${esc(String(r.reasons ?? '').split(', ')[0].replace(/:.*$/, ''))}` : salary(r),\n    r.status === 'applied' && r.applied_at\n      ? `📨 ${thaiDate(r.applied_at)}`\n      : r.my_decision === 'earlier'\n        ? '📨 раньше'\n      : age < DAY\n        ? `${span(age)} назад`\n        : thaiDate(r.createdAt),\n    `/v${r.id}`,\n  ]\n    .filter(Boolean)\n    .join(' · ');\n  return `${n}. ${icons} <a href=\"${r.url}\">${esc(r.title)}</a>\\n   ${meta}`;\n}\n\nfunction listView(tabKey, pageNo, note = '') {\n  const tab = TABS[tabKey] ? tabKey : counts.wait ? 'wait' : 'all';\n  const items = inTab(tab).sort((a, b) => (tab === 'sent' ? at(b.applied_at) - at(a.applied_at) : 0) || b.id - a.id);\n  const pages = Math.max(1, Math.ceil(items.length / PAGE));\n  const page = Math.min(Math.max(1, Number(pageNo) || 1), pages);\n  const lines = items.slice((page - 1) * PAGE, page * PAGE).map((r, i) => itemLines(r, (page - 1) * PAGE + i + 1));\n  const { icon, name } = TABS[tab];\n  const head = `📋 <b>Вакансии</b> · ${icon} ${name} — ${items.length}${pages > 1 ? ` · стр. ${page}/${pages}` : ''}`;\n  const off = { text: '·', cb: 'p:x' };\n  return {\n    layout: 'list',\n    tab,\n    page,\n    text: `${[note, head].filter(Boolean).join('\\n')}\\n\\n${lines.length ? lines.join('\\n') : 'Здесь пока пусто.'}`,\n    b: {\n      tabs: Object.keys(TABS).map((key) => ({\n        text: `${key === tab ? '• ' : ''}${TABS[key].icon} ${counts[key]}`,\n        cb: `p:l:${key}:1`,\n      })),\n      prev: page > 1 ? { text: '◀️', cb: `p:l:${tab}:${page - 1}` } : off,\n      // Номер страницы — обновить её (новые вакансии, решения)\n      mid: { text: `${page}/${pages}`, cb: `p:l:${tab}:${page}` },\n      next: page < pages ? { text: '▶️', cb: `p:l:${tab}:${page + 1}` } : off,\n    },\n  };\n}\n\n// ---------- Карточка на панели ----------\n\nfunction openView(id) {\n  // Вкладка для «⬅️ К списку»: из кнопки панели (pv:…), а для /v… — та, что сейчас открыта на панели\n  const fromJob = Boolean(TABS[job.tab]);\n  const tab = fromJob ? job.tab : TABS[panel.tab] ? panel.tab : 'all';\n  const page = Number(fromJob ? job.page : panel.page) || 1;\n  const r = rows.find((x) => x.id === id);\n  if (!r) return listView(tab, page, `⚠️ Вакансии /v${id} нет в базе`);\n\n  const extra = [\n    r.status === 'rejected' && `🚫 Отсеяна фильтром: ${esc(r.reasons)}`,\n    ['new', 'detailed'].includes(r.status) && '⚙️ Ждёт оценки нейросетью',\n    r.status === 'seen' && '🗄 Из первой выгрузки — не оценивалась',\n    r.letter && r.status === 'approved' && '✉️ Письмо готово — в ленте под карточкой',\n  ].filter(Boolean);\n  // Строка «🤖 …» пустая, если нейросеть вакансию не оценивала (отсеяна фильтром, бэкфилл)\n  const card = cardText(r)\n    .split('\\n')\n    .filter((line) => line !== '🤖 ')\n    .join('\\n');\n\n  // Кнопки решения — только если есть исходная карточка в ленте: решение правит и её (W3, callback pv:…)\n  let layout = 'open_plain';\n  if (r.tg_message_id && (r.status === 'waiting' || job.choose)) layout = 'open_choose';\n  // «📨 Откликался раньше» тоже можно отменить «↩️ Изменить» (отклик через бота — только «↩️ Отменить» под письмом)\n  else if (\n    r.tg_message_id &&\n    (['approved', 'maybe', 'skipped'].includes(r.status) || (r.status === 'applied' && r.my_decision === 'earlier'))\n  ) {\n    layout = 'open_decided';\n  }\n\n  const choice = (c) => `pv:${r.id}:${c}:${tab}:${page}`;\n  return {\n    layout,\n    tab,\n    page,\n    text: [`🔎 <b>Вакансия</b> /v${r.id}`, '', card, ...extra].join('\\n'),\n    b: {\n      apply: choice('apply'),\n      maybe: choice('maybe'),\n      skip: choice('skip'),\n      earlier: choice('earlier'),\n      edit: choice('edit'),\n      url: r.url,\n      back: `p:l:${tab}:${page}`,\n    },\n  };\n}\n\n// ---------- Статистика ----------\n\nfunction statsView() {\n  // Журнал сборов runs (W1 «Start run» / «Finish run»), свежие сверху\n  const last = runs[0];\n  const next = nextCollect(now);\n\n  // За сутки — как в утренней сводке W6: окно до «сейчас − 10 мин», только сборы по расписанию\n  const windowEnd = now - 10 * 60 * 1000;\n  const windowStart = windowEnd - DAY;\n  const expected = countCollectSlots(windowStart, windowEnd);\n  const collected = count(\n    runs,\n    (r) =>\n      ['schedule', 'catchup'].includes(r.kind) &&\n      r.status === 'ok' &&\n      at(r.started_at) > windowStart &&\n      at(r.started_at) <= windowEnd,\n  );\n\n  let lastLine = '• последний: сборов ещё не было';\n  if (last) {\n    const started = at(last.started_at);\n    // running дольше 10 мин — сбор упал, не дойдя до «Finish run» (ошибка ушла в W4)\n    const stale = last.status === 'running' && now - started > 10 * 60 * 1000;\n    const error = String(last.error ?? '');\n    const result =\n      last.status === 'ok'\n        ? `✅ новых ${last.fresh ?? 0}${last.cards ? `, карточек ${last.cards}` : ''}`\n        : last.status === 'error'\n          ? `⚠️ ошибка${error ? `: ${esc(error.length > 80 ? `${error.slice(0, 79)}…` : error)}` : ''}`\n          : stale\n            ? '⚠️ не завершился'\n            : '⏳ идёт';\n    lastLine = `• последний: ${thaiMsk(started)}, ${span(now - started)} назад — ${result}`;\n  }\n\n  const found = rows.filter((r) => r.status !== 'seen');\n  const scored = rows.filter((r) => ['apply', 'maybe', 'skip', 'error'].includes(r.decision));\n  const cards = rows.filter((r) => r.tg_message_id);\n  const reviewed = count(cards, (r) => r.my_decision);\n  const waiting = rows.filter((r) => r.status === 'waiting');\n  const oldest = Math.min(...waiting.map((r) => at(r.card_at || r.createdAt)));\n  const status = (s) => count(rows, (r) => r.status === s);\n  // Теневой режим — только решения apply / maybe / skip («📨 откликался раньше» не сравниваем)\n  const DECISIONS = ['apply', 'maybe', 'skip'];\n  const shadow = rows.filter((r) => DECISIONS.includes(r.my_decision) && DECISIONS.includes(r.decision));\n  const earlier = count(rows, (r) => r.status === 'applied' && r.my_decision === 'earlier');\n  const agree = count(shadow, (r) => r.my_decision === r.decision);\n  const errors = count(scored, (r) => r.decision === 'error');\n\n  const lines = [\n    `📊 <b>Статистика</b> · ${hhmm(now, 7)} по Таиланду`,\n    '',\n    '🔎 <b>Сбор</b> · днём раз в 30 мин, ночью раз в 2 ч',\n    lastLine,\n    `• следующий: ${thaiMsk(next)}, через ${span(next - now)}`,\n    `• за сутки: ${collected} из ${expected} по расписанию`,\n    '',\n    `📥 <b>Вакансии</b>: найдено ${found.length}, за сутки +${count(found, (r) => at(r.createdAt) >= now - DAY)}`,\n    `• 🚫 отсеяно фильтром: ${status('rejected')} · ⚙️ ждут нейросети: ${status('new') + status('detailed') + status('scoring')}`,\n    `• 🤖 оценено ${scored.length}: 🟢 ${count(scored, (r) => r.decision === 'apply')} · 🟡 ${count(scored, (r) => r.decision === 'maybe')} · 🔴 ${count(scored, (r) => r.decision === 'skip')}${errors ? ` · ⚠️ ${errors}` : ''}`,\n    '',\n    `👤 <b>Рассмотрено тобой</b>: ${reviewed} из ${cards.length} (${pct(reviewed, cards.length)}%)`,\n    `• ⏳ ждут решения: ${waiting.length}${waiting.length ? `, старейшая — ${span(now - oldest)}` : ''}`,\n    `• ✅ ${status('approved')} · 🤔 ${status('maybe')} · ❌ ${status('skipped')} · 📨 отправлено ${status('applied') - earlier}${earlier ? ` · 📨 раньше ${earlier}` : ''}`,\n    `• ⌛ устарели ${status('expired')} · 🔒 закрылись ${status('archived')}`,\n    '',\n    `🧪 Теневой режим: ${shadow.length}/50${shadow.length ? `, совпало ${agree} (${pct(agree, shadow.length)}%)` : ''}`,\n  ];\n  return {\n    layout: 'stats',\n    tab: panel.tab,\n    page: panel.page,\n    text: lines.filter((line, i) => line !== '' || lines[i - 1] !== '').join('\\n'),\n    b: { wait: { text: `⏳ Ждут решения · ${counts.wait}`, cb: 'p:l:wait:1' } },\n  };\n}\n\n// ---------- Приветствие ----------\n\nconst GREETING = [\n  '👋 <b>Меню бота</b> — кнопки под полем ввода:',\n  '',\n  `${MENU.list} — база по вкладкам: ⏳ ждут решения · ✅ откликнусь и 🤔 · 📨 отправлено · ❌ мимо · 🚫 отсеяно фильтром · 📋 все. ` +\n    'Команда вида <code>/v169</code> в строке открывает карточку — решение можно принять прямо там.',\n  `${MENU.stats} — когда был и будет сбор, сколько вакансий рассмотрено.`,\n  '',\n  'Новые вакансии по-прежнему приходят карточками.',\n].join('\\n');\n\n// ---------- Выбор вида ----------\n\nif (job.view === 'start') {\n  return [\n    {\n      json: {\n        route: 10,\n        view: 'start',\n        layout: 'start',\n        edit: false,\n        chatId,\n        messageId: 0,\n        text: GREETING,\n        b: {},\n        deleteIds: [job.userMessageId, state.greetingId].filter(Boolean),\n      },\n    },\n  ];\n}\n\nconst view = ['open', 'sync'].includes(job.view)\n  ? openView(Number(job.id))\n  : job.view === 'stats'\n    ? statsView()\n    : // resume — «📋 К вакансиям»: та вкладка и страница, что была на панели\n      listView(job.resume ? panel.tab : job.tab, job.resume ? panel.page : job.page);\nconst shown = view.layout.startsWith('open') ? 'open' : view.layout;\nconst id = shown === 'open' ? Number(job.id) : 0;\n\n// Панель, которую правим, становится текущей: «⬅️ К списку», /v… и «📋 К вакансиям» вернут на её вкладку\nif (edit) {\n  state.panel = { messageId: target, view: shown, id, tab: view.tab ?? panel.tab, page: view.page ?? panel.page };\n}\n\nreturn [\n  {\n    json: {\n      route: LAYOUTS.indexOf(view.layout) * 2 + (edit ? 1 : 0),\n      view: shown,\n      id,\n      layout: view.layout,\n      edit,\n      chatId,\n      messageId: target || 0,\n      text: view.text,\n      b: view.b,\n      deleteIds: edit ? [] : [job.userMessageId, panel.messageId].filter(Boolean),\n      tab: view.tab ?? '',\n      page: view.page ?? 1,\n    },\n  },\n];\n"
+        "jsCode": "// W7 · Render — панель меню бота: список вакансий, карточка, статистика или приветствие с кнопками меню.\n// Нода: Code, режим «Run Once for All Items».\n// Вход: «Job» — что показать (view = list | open | stats | start); «Rows» — вся таблица vacancies;\n//       $input — «Runs»: последние записи журнала сборов runs (для статистики).\n// Выход: { route, view, layout, edit, chatId, messageId, text, b, deleteIds, tab, page }\n//   route — выход «Layout» (Switch): раскладка × отправить новое сообщение (чётный) / править панель (нечётный),\n//           10 — приветствие с кнопками под полем ввода;\n//   b — подписи и callback_data кнопок: раскладки фиксированные (Telegram-нода не умеет менять число кнопок);\n//   deleteIds — что удалить после отправки: нажатие пользователя и прошлую панель (одна живая панель в чате).\n// Static data (global): panel = { messageId, view, id, tab, page } — текущая панель: что на ней (list | open | stats,\n//                       id — открытая вакансия) и вкладка, куда вернут «⬅️ К списку» и «📋 К вакансиям»;\n//                       greetingId — приветствие (при новом /start старое удаляется).\n\n// Общий код карточки вакансии в Telegram: W2 «Format card» и W3 «Apply choice».\n// В Code-ноду попадает при сборке: строка «// @include n8n/shared/card.js» заменяется этим файлом\n// (scripts/build-workflows.mjs, scripts/run-code-node.mjs).\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst EXPERIENCE = { noExperience: 'без опыта', between1And3: '1–3 г.', between3And6: '3–6 л.', moreThan6: '6+ л.' };\nconst CURRENCY = { RUR: '₽', USD: '$', EUR: '€', KZT: '₸', BYR: 'Br', UZS: 'сум' };\n\n// Решение нейросети (колонка decision)\nconst VERDICT = { apply: '🟢 apply', maybe: '🟡 maybe', skip: '🔴 skip', error: '⚠️ не оценено' };\n// Кнопки пользователя: callback_data = v:<id строки>:<choice>, решение — в колонку my_decision.\n// earlier — «📨 Уже откликался» (до бота, 07.10.2026): status = applied без письма и без applied_at,\n// без «Почему?» и вне теневого режима (сравниваются только apply / maybe / skip)\nconst CHOICE = { apply: '✅ Откликнусь', maybe: '🤔 Возможно', skip: '❌ Мимо', earlier: '📨 Откликался раньше' };\nconst STATUS_BY_CHOICE = { apply: 'approved', maybe: 'maybe', skip: 'skipped', earlier: 'applied' };\n\nconst short = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));\n\nfunction salary(r) {\n  if (!r.salary_from && !r.salary_to) return '';\n  const range =\n    r.salary_from && r.salary_to\n      ? `${short(r.salary_from)}–${short(r.salary_to)}`\n      : r.salary_from\n        ? `от ${short(r.salary_from)}`\n        : `до ${short(r.salary_to)}`;\n  return `💰 ${range} ${CURRENCY[r.currency] ?? r.currency ?? ''}${r.salary_gross ? ' до налогов' : ''}`;\n}\n\n// «Москва, Сербия, Грузия, Армения» → «Москва, Сербия +2»\nfunction areas(s) {\n  const list = String(s ?? '').split(', ').filter(Boolean);\n  return list.length > 2 ? `${list.slice(0, 2).join(', ')} +${list.length - 2}` : list.join(', ');\n}\n\n// '2026-10-06T13:22:00+0300' → '06.10'\nfunction published(s) {\n  const m = String(s ?? '').match(/^\\d{4}-(\\d{2})-(\\d{2})/);\n  return m ? `${m[2]}.${m[1]}` : '';\n}\n\n// Момент в UTC (applied_at) → дата по Таиланду (UTC+7): '2026-10-06T21:17:55Z' → '07.10'\nconst thaiDate = (iso) => (Date.parse(iso) ? published(new Date(Date.parse(iso) + 7 * 3600 * 1000).toISOString()) : '');\n\n// Итоговые состояния без кнопок: W3 «📨 Отправил», W6 «⌛ устарела» и «🔒 закрыта на hh»\nconst FINAL = { expired: '⌛ Устарела: 3 дня без решения', archived: '🔒 Вакансия закрыта на hh' };\n\n// Текст карточки (Parse Mode = HTML). Строка «👤 …» появляется после нажатия кнопки,\n// «📨 …» — после «Отправил» под письмом (W3, status = applied), FINAL — после W6\nfunction cardText(r) {\n  const date = published(r.published_at);\n  const meta = [esc(r.company), salary(r), EXPERIENCE[r.experience] ?? '', esc(areas(r.areas)), date && `📅 ${date}`]\n    .filter(Boolean)\n    .join(' · ');\n  const flags = [\n    r.has_test && '📝 тест',\n    r.letter_required && '✉️ письмо обязательно',\n    r.responses != null && `👥 ${r.responses}`,\n    r.error && `⚠️ ${esc(r.error)}`,\n  ]\n    .filter(Boolean)\n    .join(' · ');\n  const verdict = `🤖 ${VERDICT[r.decision] ?? esc(r.decision)}${r.llm_reason ? ` — ${esc(r.llm_reason)}` : ''}`;\n  const mine = CHOICE[r.my_decision] ? `👤 ${CHOICE[r.my_decision]}` : '';\n  // «📨 Откликался раньше» уже в строке «👤 …» — второй раз не пишем\n  const sent =\n    r.status === 'applied' && r.my_decision !== 'earlier'\n      ? `📨 Отклик отправлен${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}`\n      : '';\n  return [`<a href=\"${r.url}\"><b>${esc(r.title)}</b></a>`, meta, flags, verdict, mine, sent, FINAL[r.status] ?? '']\n    .filter(Boolean)\n    .join('\\n');\n}\n// Меню бота: кнопки под полем ввода и вкладки списка вакансий (решения пользователя 07.10.2026).\n// Общий код W3 «Route» и W7 «Render»: строка «// @include n8n/shared/menu.js».\n//\n// callback_data кнопок панели (Telegram — не длиннее 64 байт):\n//   p:l:<tab>:<page>  — список: вкладка и страница;   p:s — статистика;   p:x — неактивная кнопка\n//   p:n — новая панель со списком там, где был (кнопка «📋 К вакансиям» под отправленным письмом)\n//   pv:<id>:<apply|maybe|skip|earlier|edit>:<tab>:<page> — решение в карточке на панели: W3 правит исходную карточку\n//   в ленте, потом W7 перерисовывает панель. <tab>:<page> — куда вернёт «⬅️ К списку».\n//   Настройки (⚙️, 07.10.2026): s:<раздел> — открыть раздел (root | collect | search | filter | llm);\n//   sc:<имя настройки> — следующее значение по кругу (n8n/shared/settings.js); sn — «🔄 Собрать сейчас».\n\n// Кнопки под полем ввода: Telegram присылает их текст обычным сообщением\nconst MENU = { list: '📋 Вакансии', stats: '📊 Статистика', settings: '⚙️ Настройки' };\n\n// Вкладки списка: статусы строк (statuses = null — всё, кроме бэкфилла seen), порядок кнопок — порядок ключей\nconst TABS = {\n  wait: { icon: '⏳', name: 'Ждут решения', statuses: ['waiting'] },\n  todo: { icon: '✅', name: 'Откликнусь и 🤔', statuses: ['approved', 'maybe'] },\n  sent: { icon: '📨', name: 'Отправлено', statuses: ['applied'] },\n  skip: { icon: '❌', name: 'Мимо и устаревшие', statuses: ['skipped', 'expired', 'archived'] },\n  rej: { icon: '🚫', name: 'Отсеяно фильтром', statuses: ['rejected'] },\n  all: { icon: '📋', name: 'Все', statuses: null },\n};\n\n// Значки строки списка: решение нейросети + статус\nconst VERDICT_ICON = { apply: '🟢', maybe: '🟡', skip: '🔴', error: '⚠️' };\nconst STATUS_ICON = {\n  new: '⚙️',\n  detailed: '⚙️',\n  scoring: '⚙️',\n  waiting: '⏳',\n  approved: '✅',\n  maybe: '🤔',\n  skipped: '❌',\n  applied: '📨',\n  expired: '⌛',\n  archived: '🔒',\n  rejected: '🚫',\n};\n// Настройки из бота (⚙️ Настройки, решения пользователя 07.10.2026): схема, значения по умолчанию, чтение.\n// В таблице settings (name, value_json) лежат только изменения пользователя: пустая таблица — значения по умолчанию,\n// то есть поведение до появления настроек. Значение, которое не проходит проверку схемы, заменяется значением\n// по умолчанию — битая строка в таблице не ломает сбор.\n// Общий код W1, W6, W7, W8: строка «// @include n8n/shared/settings.js» (перед n8n/shared/schedule.js).\n\nconst SETTINGS = {\n  // Сбор (W8 Clock): интервал днём и ночью (мин, 0 — ночью не собирать), «день» по Москве, пауза\n  'collect.day_every': { default: 30, options: [15, 30, 60] },\n  'collect.night_every': { default: 120, options: [60, 120, 240, 0] },\n  'collect.day_window': { default: '07-18', options: ['07-18', '08-20', '06-22', '09-18'] },\n  'collect.paused': { default: false, options: [false, true] },\n};\n\n// items — $('Settings').all() (строки таблицы settings) → { имя: значение }\nfunction loadSettings(items) {\n  const stored = {};\n  for (const item of items ?? []) {\n    const row = item?.json ?? item;\n    if (!row?.name || !(row.name in SETTINGS)) continue;\n    try {\n      stored[row.name] = JSON.parse(row.value_json);\n    } catch {\n      // битое значение — останется по умолчанию\n    }\n  }\n  const out = {};\n  for (const [name, spec] of Object.entries(SETTINGS)) {\n    const value = stored[name];\n    out[name] = value !== undefined && spec.options.some((o) => o === value) ? value : spec.default;\n  }\n  return out;\n}\n\n// Следующее значение по кругу — кнопка «▸»\nfunction nextSetting(name, current) {\n  const { options } = SETTINGS[name];\n  return options[(options.findIndex((o) => o === current) + 1) % options.length];\n}\n\n// Расписание сбора для n8n/shared/schedule.js\nfunction scheduleFrom(s) {\n  const [dayFrom, dayTo] = String(s['collect.day_window']).split('-').map(Number);\n  return {\n    dayFrom,\n    dayTo,\n    dayEvery: s['collect.day_every'],\n    nightEvery: s['collect.night_every'],\n    paused: s['collect.paused'],\n  };\n}\n// Расписание сбора W1 по Москве (UTC+3, без перехода на летнее время). С 07.10.2026 задаётся в боте\n// (⚙️ Настройки → 🕐 Сбор, n8n/shared/settings.js → scheduleFrom), сбор запускают «часы» W8 Clock.\n// sch = { dayFrom, dayTo, dayEvery, nightEvery, paused }: днём [dayFrom, dayTo) — каждые dayEvery мин, ночью — каждые\n// nightEvery мин (0 — ночью не собирать). Слоты выровнены по полуночи МСК, шаг сетки — 15 мин.\n// По умолчанию (решение пользователя 07.10.2026) — 29 сборов в сутки: днём 07:00–17:30 каждые 30 мин,\n// ночью 18, 20, 22, 00, 02, 04, 06.\n// Общий код W1 «Score job», W6 «Summary», W7 «Render», W8 «Due»: строка «// @include n8n/shared/schedule.js».\n\nconst COLLECT_STEP = 15 * 60 * 1000;\nconst DEFAULT_SCHEDULE = { dayFrom: 7, dayTo: 18, dayEvery: 30, nightEvery: 120, paused: false };\n\n// Момент t (мс, кратен 15 мин) — сбор по расписанию?\nfunction isCollectSlot(t, sch = DEFAULT_SCHEDULE) {\n  if (sch.paused) return false;\n  const msk = new Date(t + 3 * 3600 * 1000);\n  const hour = msk.getUTCHours();\n  const every = hour >= sch.dayFrom && hour < sch.dayTo ? sch.dayEvery : sch.nightEvery;\n  return every > 0 && (hour * 60 + msk.getUTCMinutes()) % every === 0;\n}\n\n// Сколько сборов по расписанию в промежутке (from, to]\nfunction countCollectSlots(from, to, sch = DEFAULT_SCHEDULE) {\n  let n = 0;\n  for (let t = Math.floor(from / COLLECT_STEP) * COLLECT_STEP + COLLECT_STEP; t <= to; t += COLLECT_STEP) {\n    if (isCollectSlot(t, sch)) n++;\n  }\n  return n;\n}\n\n// Ближайший сбор по расписанию после момента t; null — на паузе\nfunction nextCollect(t, sch = DEFAULT_SCHEDULE) {\n  if (sch.paused) return null;\n  let s = Math.floor(t / COLLECT_STEP) * COLLECT_STEP + COLLECT_STEP;\n  for (let i = 0; i < 2 * 96; i++, s += COLLECT_STEP) if (isCollectSlot(s, sch)) return s;\n  return null;\n}\n\n// Сборов в сутки по расписанию\nconst collectsPerDay = (sch = DEFAULT_SCHEDULE) => countCollectSlots(0, 24 * 3600 * 1000, { ...sch, paused: false });\n\n// Расписание словами: «днём 07–18 МСК каждые 30 мин, ночью каждые 2 ч»\nfunction describeSchedule(sch = DEFAULT_SCHEDULE) {\n  const every = (m) => (m % 60 ? `${m} мин` : `${m / 60} ч`);\n  const pad = (n) => String(n).padStart(2, '0');\n  const night = sch.nightEvery > 0 ? `ночью каждые ${every(sch.nightEvery)}` : 'ночью не собирать';\n  return `днём ${pad(sch.dayFrom)}–${pad(sch.dayTo)} МСК каждые ${every(sch.dayEvery)}, ${night}`;\n}\n\n// Расписание стража healthchecks.io: OnCalendar (строка дня и строка ночи) и запас (grace, с)\nfunction onCalendar(sch = DEFAULT_SCHEDULE) {\n  const pad = (n) => String(n).padStart(2, '0');\n  const minutes = [];\n  for (let m = 0; m < 60; m += Math.min(sch.dayEvery, 60)) minutes.push(pad(m));\n  const lines = [`${pad(sch.dayFrom)}..${pad(sch.dayTo - 1)}:${minutes.join(',')} Europe/Moscow`];\n  if (sch.nightEvery > 0) {\n    const hours = [];\n    for (let h = 0; h < 24; h++) {\n      if ((h < sch.dayFrom || h >= sch.dayTo) && (h * 60) % sch.nightEvery === 0) hours.push(pad(h));\n    }\n    if (hours.length) lines.push(`${hours.join(',')}:00 Europe/Moscow`);\n  }\n  return { schedule: lines.join('\\n'), grace: (sch.dayEvery + 20) * 60 };\n}\n\nconst job = $('Job').first().json;\nconst rows = $('Rows')\n  .all()\n  .map((i) => i.json)\n  .filter((r) => r.id);\nconst runs = $input\n  .all()\n  .map((i) => i.json)\n  .filter((r) => r.id)\n  .sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at));\nconst state = $getWorkflowStaticData('global');\nconst panel = state.panel ?? {};\n\nconst now = Date.now();\nconst DAY = 24 * 3600 * 1000;\nconst PAGE = 8;\n// Порядок = PANEL_LAYOUTS в scripts/build-workflows.mjs (выходы «Layout»); после них — приветствие\nconst LAYOUTS = ['list', 'open_choose', 'open_decided', 'open_plain', 'stats', 'settings', 'set_collect'];\nconst chatId = String(job.chatId || $env.TG_CHAT_ID);\n// sync — после «📨 Отправил» / «↩️ Отменить» под письмом (W3 «Sync job»): перерисовать панель,\n// только если на ней открыта эта вакансия — иначе на ней нечего обновлять\nif (job.view === 'sync' && !(panel.view === 'open' && Number(panel.id) === Number(job.id) && panel.messageId)) {\n  return [];\n}\n// Кнопка в панели, перерисовка после решения, sync — правим панель; кнопка меню, /v…, «📋 К вакансиям» — новая\nconst target = job.view === 'sync' ? panel.messageId : job.messageId;\nconst edit = Boolean(target);\nconst at = (s) => Date.parse(s) || 0;\nconst count = (list, f) => list.filter(f).length;\nconst pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);\n\n// Время: по Таиланду (UTC+7), в скобках — по Москве (UTC+3)\nconst hhmm = (t, offset) => new Date(t + offset * 3600 * 1000).toISOString().slice(11, 16);\nconst thaiMsk = (t) => `${hhmm(t, 7)} (${hhmm(t, 3)} МСК)`;\nfunction span(ms) {\n  const m = Math.max(0, Math.round(ms / 60000));\n  if (m < 1) return 'меньше минуты';\n  if (m < 60) return `${m} мин`;\n  const h = Math.floor(m / 60);\n  if (h < 24) return h < 3 && m % 60 ? `${h} ч ${m % 60} мин` : `${h} ч`;\n  return `${Math.floor(h / 24)} д`;\n}\n\n// ---------- Список ----------\n\nconst inTab = (key) => {\n  const statuses = TABS[key].statuses;\n  return rows.filter((r) => (statuses ? statuses.includes(r.status) : r.status !== 'seen'));\n};\nconst counts = Object.fromEntries(Object.keys(TABS).map((key) => [key, inTab(key).length]));\n\nfunction itemLines(r, n) {\n  const icons = `${VERDICT_ICON[r.decision] ?? ''}${STATUS_ICON[r.status] ?? ''}`;\n  const age = now - at(r.createdAt);\n  const meta = [\n    esc(r.company),\n    r.status === 'rejected' ? `🚫 ${esc(String(r.reasons ?? '').split(', ')[0].replace(/:.*$/, ''))}` : salary(r),\n    r.status === 'applied' && r.applied_at\n      ? `📨 ${thaiDate(r.applied_at)}`\n      : r.my_decision === 'earlier'\n        ? '📨 раньше'\n      : age < DAY\n        ? `${span(age)} назад`\n        : thaiDate(r.createdAt),\n    `/v${r.id}`,\n  ]\n    .filter(Boolean)\n    .join(' · ');\n  return `${n}. ${icons} <a href=\"${r.url}\">${esc(r.title)}</a>\\n   ${meta}`;\n}\n\nfunction listView(tabKey, pageNo, note = '') {\n  const tab = TABS[tabKey] ? tabKey : counts.wait ? 'wait' : 'all';\n  const items = inTab(tab).sort((a, b) => (tab === 'sent' ? at(b.applied_at) - at(a.applied_at) : 0) || b.id - a.id);\n  const pages = Math.max(1, Math.ceil(items.length / PAGE));\n  const page = Math.min(Math.max(1, Number(pageNo) || 1), pages);\n  const lines = items.slice((page - 1) * PAGE, page * PAGE).map((r, i) => itemLines(r, (page - 1) * PAGE + i + 1));\n  const { icon, name } = TABS[tab];\n  const head = `📋 <b>Вакансии</b> · ${icon} ${name} — ${items.length}${pages > 1 ? ` · стр. ${page}/${pages}` : ''}`;\n  const off = { text: '·', cb: 'p:x' };\n  return {\n    layout: 'list',\n    tab,\n    page,\n    text: `${[note, head].filter(Boolean).join('\\n')}\\n\\n${lines.length ? lines.join('\\n') : 'Здесь пока пусто.'}`,\n    b: {\n      tabs: Object.keys(TABS).map((key) => ({\n        text: `${key === tab ? '• ' : ''}${TABS[key].icon} ${counts[key]}`,\n        cb: `p:l:${key}:1`,\n      })),\n      prev: page > 1 ? { text: '◀️', cb: `p:l:${tab}:${page - 1}` } : off,\n      // Номер страницы — обновить её (новые вакансии, решения)\n      mid: { text: `${page}/${pages}`, cb: `p:l:${tab}:${page}` },\n      next: page < pages ? { text: '▶️', cb: `p:l:${tab}:${page + 1}` } : off,\n    },\n  };\n}\n\n// ---------- Карточка на панели ----------\n\nfunction openView(id) {\n  // Вкладка для «⬅️ К списку»: из кнопки панели (pv:…), а для /v… — та, что сейчас открыта на панели\n  const fromJob = Boolean(TABS[job.tab]);\n  const tab = fromJob ? job.tab : TABS[panel.tab] ? panel.tab : 'all';\n  const page = Number(fromJob ? job.page : panel.page) || 1;\n  const r = rows.find((x) => x.id === id);\n  if (!r) return listView(tab, page, `⚠️ Вакансии /v${id} нет в базе`);\n\n  const extra = [\n    r.status === 'rejected' && `🚫 Отсеяна фильтром: ${esc(r.reasons)}`,\n    ['new', 'detailed'].includes(r.status) && '⚙️ Ждёт оценки нейросетью',\n    r.status === 'seen' && '🗄 Из первой выгрузки — не оценивалась',\n    r.letter && r.status === 'approved' && '✉️ Письмо готово — в ленте под карточкой',\n  ].filter(Boolean);\n  // Строка «🤖 …» пустая, если нейросеть вакансию не оценивала (отсеяна фильтром, бэкфилл)\n  const card = cardText(r)\n    .split('\\n')\n    .filter((line) => line !== '🤖 ')\n    .join('\\n');\n\n  // Кнопки решения — только если есть исходная карточка в ленте: решение правит и её (W3, callback pv:…)\n  let layout = 'open_plain';\n  if (r.tg_message_id && (r.status === 'waiting' || job.choose)) layout = 'open_choose';\n  // «📨 Откликался раньше» тоже можно отменить «↩️ Изменить» (отклик через бота — только «↩️ Отменить» под письмом)\n  else if (\n    r.tg_message_id &&\n    (['approved', 'maybe', 'skipped'].includes(r.status) || (r.status === 'applied' && r.my_decision === 'earlier'))\n  ) {\n    layout = 'open_decided';\n  }\n\n  const choice = (c) => `pv:${r.id}:${c}:${tab}:${page}`;\n  return {\n    layout,\n    tab,\n    page,\n    text: [`🔎 <b>Вакансия</b> /v${r.id}`, '', card, ...extra].join('\\n'),\n    b: {\n      apply: choice('apply'),\n      maybe: choice('maybe'),\n      skip: choice('skip'),\n      earlier: choice('earlier'),\n      edit: choice('edit'),\n      url: r.url,\n      back: `p:l:${tab}:${page}`,\n    },\n  };\n}\n\n// ---------- Статистика ----------\n\nfunction statsView() {\n  // Журнал сборов runs (W1 «Start run» / «Finish run»), свежие сверху\n  const last = runs[0];\n  const next = nextCollect(now, collectSchedule);\n\n  // За сутки — как в утренней сводке W6: окно до «сейчас − 10 мин», только сборы по расписанию\n  const windowEnd = now - 10 * 60 * 1000;\n  const windowStart = windowEnd - DAY;\n  const expected = countCollectSlots(windowStart, windowEnd, collectSchedule);\n  const collected = count(\n    runs,\n    (r) =>\n      ['schedule', 'catchup'].includes(r.kind) &&\n      r.status === 'ok' &&\n      at(r.started_at) > windowStart &&\n      at(r.started_at) <= windowEnd,\n  );\n\n  let lastLine = '• последний: сборов ещё не было';\n  if (last) {\n    const started = at(last.started_at);\n    // running дольше 10 мин — сбор упал, не дойдя до «Finish run» (ошибка ушла в W4)\n    const stale = last.status === 'running' && now - started > 10 * 60 * 1000;\n    const error = String(last.error ?? '');\n    const result =\n      last.status === 'ok'\n        ? `✅ новых ${last.fresh ?? 0}${last.cards ? `, карточек ${last.cards}` : ''}`\n        : last.status === 'error'\n          ? `⚠️ ошибка${error ? `: ${esc(error.length > 80 ? `${error.slice(0, 79)}…` : error)}` : ''}`\n          : stale\n            ? '⚠️ не завершился'\n            : '⏳ идёт';\n    lastLine = `• последний: ${thaiMsk(started)}, ${span(now - started)} назад — ${result}`;\n  }\n\n  const found = rows.filter((r) => r.status !== 'seen');\n  const scored = rows.filter((r) => ['apply', 'maybe', 'skip', 'error'].includes(r.decision));\n  const cards = rows.filter((r) => r.tg_message_id);\n  const reviewed = count(cards, (r) => r.my_decision);\n  const waiting = rows.filter((r) => r.status === 'waiting');\n  const oldest = Math.min(...waiting.map((r) => at(r.card_at || r.createdAt)));\n  const status = (s) => count(rows, (r) => r.status === s);\n  // Теневой режим — только решения apply / maybe / skip («📨 откликался раньше» не сравниваем)\n  const DECISIONS = ['apply', 'maybe', 'skip'];\n  const shadow = rows.filter((r) => DECISIONS.includes(r.my_decision) && DECISIONS.includes(r.decision));\n  const earlier = count(rows, (r) => r.status === 'applied' && r.my_decision === 'earlier');\n  const agree = count(shadow, (r) => r.my_decision === r.decision);\n  const errors = count(scored, (r) => r.decision === 'error');\n\n  const lines = [\n    `📊 <b>Статистика</b> · ${hhmm(now, 7)} по Таиланду`,\n    '',\n    `🔎 <b>Сбор</b> · ${describeSchedule(collectSchedule)}`,\n    lastLine,\n    next ? `• следующий: ${thaiMsk(next)}, через ${span(next - now)}` : '• ⏸ сбор на паузе (⚙️ Настройки → 🕐 Сбор)',\n    `• за сутки: ${collected} из ${expected} по расписанию`,\n    '',\n    `📥 <b>Вакансии</b>: найдено ${found.length}, за сутки +${count(found, (r) => at(r.createdAt) >= now - DAY)}`,\n    `• 🚫 отсеяно фильтром: ${status('rejected')} · ⚙️ ждут нейросети: ${status('new') + status('detailed') + status('scoring')}`,\n    `• 🤖 оценено ${scored.length}: 🟢 ${count(scored, (r) => r.decision === 'apply')} · 🟡 ${count(scored, (r) => r.decision === 'maybe')} · 🔴 ${count(scored, (r) => r.decision === 'skip')}${errors ? ` · ⚠️ ${errors}` : ''}`,\n    '',\n    `👤 <b>Рассмотрено тобой</b>: ${reviewed} из ${cards.length} (${pct(reviewed, cards.length)}%)`,\n    `• ⏳ ждут решения: ${waiting.length}${waiting.length ? `, старейшая — ${span(now - oldest)}` : ''}`,\n    `• ✅ ${status('approved')} · 🤔 ${status('maybe')} · ❌ ${status('skipped')} · 📨 отправлено ${status('applied') - earlier}${earlier ? ` · 📨 раньше ${earlier}` : ''}`,\n    `• ⌛ устарели ${status('expired')} · 🔒 закрылись ${status('archived')}`,\n    '',\n    `🧪 Теневой режим: ${shadow.length}/50${shadow.length ? `, совпало ${agree} (${pct(agree, shadow.length)}%)` : ''}`,\n  ];\n  return {\n    layout: 'stats',\n    tab: panel.tab,\n    page: panel.page,\n    text: lines.filter((line, i) => line !== '' || lines[i - 1] !== '').join('\\n'),\n    b: { wait: { text: `⏳ Ждут решения · ${counts.wait}`, cb: 'p:l:wait:1' } },\n  };\n}\n\n// W7 · Render — раздел «⚙️ Настройки» панели меню (07.10.2026). Подключается в render.js строкой\n// «// @include n8n/w7-menu/settings-view.js», после помощников времени (thaiMsk, hhmm).\n// Значения — из таблицы settings плюс изменение этого нажатия: «Setting change» выполнилась раньше (ветка выше).\n// Раскладки: settings (корень, 4 раздела) и set_collect (🕐 Сбор). Кнопки «▸» — следующее значение по кругу.\n\nconst ranNode = (name) => {\n  try {\n    return $(name)\n      .all()\n      .map((i) => i.json);\n  } catch {\n    return []; // нода в этом запуске не выполнялась\n  }\n};\nconst settingChange = ranNode('Setting change')[0];\nconst settings = {\n  ...loadSettings($('Settings').all()),\n  ...(settingChange ? { [settingChange.name]: settingChange.value } : {}),\n};\nconst collectSchedule = scheduleFrom(settings);\n\nconst everyText = (m) => (m % 60 ? `${m} мин` : `${m / 60} ч`);\nconst pad2 = (n) => String(n).padStart(2, '0');\n\nfunction settingsRootView(note) {\n  const sch = collectSchedule;\n  const lines = [\n    '⚙️ <b>Настройки</b>',\n    '',\n    `🕐 <b>Сбор</b>: ${describeSchedule(sch)} · ${collectsPerDay(sch)} в сутки${sch.paused ? ' · ⏸ <b>пауза</b>' : ''}`,\n    '🔎 Поиск · 🧹 Фильтр · 🤖 Нейросеть — в следующем обновлении',\n  ];\n  if (note) lines.push('', note);\n  return {\n    layout: 'settings',\n    text: lines.join('\\n'),\n    b: {\n      collect: { cb: 's:collect' },\n      search: { cb: 's:search' },\n      filter: { cb: 's:filter' },\n      llm: { cb: 's:llm' },\n    },\n  };\n}\n\nfunction settingsCollectView() {\n  const sch = collectSchedule;\n  const next = nextCollect(now, sch);\n  const lines = [\n    '🕐 <b>Сбор</b>',\n    '',\n    `Днём — ${pad2(sch.dayFrom)}:00–${pad2(sch.dayTo)}:00 МСК (${pad2((sch.dayFrom + 4) % 24)}:00–${pad2((sch.dayTo + 4) % 24)}:00 у тебя): каждые ${everyText(sch.dayEvery)}`,\n    `Ночью: ${sch.nightEvery ? `каждые ${everyText(sch.nightEvery)}` : 'не собирать'}`,\n    sch.paused\n      ? '⏸ <b>На паузе</b>: сборов нет. «▶️ Возобновить» — и сбор пойдёт по расписанию'\n      : `Сборов в сутки: ${collectsPerDay(sch)} · следующий: ${next ? thaiMsk(next) : '—'}`,\n  ];\n\n  // Что сделало это нажатие\n  const notes = [];\n  if (settingChange) notes.push('✅ Записал');\n  const hc = ranNode('HC sync')[0];\n  if (hc) {\n    const error = hc.error ? String(hc.error.message ?? hc.error) : '';\n    if (!error) {\n      notes.push(sch.paused ? '🛡 Страж healthchecks на паузе' : '🛡 Страж healthchecks: расписание обновлено');\n    } else if (/credential/i.test(error)) {\n      notes.push('⚠️ Страж healthchecks не обновлён: нет ключа API — HC_API_KEY в .env, потом деплой');\n    } else {\n      notes.push(`⚠️ Страж healthchecks не обновлён: ${esc(error.slice(0, 120))}`);\n    }\n  }\n  if (job.collectNow) notes.push('🔄 Запустил сбор — итог придёт сообщением о сборе');\n  if (notes.length) lines.push('', ...notes);\n\n  return {\n    layout: 'set_collect',\n    text: lines.join('\\n'),\n    b: {\n      day: { text: `Днём: ${everyText(sch.dayEvery)} ▸`, cb: 'sc:collect.day_every' },\n      night: { text: `Ночью: ${sch.nightEvery ? everyText(sch.nightEvery) : 'выкл'} ▸`, cb: 'sc:collect.night_every' },\n      window: { text: `День: ${pad2(sch.dayFrom)}–${pad2(sch.dayTo)} МСК ▸`, cb: 'sc:collect.day_window' },\n      pause: { text: sch.paused ? '▶️ Возобновить' : '⏸ Пауза', cb: 'sc:collect.paused' },\n    },\n  };\n}\n\nfunction settingsView(section) {\n  if (section === 'collect') return settingsCollectView();\n  if (section && section !== 'root') return settingsRootView('🔜 Этот раздел появится в следующем обновлении.');\n  return settingsRootView();\n}\n\n// ---------- Приветствие ----------\n\nconst GREETING = [\n  '👋 <b>Меню бота</b> — кнопки под полем ввода:',\n  '',\n  `${MENU.list} — база по вкладкам: ⏳ ждут решения · ✅ откликнусь и 🤔 · 📨 отправлено · ❌ мимо · 🚫 отсеяно фильтром · 📋 все. ` +\n    'Команда вида <code>/v169</code> в строке открывает карточку — решение можно принять прямо там.',\n  `${MENU.stats} — когда был и будет сбор, сколько вакансий рассмотрено.`,\n  `${MENU.settings} — расписание сбора, пауза и «собрать сейчас».`,\n  '',\n  'Новые вакансии по-прежнему приходят карточками.',\n].join('\\n');\n\n// ---------- Выбор вида ----------\n\nif (job.view === 'start') {\n  return [\n    {\n      json: {\n        route: LAYOUTS.length * 2,\n        view: 'start',\n        layout: 'start',\n        edit: false,\n        chatId,\n        messageId: 0,\n        text: GREETING,\n        b: {},\n        deleteIds: [job.userMessageId, state.greetingId].filter(Boolean),\n      },\n    },\n  ];\n}\n\nconst view = ['open', 'sync'].includes(job.view)\n  ? openView(Number(job.id))\n  : job.view === 'settings'\n    ? settingsView(job.section)\n    : job.view === 'stats'\n      ? statsView()\n      : // resume — «📋 К вакансиям»: та вкладка и страница, что была на панели\n        listView(job.resume ? panel.tab : job.tab, job.resume ? panel.page : job.page);\nconst shown = view.layout.startsWith('open') ? 'open' : view.layout;\nconst id = shown === 'open' ? Number(job.id) : 0;\n\n// Панель, которую правим, становится текущей: «⬅️ К списку», /v… и «📋 К вакансиям» вернут на её вкладку\nif (edit) {\n  state.panel = { messageId: target, view: shown, id, tab: view.tab ?? panel.tab, page: view.page ?? panel.page };\n}\n\nreturn [\n  {\n    json: {\n      route: LAYOUTS.indexOf(view.layout) * 2 + (edit ? 1 : 0),\n      view: shown,\n      id,\n      layout: view.layout,\n      edit,\n      chatId,\n      messageId: target || 0,\n      text: view.text,\n      b: view.b,\n      deleteIds: edit ? [] : [job.userMessageId, panel.messageId].filter(Boolean),\n      tab: view.tab ?? '',\n      page: view.page ?? 1,\n    },\n  },\n];\n"
       }
     },
     {
@@ -225,7 +405,7 @@
       ],
       "parameters": {
         "mode": "expression",
-        "numberOutputs": 11,
+        "numberOutputs": 15,
         "output": "={{ $json.route }}",
         "options": {}
       }
@@ -950,13 +1130,339 @@
       "onError": "continueRegularOutput"
     },
     {
+      "id": "e963decd-69d0-df79-1e6e-6ab761a04e51",
+      "name": "New: settings",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2200,
+        600
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $env.TG_CHAT_ID }}",
+        "text": "={{ $json.text }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "🕐 Сбор",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b.collect.cb }}"
+                    }
+                  },
+                  {
+                    "text": "🔎 Поиск",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b.search.cb }}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "🧹 Фильтр",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b.filter.cb }}"
+                    }
+                  },
+                  {
+                    "text": "🤖 Нейросеть",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b.llm.cb }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true,
+          "disable_notification": true
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterTgBot01",
+          "name": "Telegram bot"
+        }
+      }
+    },
+    {
+      "id": "f234f57d-b0cf-7c00-9615-11b41866919d",
+      "name": "Edit: settings",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2200,
+        750
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "editMessageText",
+        "messageType": "message",
+        "chatId": "={{ $json.chatId }}",
+        "messageId": "={{ $json.messageId }}",
+        "text": "={{ $json.text }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "🕐 Сбор",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b.collect.cb }}"
+                    }
+                  },
+                  {
+                    "text": "🔎 Поиск",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b.search.cb }}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "🧹 Фильтр",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b.filter.cb }}"
+                    }
+                  },
+                  {
+                    "text": "🤖 Нейросеть",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b.llm.cb }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterTgBot01",
+          "name": "Telegram bot"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "36bf665d-8da1-1d6e-2798-2432098b2ee5",
+      "name": "New: set collect",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2200,
+        900
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $env.TG_CHAT_ID }}",
+        "text": "={{ $json.text }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $json.b.day.text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b.day.cb }}"
+                    }
+                  },
+                  {
+                    "text": "={{ $json.b.night.text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b.night.cb }}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $json.b.window.text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b.window.cb }}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $json.b.pause.text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b.pause.cb }}"
+                    }
+                  },
+                  {
+                    "text": "🔄 Собрать сейчас",
+                    "additionalFields": {
+                      "callback_data": "sn"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "⬅️ Настройки",
+                    "additionalFields": {
+                      "callback_data": "s:root"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true,
+          "disable_notification": true
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterTgBot01",
+          "name": "Telegram bot"
+        }
+      }
+    },
+    {
+      "id": "634dbcf1-0d9a-9295-580d-c7e57f097bb0",
+      "name": "Edit: set collect",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2200,
+        1050
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "editMessageText",
+        "messageType": "message",
+        "chatId": "={{ $json.chatId }}",
+        "messageId": "={{ $json.messageId }}",
+        "text": "={{ $json.text }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $json.b.day.text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b.day.cb }}"
+                    }
+                  },
+                  {
+                    "text": "={{ $json.b.night.text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b.night.cb }}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $json.b.window.text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b.window.cb }}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $json.b.pause.text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.b.pause.cb }}"
+                    }
+                  },
+                  {
+                    "text": "🔄 Собрать сейчас",
+                    "additionalFields": {
+                      "callback_data": "sn"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "⬅️ Настройки",
+                    "additionalFields": {
+                      "callback_data": "s:root"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterTgBot01",
+          "name": "Telegram bot"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
       "id": "53642f87-c28d-7a2e-5da9-0a284c337878",
       "name": "New: start",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
         2200,
-        600
+        1200
       ],
       "parameters": {
         "resource": "message",
@@ -974,6 +1480,15 @@
                   },
                   {
                     "text": "📊 Статистика"
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "⚙️ Настройки"
                   }
                 ]
               }
@@ -1129,7 +1644,72 @@
       "main": [
         [
           {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Setting change",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Collect now",
+            "type": "main",
+            "index": 0
+          },
+          {
             "node": "Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Setting change": {
+      "main": [
+        [
+          {
+            "node": "Save setting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save setting": {
+      "main": [
+        [
+          {
+            "node": "HC plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HC plan": {
+      "main": [
+        [
+          {
+            "node": "HC sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect now": {
+      "main": [
+        [
+          {
+            "node": "Run W1",
             "type": "main",
             "index": 0
           }
@@ -1248,6 +1828,34 @@
         ],
         [
           {
+            "node": "New: settings",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit: settings",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "New: set collect",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit: set collect",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "New: start",
             "type": "main",
             "index": 0
@@ -1355,6 +1963,50 @@
       ]
     },
     "Edit: stats": {
+      "main": [
+        [
+          {
+            "node": "Remember",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New: settings": {
+      "main": [
+        [
+          {
+            "node": "Remember",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit: settings": {
+      "main": [
+        [
+          {
+            "node": "Remember",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New: set collect": {
+      "main": [
+        [
+          {
+            "node": "Remember",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit: set collect": {
       "main": [
         [
           {

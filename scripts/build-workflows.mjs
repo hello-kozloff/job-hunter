@@ -26,7 +26,10 @@ const IDS = {
   letter: 'jobHunterW5Lettr',
   summary: 'jobHunterW6Summ1',
   menu: 'jobHunterW7Menu1',
+  clock: 'jobHunterW8Clock',
   n8nApiCredential: 'jobHunterN8nApi1',
+  // Ключ API healthchecks.io (HC_API_KEY в .env) — бот обновляет расписание стража (07.10.2026)
+  hcCredential: 'jobHunterHcApi01',
   telegramCredential: 'jobHunterTgBot01',
   geminiCredential: 'jobHunterGemini1',
   claudeCredential: 'jobHunterClaude1',
@@ -129,7 +132,7 @@ const { MENU } = new Function(`${read('n8n/shared/menu.js')}\nreturn { MENU };`)
 // «✍️ Записал причину» (W3), сообщение о сборе и итог после карточек (W2), утренняя сводка (W6)
 const MENU_KEYBOARD = {
   replyMarkup: 'replyKeyboard',
-  replyKeyboard: replyKeyboard([[MENU.list, MENU.stats]]),
+  replyKeyboard: replyKeyboard([[MENU.list, MENU.stats], [MENU.settings]]),
   replyKeyboardOptions: { resize_keyboard: true },
 };
 
@@ -195,6 +198,18 @@ const VACANCIES = { __rl: true, mode: 'name', value: 'vacancies' };
 const BLACKLIST = { __rl: true, mode: 'name', value: 'blacklist' };
 const RUNS = { __rl: true, mode: 'name', value: 'runs' };
 const ALERTS = { __rl: true, mode: 'name', value: 'alerts' };
+const SETTINGS_TABLE = { __rl: true, mode: 'name', value: 'settings' };
+// Настройки бота (⚙️): все строки таблицы settings, один раз на запуск; пустая — значения по умолчанию
+const settingsNode = (wf, position) =>
+  node(
+    wf,
+    'Settings',
+    'dataTable',
+    1.1,
+    position,
+    { resource: 'row', operation: 'get', dataTableId: SETTINGS_TABLE, returnAll: true },
+    { executeOnce: true, alwaysOutputData: true },
+  );
 
 // Insert/Update пишут все поля item в одноимённые колонки
 const AUTO_MAP = {
@@ -304,6 +319,35 @@ const PANEL_LAYOUTS = [
         ['🔄 Обновить', 'p:s'],
         [panelButton('wait.text'), panelButton('wait.cb')],
       ],
+    ],
+  ],
+  // ⚙️ Настройки (07.10.2026): корень и разделы; «▸» — следующее значение по кругу
+  [
+    'settings',
+    [
+      [
+        ['🕐 Сбор', panelButton('collect.cb')],
+        ['🔎 Поиск', panelButton('search.cb')],
+      ],
+      [
+        ['🧹 Фильтр', panelButton('filter.cb')],
+        ['🤖 Нейросеть', panelButton('llm.cb')],
+      ],
+    ],
+  ],
+  [
+    'set collect',
+    [
+      [
+        [panelButton('day.text'), panelButton('day.cb')],
+        [panelButton('night.text'), panelButton('night.cb')],
+      ],
+      [[panelButton('window.text'), panelButton('window.cb')]],
+      [
+        [panelButton('pause.text'), panelButton('pause.cb')],
+        ['🔄 Собрать сейчас', 'sn'],
+      ],
+      [['⬅️ Настройки', 's:root']],
     ],
   ],
 ];
@@ -507,20 +551,9 @@ const workflows = {
     IDS.collector,
     'W1 Collector',
     [
-      // МСК: днём 07:00–17:30 каждые 30 мин, ночью 18, 20, 22, 00, 02, 04, 06 — 29 сборов в сутки
-      // (решение пользователя 07.10.2026). Меняешь расписание — поправь isCollectSlot в n8n/w6-summary/summary.js
-      node('W1', 'Schedule', 'scheduleTrigger', 1.4, [0, -100], {
-        rule: {
-          interval: [
-            { field: 'cronExpression', expression: '0,30 7-17 * * *' },
-            { field: 'cronExpression', expression: '0 0,2,4,6,18,20,22 * * *' },
-          ],
-        },
-        // Mac спал во время запуска → после пробуждения выполнить последний пропущенный.
-        // coalesce_owner — один догоняющий запуск на всю ноду: с coalesce (на каждое правило) сон через 18:00
-        // запустил бы W1 дважды параллельно → дубли строк и карточек
-        misfirePolicy: 'coalesce_owner',
-      }),
+      // С 07.10.2026 сбор запускают «часы» W8 Clock по расписанию из настроек бота (⚙️ → 🕐 Сбор) и кнопка
+      // «🔄 Собрать сейчас» (W7). Они передают kind: schedule | catchup | bot
+      node('W1', 'Called', 'executeWorkflowTrigger', 1.1, [0, -100], { inputSource: 'passthrough' }),
       node('W1', 'Manual', 'manualTrigger', 1, [0, 100], {}),
       // Журнал сборов (07.10.2026): другой сбор ещё идёт — запись running моложе 10 мин → этот пропускаем
       node(
@@ -554,8 +587,9 @@ const workflows = {
         1.1,
         [880, 0],
         { resource: 'row', operation: 'get', dataTableId: VACANCIES, returnAll: false, limit: 1 },
-        { alwaysOutputData: true },
+        { alwaysOutputData: true, executeOnce: true },
       ),
+      settingsNode('W1', [770, 150]),
       code('W1', 'Plan', 'n8n/w1-collector/plan.js', [1100, 0]),
       node(
         'W1',
@@ -701,11 +735,12 @@ const workflows = {
       }),
     ],
     [
-      ['Schedule', 'Busy'],
+      ['Called', 'Busy'],
       ['Manual', 'Busy'],
       ['Busy', 'Start'],
       ['Start', 'Start run'],
-      ['Start run', 'Any row'],
+      ['Start run', 'Settings'],
+      ['Settings', 'Any row'],
       ['Any row', 'Plan'],
       ['Plan', 'Search hh'],
       ['Search hh', 'Parse search'],
@@ -1423,13 +1458,15 @@ const workflows = {
       }),
       node('W6', 'Has letter?', 'if', 2.3, [1320, 50], ifTrue('W6', '={{ Boolean($json.tg_letter_id) }}')),
       telegramEdit('W6', 'Letter: archived', [1540, 50], { messageId: '={{ $json.tg_letter_id }}', text: '={{ $json.letterText }}' }),
+      // Расписание и пауза — из настроек бота: сколько сборов положено
+      settingsNode('W6', [660, 250]),
       // Журнал сборов за последние сутки с запасом — «сборов N из M»
       node(
         'W6',
         'Runs',
         'dataTable',
         1.1,
-        [660, 250],
+        [880, 250],
         {
           resource: 'row',
           operation: 'get',
@@ -1448,7 +1485,7 @@ const workflows = {
         'Executions',
         'httpRequest',
         4.5,
-        [880, 250],
+        [1100, 250],
         {
           method: 'GET',
           url: 'http://localhost:5678/api/v1/executions',
@@ -1471,7 +1508,7 @@ const workflows = {
         'Tunnel',
         'httpRequest',
         4.5,
-        [1100, 250],
+        [1320, 250],
         {
           method: 'GET',
           url: '=https://{{ $env.NGROK_DOMAIN }}/',
@@ -1479,8 +1516,8 @@ const workflows = {
         },
         { onError: 'continueRegularOutput' },
       ),
-      code('W6', 'Summary', 'n8n/w6-summary/summary.js', [1320, 250]),
-      telegram('W6', 'Send summary', [1540, 250], {
+      code('W6', 'Summary', 'n8n/w6-summary/summary.js', [1540, 250]),
+      telegram('W6', 'Send summary', [1760, 250], {
         fields: { disable_notification: '={{ $json.silent }}' },
         markup: MENU_KEYBOARD,
       }),
@@ -1575,7 +1612,8 @@ const workflows = {
       ['Archived done', 'Save archived'],
       ['Archive status', 'Has letter?'],
       ['Has letter?', 'Letter: archived', 0],
-      ['Plan', 'Runs'],
+      ['Plan', 'Settings'],
+      ['Settings', 'Runs'],
       ['Runs', 'Executions'],
       ['Executions', 'Tunnel'],
       ['Tunnel', 'Summary'],
@@ -1607,12 +1645,50 @@ const workflows = {
       }),
       // p:x — неактивная кнопка: только убрать «часики»
       node('W7', 'Work?', 'if', 2.3, [1100, 0], ifTrue('W7', "={{ $('Job').first().json.view !== 'noop' }}")),
+      settingsNode('W7', [1320, 0]),
+      // ⚙️ Настройки (07.10.2026). Ветки выше «Rows» выполняются раньше: «Render» покажет новое значение
+      code('W7', 'Setting change', 'n8n/w7-menu/setting-change.js', [1540, -1300]),
+      node('W7', 'Save setting', 'dataTable', 1.1, [1760, -1300], {
+        resource: 'row',
+        operation: 'upsert',
+        dataTableId: SETTINGS_TABLE,
+        matchType: 'allConditions',
+        filters: { conditions: [{ keyName: 'name', keyValue: '={{ $json.name }}' }] },
+        columns: setColumns({ name: '={{ $json.name }}', value_json: '={{ $json.value_json }}' }),
+        options: {},
+      }),
+      // Расписание поменялось — страж healthchecks.io получает новый OnCalendar (или паузу) через свой API
+      code('W7', 'HC plan', 'n8n/w7-menu/hc-plan.js', [1980, -1300]),
+      node(
+        'W7',
+        'HC sync',
+        'httpRequest',
+        4.5,
+        [2200, -1300],
+        {
+          method: 'POST',
+          url: '={{ $json.url }}',
+          authentication: 'genericCredentialType',
+          genericAuthType: 'httpHeaderAuth',
+          sendBody: true,
+          contentType: 'json',
+          specifyBody: 'json',
+          jsonBody: '={{ JSON.stringify($json.body) }}',
+          options: { timeout: 15000 },
+        },
+        {
+          credentials: { httpHeaderAuth: { id: IDS.hcCredential, name: 'healthchecks API' } },
+          onError: 'continueRegularOutput',
+        },
+      ),
+      code('W7', 'Collect now', 'n8n/w7-menu/collect-now.js', [1540, -1100]),
+      runWorkflow('W7', 'Run W1', [1760, -1100], IDS.collector),
       node(
         'W7',
         'Rows',
         'dataTable',
         1.1,
-        [1320, 0],
+        [1540, 0],
         { resource: 'row', operation: 'get', dataTableId: VACANCIES, returnAll: true },
         { executeOnce: true, alwaysOutputData: true },
       ),
@@ -1622,7 +1698,7 @@ const workflows = {
         'Runs',
         'dataTable',
         1.1,
-        [1540, 0],
+        [1760, 0],
         {
           resource: 'row',
           operation: 'get',
@@ -1635,7 +1711,7 @@ const workflows = {
         },
         { executeOnce: true, alwaysOutputData: true },
       ),
-      code('W7', 'Render', 'n8n/w7-menu/render.js', [1760, 0]),
+      code('W7', 'Render', 'n8n/w7-menu/render.js', [1980, 0]),
       // Выход = $json.route (render.js): раскладка × новое сообщение (чётный) / правка панели (нечётный), 10 — приветствие
       node('W7', 'Layout', 'switch', 3.4, [1980, -300], {
         mode: 'expression',
@@ -1683,7 +1759,14 @@ const workflows = {
       ['Answer?', 'Answer query', 0],
       ['Answer query', 'Work?'],
       ['Answer?', 'Work?', 1],
-      ['Work?', 'Rows', 0],
+      ['Work?', 'Settings', 0],
+      ['Settings', 'Setting change'],
+      ['Setting change', 'Save setting'],
+      ['Save setting', 'HC plan'],
+      ['HC plan', 'HC sync'],
+      ['Settings', 'Collect now'],
+      ['Collect now', 'Run W1'],
+      ['Settings', 'Rows'],
       ['Rows', 'Runs'],
       ['Runs', 'Render'],
       ['Render', 'Layout'],
@@ -1700,6 +1783,31 @@ const workflows = {
     ],
     // Успешные запуски не храним: каждый тянет всю таблицу вакансий. Ошибки сохраняются (и идут в W4)
     { errorWorkflow: IDS.errors, saveDataSuccessExecution: 'none' },
+  ),
+
+  'w8-clock': workflow(
+    IDS.clock,
+    'W8 Clock',
+    [
+      // «Часы» (07.10.2026): тикают каждые 15 мин, а когда собирать — решают настройки бота (⚙️ → 🕐 Сбор).
+      // Mac спал — после пробуждения один догоняющий тик (coalesce), и «Due» запустит один догоняющий сбор
+      node('W8', 'Schedule', 'scheduleTrigger', 1.4, [0, -100], {
+        rule: { interval: [{ field: 'cronExpression', expression: '*/15 * * * *' }] },
+        misfirePolicy: 'coalesce',
+      }),
+      node('W8', 'Manual', 'manualTrigger', 1, [0, 100], {}),
+      settingsNode('W8', [220, 0]),
+      code('W8', 'Due', 'n8n/w8-clock/due.js', [440, 0]),
+      runWorkflow('W8', 'Collect', [660, 0], IDS.collector),
+    ],
+    [
+      ['Schedule', 'Settings'],
+      ['Manual', 'Settings'],
+      ['Settings', 'Due'],
+      ['Due', 'Collect'],
+    ],
+    // Тики без сбора не храним: 96 запусков в сутки. Static data (dispatchedAt) сохраняется и так
+    { timezone: 'Europe/Moscow', errorWorkflow: IDS.errors, saveDataSuccessExecution: 'none' },
   ),
 
   'w4-errors': workflow(

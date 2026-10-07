@@ -9,8 +9,10 @@
 //      callback_data = l:<id строки>:<redo|sent|unsent>; messageId — сообщение с письмом.
 //   { action: 'reply', replyTo, messageId, chatId, text } — ответ (reply) на вопрос «почему?», карточку или письмо.
 //   { action: 'panel', view, tab, page, id, chatId, queryId, messageId, userMessageId } — меню бота → W7 Bot menu:
-//      кнопки под полем ввода («📋 Вакансии», «📊 Статистика»), команды /start, /menu, /vacancies, /stats, /v<id>
-//      и кнопки панели (callback_data p:…). view = list | stats | start | open | noop | sync;
+//      кнопки под полем ввода («📋 Вакансии», «📊 Статистика», «⚙️ Настройки»), команды /start, /menu, /vacancies,
+//      /stats, /settings, /v<id> и кнопки панели (callback_data p:…, s:…, sc:…, sn).
+//      view = list | stats | start | open | noop | sync | settings;
+//      settings: section — раздел, change = { name } — следующее значение настройки, collectNow — собрать сейчас;
 //      resume = true — список там, где был (p:n — «📋 К вакансиям» под письмом: новая панель, не правка письма);
 //      messageId — панель, где нажали кнопку (правим её); userMessageId — сообщение пользователя (удалить).
 // Чужие чаты отсекает сам Telegram Trigger (Restrict to Chat IDs = TG_CHAT_ID); здесь — вторая проверка.
@@ -36,6 +38,15 @@ if (cb) {
   if (data === 'p:s') return panel({ ...pressed, view: 'stats' });
   if (data === 'p:n') return panel({ chatId, queryId: cb.id, view: 'list', resume: true });
   if (data === 'p:x') return panel({ ...pressed, view: 'noop' });
+
+  // ⚙️ Настройки (W7): раздел, следующее значение настройки, «🔄 Собрать сейчас»
+  const section = data.match(/^s:([a-z]+)$/);
+  if (section) return panel({ ...pressed, view: 'settings', section: section[1] });
+  const change = data.match(/^sc:([a-z_.]+)$/);
+  if (change) {
+    return panel({ ...pressed, view: 'settings', section: change[1].split('.')[0], change: { name: change[1] } });
+  }
+  if (data === 'sn') return panel({ ...pressed, view: 'settings', section: 'collect', collectNow: true });
 
   const letter = data.match(/^l:(\d+):(redo|sent|unsent)$/);
   if (letter) {
@@ -71,6 +82,7 @@ const command = text.match(/^\/([a-z]+)(\d*)(?:@\w+)?(?:\s|$)/i);
 const name = command?.[1].toLowerCase();
 if (text === MENU.list || name === 'vacancies') return panel({ ...typed, view: 'list' });
 if (text === MENU.stats || name === 'stats') return panel({ ...typed, view: 'stats' });
+if (text === MENU.settings || name === 'settings') return panel({ ...typed, view: 'settings', section: 'root' });
 if (name === 'start' || name === 'menu') return panel({ ...typed, view: 'start' });
 if (name === 'v' && command[2]) return panel({ ...typed, view: 'open', id: Number(command[2]) });
 

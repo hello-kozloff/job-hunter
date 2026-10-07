@@ -5,6 +5,8 @@
 //       $input — «Tunnel» (проверка туннеля ngrok).
 // Выход: одно сообщение { text, silent }. Без звука, если сбоев нет (решение пользователя 07.10.2026).
 
+// @include n8n/shared/settings.js
+
 // @include n8n/shared/schedule.js
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -79,7 +81,9 @@ for (const e of errors) errorsBy[NAMES[e.workflowId] ?? e.workflowId] = (errorsB
 // до «сейчас − 10 мин»: сбор в 06:00 идёт одновременно со сводкой и ещё не закончился
 const windowEnd = now - 10 * 60 * 1000;
 const windowStart = windowEnd - DAY;
-const expected = countCollectSlots(windowStart, windowEnd);
+// Расписание — из настроек бота (⚙️ → 🕐 Сбор). На паузе сборов не ждём — и не тревожим
+const sch = scheduleFrom(loadSettings($('Settings').all()));
+const expected = countCollectSlots(windowStart, windowEnd, sch);
 const collected = count(
   $('Runs')
     .all()
@@ -101,7 +105,7 @@ const tunnelOk = !$env.NGROK_DOMAIN || tunnelCode === 403; // 403 = туннел
 
 const problems = [];
 if (executionsBody.error || !executionsBody.data) problems.push('нет данных о запусках n8n');
-if (collected < expected) problems.push(`сборов ${collected} из ${expected}`);
+if (!sch.paused && collected < expected) problems.push(`сборов ${collected} из ${expected}`);
 if (errors.length)
   problems.push(
     `ошибок ${errors.length} (${Object.entries(errorsBy)
@@ -122,7 +126,10 @@ const lines = [
   shadow.length >= 50
     ? `🧪 Теневой режим: ${shadow.length}/50, совпало ${agree} (${Math.round((agree / shadow.length) * 100)}%) — пора разбирать, напиши Claude`
     : `🧪 Теневой режим: ${shadow.length}/50${shadow.length ? `, совпало ${agree} (${Math.round((agree / shadow.length) * 100)}%)` : ''}`,
-  problems.length ? `⚠️ Сбои: ${problems.join(' · ')}` : `⚙️ Сборов ${collected} из ${expected}, ошибок нет, туннель работает`,
+  sch.paused ? '⏸ Сбор на паузе (⚙️ Настройки → 🕐 Сбор)' : '',
+  problems.length
+    ? `⚠️ Сбои: ${problems.join(' · ')}`
+    : `⚙️ Сборов ${collected}${sch.paused ? '' : ` из ${expected}`}, ошибок нет, туннель работает`,
 ];
 
 return [{ json: { text: lines.filter(Boolean).join('\n'), silent: problems.length === 0 } }];

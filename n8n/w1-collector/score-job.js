@@ -10,6 +10,8 @@
 
 // @include n8n/shared/search.js
 
+// @include n8n/shared/settings.js
+
 // @include n8n/shared/schedule.js
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -78,6 +80,8 @@ const rejectedLines = rejected
 if (rejected.length > SHOW) rejectedLines.push(`и ещё ${rejected.length - SHOW}`);
 
 const { words, filters } = describeSearch();
+// Расписание — из настроек бота (⚙️ → 🕐 Сбор)
+const next = nextCollect(Date.now(), scheduleFrom(loadSettings($('Settings').all())));
 const report = [
   `🔎 Сбор ${thaiMsk(plan.startedAt ?? Date.now())} · ${fresh.length ? `новых ${fresh.length}` : 'новых нет'}`,
   requestLine,
@@ -85,7 +89,7 @@ const report = [
   ...rejectedLines,
   `<blockquote expandable>${esc(words)}\n${esc(filters)}</blockquote>`,
   `🔗 <a href="${esc(searchUrl(requests[0]?.page ?? 0))}">Открыть этот поиск на hh</a>`,
-  `Следующий сбор ${thaiMsk(nextCollect(Date.now()))}`,
+  next ? `Следующий сбор ${thaiMsk(next)}` : '⏸ Сбор на паузе — дальше только «🔄 Собрать сейчас» в ⚙️ Настройках',
 ].join('\n');
 
 // Журнал сборов: запись из «Start run» и итог сбора

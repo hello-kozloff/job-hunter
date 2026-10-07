@@ -14,13 +14,13 @@ const busy = $input
   .filter((r) => r.id && now - (Date.parse(r.started_at) || 0) < STALE);
 if (busy.length) return [];
 
-// Кто запустил: расписание или вручную (у нерабочего триггера данных нет — $() бросает ошибку)
+// Кто запустил: «часы» W8 (schedule | catchup) или бот (bot — «🔄 Собрать сейчас») передают kind;
+// без него — ручной запуск (у нерабочего триггера данных нет — $() бросает ошибку)
 let kind = 'manual';
 try {
-  $('Schedule').first();
-  kind = 'schedule';
+  kind = String($('Called').first().json.kind || 'manual');
 } catch {
-  // запуск не по расписанию
+  // ручной запуск
 }
 
 return [{ json: { started_at: new Date(now).toISOString(), kind, status: 'running' } }];
