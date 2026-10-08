@@ -12,6 +12,8 @@ log = logging.getLogger(__name__)
 
 COMMON = [
     BotCommand(command="start", description="Главная"),
+    BotCommand(command="vacancies", description="Вакансии"),
+    BotCommand(command="stats", description="Статистика"),
     BotCommand(command="resumes", description="Мои резюме"),
     BotCommand(command="tz", description="Часовой пояс"),
 ]

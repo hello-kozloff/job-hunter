@@ -51,3 +51,12 @@ class LetterBtn(CallbackData, prefix="l"):
 
     action: str
     id: int
+
+
+class Menu(CallbackData, prefix="m"):
+    """Меню: action — list | open | stats | noop; tab — вкладка; page — страница; id — строка user_vacancies."""
+
+    action: str
+    tab: str = "new"
+    page: int = 0
+    id: int = 0

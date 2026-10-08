@@ -12,6 +12,7 @@ const OUT = new URL('../n8n/workflows/', import.meta.url).pathname;
 export const IDS = {
   collect: 'jobHunterV2Collc',
   errors: 'jobHunterV2Error',
+  daily: 'jobHunterV2Daily',
 };
 
 const uuid = (seed) => {
@@ -159,6 +160,30 @@ const W = {
       // Успешные сборы не храним: страница выдачи ~1,7 МБ (итог — в таблице runs ядра)
       saveDataSuccessExecution: 'none',
     },
+  ),
+
+  // Раз в час: сводки (09:00 по поясу пользователя), устаревшие, чистка — в ядре; перепроверка «закрыта ли на hh» —
+  // страницы вакансий из плана ядра, по одной раз в 4 с
+  'v2-daily': workflow(
+    IDS.daily,
+    'V2 Daily',
+    [
+      node('daily', 'Every hour', 'scheduleTrigger', 1.2, [0, 0], { rule: { interval: [{ field: 'hours', hoursInterval: 1 }] } }),
+      node('daily', 'Daily', 'httpRequest', 4.2, [220, 0], core('daily', '{}')),
+      node('daily', 'Recheck list', 'splitOut', 1, [440, 0], { fieldToSplitOut: 'recheck', options: {} }),
+      node('daily', 'Vacancy hh', 'httpRequest', 4.2, [660, 0], hhGet('={{ $json.url }}')),
+      node('daily', 'Recheck', 'httpRequest', 4.2, [880, 0], core(
+        'recheck/vacancy',
+        "{ vacancy_id: $('Recheck list').item.json.vacancy_id, status: $json.statusCode, html: $json.data ?? '' }",
+      )),
+    ],
+    [
+      ['Every hour', 'Daily'],
+      ['Daily', 'Recheck list'],
+      ['Recheck list', 'Vacancy hh'],
+      ['Vacancy hh', 'Recheck'],
+    ],
+    { errorWorkflow: IDS.errors, saveDataSuccessExecution: 'none' },
   ),
 
   'v2-errors': workflow(

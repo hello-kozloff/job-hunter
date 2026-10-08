@@ -9,7 +9,7 @@ from aiogram.enums import ParseMode
 
 from app.bot.commands import set_commands
 from app.bot.middlewares import DbUserMiddleware
-from app.bot.routers import admin, cards, errors, fallback, onboarding, profiles, start
+from app.bot.routers import admin, cards, errors, fallback, menu, onboarding, profiles, start
 from app.config import get_settings
 
 log = logging.getLogger("bot")
@@ -30,7 +30,8 @@ async def main() -> None:
     # admin — раньше profiles: файл для рассылки не должен стать резюме
     # cards — раньше profiles: ответ на «Почему?» не должен стать резюме
     dp.include_routers(
-        errors.router, start.router, onboarding.router, admin.router, cards.router, profiles.router, fallback.router
+        errors.router, start.router, onboarding.router, admin.router, menu.router, cards.router, profiles.router,
+        fallback.router,
     )
     await set_commands(bot)
     await bot.delete_webhook(drop_pending_updates=False)

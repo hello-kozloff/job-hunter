@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db.session import session_scope
-from app.services import alerts, collect, notify, score
+from app.services import alerts, collect, daily, notify, score
 
 
 def require_internal(x_internal_token: str = Header(default="")) -> None:
@@ -86,6 +86,23 @@ async def collect_finish(body: FinishIn, session: AsyncSession = Depends(session
 async def score_run(session: AsyncSession = Depends(session_scope)) -> dict:
     """Оценить ждущие совпадения (≈100 с за вызов; остаток — в следующий вызов n8n)."""
     return await score.run(session)
+
+
+@router.post("/daily")
+async def daily_run(session: AsyncSession = Depends(session_scope)) -> dict:
+    """Раз в час: сводки (09:00 по поясу пользователя), устаревшие, чистка; recheck — какие вакансии перепроверить."""
+    return await daily.run(session, now())
+
+
+class RecheckIn(BaseModel):
+    vacancy_id: int
+    status: int
+    html: str = ""
+
+
+@router.post("/recheck/vacancy")
+async def recheck_vacancy(body: RecheckIn, session: AsyncSession = Depends(session_scope)) -> dict:
+    return await daily.recheck_vacancy(session, body.vacancy_id, body.status, body.html, now())
 
 
 class AlertIn(BaseModel):

@@ -44,7 +44,7 @@ node scripts/build-workflows.mjs
 docker exec -u root "$N8N" rm -rf /tmp/workflows
 docker cp n8n/workflows "$N8N":/tmp/workflows
 docker exec "$N8N" n8n import:workflow --separate --input=/tmp/workflows
-for id in jobHunterV2Error jobHunterV2Collc; do
+for id in jobHunterV2Error jobHunterV2Collc jobHunterV2Daily; do
   docker exec "$N8N" n8n publish:workflow --id="$id"
 done
 docker compose restart n8n
