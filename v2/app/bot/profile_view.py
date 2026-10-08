@@ -12,7 +12,14 @@ from app.domain.hh.roles import ROLES, WORK_FORMATS
 from app.services.profiles import Loaded
 
 # Кнопки под полем ввода
-MENU = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=t("menu.resumes"))]], resize_keyboard=True, is_persistent=True)
+MENU = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text=t("menu.vacancies")), KeyboardButton(text=t("menu.stats"))],
+        [KeyboardButton(text=t("menu.resumes"))],
+    ],
+    resize_keyboard=True,
+    is_persistent=True,
+)
 
 
 def _list(items: list[str], limit: int = 12) -> str:

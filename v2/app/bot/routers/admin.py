@@ -4,12 +4,13 @@
 """
 
 import asyncio
+import html
 import logging
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
-from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRetryAfter
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -69,8 +70,9 @@ async def home_view(session: AsyncSession) -> tuple[str, InlineKeyboardMarkup]:
     _btn(kb, t("admin.btn_requests", n=o.pending), "req")
     _btn(kb, t("admin.btn_users"), "users", 0)
     _btn(kb, t("admin.btn_broadcast"), "bc")
+    _btn(kb, t("admin.btn_health"), "health")
     _btn(kb, t("admin.btn_close"), "close")
-    kb.adjust(2, 2, 1)
+    kb.adjust(2, 2, 1, 1)
     text = t(
         "admin.home",
         users=o.users,
@@ -81,6 +83,33 @@ async def home_view(session: AsyncSession) -> tuple[str, InlineKeyboardMarkup]:
         alerts=o.alerts,
     )
     return text, kb.as_markup()
+
+
+async def health_view(session: AsyncSession, tz: str) -> tuple[str, InlineKeyboardMarkup]:
+    h = await admin_service.health(session, datetime.now(UTC))
+    zone = ZoneInfo(tz)
+    last = "—"
+    if h.last_run:
+        r = h.last_run
+        last = f"{r.started_at.astimezone(zone):%d.%m %H:%M} · {r.kind} · {r.status}"
+        if r.stats:
+            last += f" · найдено {r.stats.get('found', 0)}, новых {r.stats.get('new', 0)}"
+        if r.error:
+            last += f" · {html.escape(r.error[:100])}"
+    llm = ", ".join(f"{k} {ok}" + (f" (❌ {bad})" if bad else "") for k, (ok, bad) in sorted(h.llm.items())) or "—"
+    top = ", ".join(f"{html.escape(name)} {n}" for name, n in h.llm_top) or "—"
+    stop = (
+        t("admin.health_stop", until=f"{h.stopped_until:%H:%M}", reason=html.escape(h.stop_reason[:150]))
+        if h.stopped_until else ""
+    )
+    alerts_list = "".join(f"\n• {html.escape(a.source)}: {html.escape(a.message[:120])} (×{a.hits})" for a in h.open_alerts) or "нет"
+    text = t("admin.health", runs_ok=h.runs_ok, runs_error=h.runs_error, last_run=last, fetches=h.fetches, cap=h.cap,
+             stop=stop, llm=llm, to_score=h.to_score, top=top, alerts=alerts_list)
+    kb = InlineKeyboardBuilder()
+    _btn(kb, t("admin.btn_refresh"), "health")
+    _btn(kb, t("admin.btn_back"), "home")
+    kb.adjust(2)
+    return text[:4000], kb.as_markup()
 
 
 async def invites_view(session: AsyncSession, bot: Bot, tz: str) -> tuple[str, InlineKeyboardMarkup]:
@@ -195,6 +224,8 @@ async def admin_button(
         return
     elif action == "inv":
         view = await invites_view(session, bot, user.tz)
+    elif action == "health":
+        view = await health_view(session, user.tz)
     elif action == "invn":
         kb = InlineKeyboardBuilder()
         for n in INVITE_USES:
@@ -261,7 +292,10 @@ async def admin_button(
         await query.message.edit_text(t("stale"))
         return
     text, kb = view
-    await query.message.edit_text(text, reply_markup=kb, disable_web_page_preview=True)
+    try:
+        await query.message.edit_text(text, reply_markup=kb, disable_web_page_preview=True)
+    except TelegramBadRequest:
+        pass  # «message is not modified» — «🔄 Обновить» без изменений
 
 
 # ---------- Рассылка: сообщение админа копируется всем активным как есть ----------

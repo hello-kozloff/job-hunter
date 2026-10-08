@@ -190,6 +190,17 @@ async def refresh(session: AsyncSession, user: User, uv: UserVacancy) -> None:
     await notify.edit(user.tg_id, uv.tg_card_id, render(uv, v, lines, user.tz), reply_markup=keyboard(uv, lines))
 
 
+async def resend(session: AsyncSession, user: User, uv: UserVacancy) -> int | None:
+    """Карточка новым сообщением (открыта из списка): она становится основной для письма и перерисовок."""
+    v = await session.get(Vacancy, uv.vacancy_id)
+    lines, _, _ = await _lines(session, user.id, uv.vacancy_id)
+    mid = await notify.send(user.tg_id, render(uv, v, lines, user.tz), reply_markup=keyboard(uv, lines))
+    if mid:
+        uv.tg_card_id = mid
+        await session.commit()
+    return mid
+
+
 async def set_ask(session: AsyncSession, uv: UserVacancy, message_id: int) -> None:
     uv.tg_ask_id = message_id
     await session.commit()

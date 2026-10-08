@@ -43,6 +43,33 @@ RU = {
     "resume.created": "✅ Черновик готов. Проверь настройки — и запускай.",
     "resume.limit": "😕 Достигнут лимит резюме: {n}.",
     "menu.resumes": "📄 Резюме",
+    "menu.vacancies": "📋 Вакансии",
+    "menu.stats": "📊 Статистика",
+    # Список вакансий и статистика
+    "tab.new": "🆕 Новые",
+    "tab.apply": "✅",
+    "tab.maybe": "🤔",
+    "tab.sent": "📨",
+    "tab.skip": "❌",
+    "tab.all": "Все",
+    "list.title": "📋 <b>Вакансии</b> · {tab} · {total}",
+    "list.page": "стр. {page} из {pages}",
+    "list.empty": "Здесь пока пусто.",
+    "list.hint": "Нажми на вакансию — пришлю карточку с кнопками.",
+    "stats.title": "📊 <b>Статистика</b>",
+    "stats.cards": "🗂 Карточки: ждут решения {waiting}, ✅ {approved}, 🤔 {maybe}, ❌ {skipped}, 📨 отправлено {applied}, "
+    "⌛ устарели {expired}, 🔒 закрыты {archived}, без карточки (skip) {quiet}",
+    "stats.profile": "{label}\n🧹 прошли фильтр {passed}, отсеяно {rejected}\n🤖 apply {apply} · maybe {maybe} · skip {skip}"
+    " · ⚠️ {error}",
+    "stats.shadow": "👁 совпадение с тобой: {agree} из {compared} ({pct}%)",
+    "stats.reasons": "отсев: {reasons}",
+    # Утренняя сводка
+    "summary.head": "☀️ <b>Сводка за сутки</b>",
+    "summary.funnel": "🗂 Новых карточек {new} · ждут решения {waiting} · ✅ {approved} · 🤔 {maybe} · 📨 откликов за сутки {applied}",
+    "summary.tails": "⌛ Устарели {expired} · 🔒 закрыты на hh {archived}",
+    "summary.profile": "{label}: прошли фильтр {passed}, отсеяно {rejected} · 🤖 apply {apply} · maybe {maybe} · skip {skip}",
+    "summary.reasons": "   отсев: {reasons}",
+    "summary.shadow": "👁 {label}: решения нейросети совпали с твоими {agree} из {compared}",
     "profiles.title": "📄 <b>Твои резюме</b>\n\nУ каждого — свои поиск, фильтр и правила оценки.",
     "profiles.empty": "📄 Резюме пока нет.",
     "profiles.add": "➕ Добавить резюме",
@@ -166,6 +193,14 @@ RU = {
     "admin.btn_requests": "📨 Заявки ({n})",
     "admin.btn_users": "👥 Пользователи",
     "admin.btn_broadcast": "📢 Рассылка",
+    "admin.btn_health": "🩺 Здоровье",
+    "admin.health": "🩺 <b>Здоровье</b>\n\n"
+    "🔎 Сборы за сутки: ✅ {runs_ok} · ❌ {runs_error}\nПоследний: {last_run}\n"
+    "🌐 Запросов к hh за сутки: {fetches} из {cap}{stop}\n"
+    "🤖 Нейросеть за сутки: {llm}\nЖдут оценки: {to_score}\nБольше всех: {top}\n\n"
+    "🚨 Открытые тревоги: {alerts}",
+    "admin.health_stop": "\n⛔ Сбор на паузе до {until} UTC: {reason}",
+    "admin.btn_refresh": "🔄 Обновить",
     "admin.btn_back": "‹ Назад",
     "admin.btn_close": "✖️ Закрыть",
     "admin.invites": "🎟 <b>Активные приглашения</b>\n\n{list}",
