@@ -172,3 +172,37 @@ async def test_preview_diff(session) -> None:
     assert d.total == 3
     assert d.now_passed == ["Java QA"]
     assert d.now_rejected == [("Selenium QA", ["Selenium"])]
+
+
+async def test_schedule_report_to_every_user(session, no_outside_world) -> None:
+    await make_profile(session, 1)
+    await make_profile(session, 2, config=qa_config(period=3))  # свой поиск
+    page = search_html([vac(1, "QA Engineer"), vac(2, "Java QA")], total=40)
+    run_id, tasks, _ = await run_once(session, page)
+    assert len(tasks) == 2
+    no_outside_world.clear()
+    await collect.finish(session, run_id, NOW)
+    by_chat = dict(no_outside_world)
+    assert len(no_outside_world) == 2 and len(by_chat) == 2  # каждому — одно сообщение
+    for text in by_chat.values():
+        assert "🔎 <b>Сбор</b>" in text and "новых 2" in text
+        assert "стр. 1 → 200" in text and "hh нашёл за" in text and "на странице 2" in text
+        assert "Java QA" in text and "— Java" in text  # отсеянная с причиной
+        assert "Открыть этот поиск на hh" in text and "Следующий сбор" in text
+        assert "Собрать сейчас" not in text
+
+    # Следующий сбор без новых — отчёт всё равно приходит
+    no_outside_world.clear()
+    run_id, _, _ = await run_once(session, page, now=NOW + timedelta(minutes=30))
+    await collect.finish(session, run_id, NOW + timedelta(minutes=30))
+    assert len(no_outside_world) == 2
+    assert all("новых нет" in text and "все уже в базе" in text for _, text in no_outside_world)
+
+
+async def test_manual_run_sends_only_own_report(session, no_outside_world) -> None:
+    p = await make_profile(session, 1)
+    await make_profile(session, 2)
+    run_id, _, _ = await run_once(session, search_html([vac(1, "QA")]), kind="bot", profile_id=p.id, chat_id=111)
+    no_outside_world.clear()
+    await collect.finish(session, run_id, NOW)
+    assert [chat for chat, _ in no_outside_world] == [111]

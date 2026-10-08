@@ -13,11 +13,13 @@ import logging
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import Integer, delete, func, select, update
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import Integer, Text, cast, delete, func, select, update
+from sqlalchemy.dialects.postgresql import ARRAY, array as pg_array, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot.texts import t
 from app.config import get_settings
 from app.db.models import (
     Blacklist,
@@ -35,6 +37,7 @@ from app.db.models import (
 from app.domain import schedule
 from app.domain.filter import builtin, engine
 from app.domain.hh import parse, search as hh_search
+from app.domain.hh.roles import ROLES, WORK_FORMATS
 from app.domain.profile_config import ProfileConfig
 from app.services import alerts, notify
 
@@ -43,6 +46,7 @@ log = logging.getLogger(__name__)
 STOP_KEY = "collect.stop"
 STALE_RUN = timedelta(minutes=30)
 MANUAL_KINDS = ("bot", "trial")
+MSK = ZoneInfo("Europe/Moscow")
 
 
 # ---------- Резюме, участвующие в сборе ----------
@@ -152,6 +156,16 @@ async def _bump(session: AsyncSession, run_id: int, **deltas: int) -> None:
     )
 
 
+async def _note_search(session: AsyncSession, run_id: int, search_id: int, **info: object) -> None:
+    """Итог запроса поиска для отчёта (stats.by_search.<id>) — тоже одним UPDATE, как _bump."""
+    path = cast(pg_array(["by_search", str(search_id)]), ARRAY(Text))
+    value = func.jsonb_build_object(*[x for kv in info.items() for x in kv])
+    await session.execute(
+        update(Run).where(Run.id == run_id).values(stats=func.jsonb_set(Run.stats, path, value, True))
+        .execution_options(synchronize_session=False)
+    )
+
+
 # ---------- 1. План ----------
 
 
@@ -182,14 +196,20 @@ async def plan(
     manual = kind in MANUAL_KINDS
     ctxs = await _contexts(session, [profile_id] if profile_id else None, manual=manual)
     searches: dict[int, Search] = {}
+    profile_search: dict[int, int] = {}
     for ctx in ctxs:
         s = await _link_search(session, ctx)
         searches[s.id] = s
+        profile_search[ctx.profile.id] = s.id
     due = [s for s in searches.values() if manual or s.next_due_at is None or s.next_due_at <= now]
     if not due:
         await session.commit()
         return None, [], "по расписанию собирать пока нечего" if not manual else "у резюме нет настроек поиска"
-    stats = {"searches": len(due), "found": 0, "new": 0, "pages": 0, "page_errors": 0}
+    stats = {"searches": len(due), "found": 0, "new": 0, "pages": 0, "page_errors": 0, "by_search": {}}
+    if not manual:
+        # Кому после сбора по расписанию уйдёт отчёт: резюме, чей поиск выполняется
+        due_ids = {s.id for s in due}
+        stats["profiles"] = [c.profile.id for c in ctxs if c.profile.id in profile_search and profile_search[c.profile.id] in due_ids]
     if profile_id:
         stats["profile_id"] = profile_id
     if chat_id:
@@ -276,6 +296,8 @@ async def ingest_search(
     page = parse.parse_search(status, text, location)
     session.add(FetchLog(kind="search", url=search.url, http_status=status, ok=page.ok, bytes=len(text),
                          error=None if page.ok else page.reason))
+    await _note_search(session, run_id, search_id, status=status, total=page.total if page.ok else None,
+                       count=page.count if page.ok else 0, uniq=len(page.records) if page.ok else 0)
     if not page.ok:
         until = await _set_stop(session, now, page.reason)
         run.status, run.error, run.finished_at = "error", page.reason, now
@@ -375,6 +397,8 @@ async def finish(session: AsyncSession, run_id: int, now: datetime) -> dict:
     pid, chat = run.stats.get("profile_id"), run.stats.get("chat_id")
     if run.kind in MANUAL_KINDS and pid and chat:
         await notify.send(chat, await report(session, run, pid))
+    elif run.kind not in MANUAL_KINDS and run.stats.get("profiles"):
+        await send_schedule_reports(session, run, now)
     return {"status": run.status, **run.stats}
 
 
@@ -410,6 +434,143 @@ async def report(session: AsyncSession, run: Run, profile_id: int) -> str:
     if not rows and run.stats.get("found", 0) == 0:
         lines.append("\nЗа период поиска вакансий нет. Можно расширить поиск: «✏️ Изменить текстом».")
     return "\n".join(lines)[:4000]
+
+
+# ---------- Отчёт о сборе по расписанию ----------
+
+REPORT_REJECTED = 5
+
+
+def _plural(n: int, one: str, few: str, many: str) -> str:
+    d, dd = n % 10, n % 100
+    if d == 1 and dd != 11:
+        return one
+    return few if 2 <= d <= 4 and not 12 <= dd <= 14 else many
+
+
+def _clock(moment: datetime, tz: str) -> str:
+    """«15:30» по поясу пользователя, при поясе не МСК — «15:30 (11:30 МСК)»: hh и вакансии живут по Москве."""
+    local, msk = moment.astimezone(ZoneInfo(tz)), moment.astimezone(MSK)
+    if local.utcoffset() == msk.utcoffset():
+        return f"{local:%H:%M}"
+    return t("collect.clock_msk", local=f"{local:%H:%M}", msk=f"{msk:%H:%M}")
+
+
+def _search_words(cfg: ProfileConfig) -> str:
+    c = cfg.search
+    lines = []
+    if c.anywhere:
+        lines.append(t("collect.words_anywhere", words=", ".join(c.anywhere)))
+    if c.in_name:
+        lines.append(t("collect.words_name", words=", ".join(c.in_name)))
+    filters = [
+        t("collect.filter_period", n=c.period),
+        ", ".join(WORK_FORMATS.get(f, f) for f in c.work_format),
+        ", ".join(ROLES.get(r, str(r)) for r in c.roles),
+    ]
+    if c.education_not_required:
+        filters.append(t("collect.filter_education"))
+    lines.append(" · ".join(x for x in filters if x))
+    return html.escape("\n".join(lines))
+
+
+def _profile_block(ctx: Ctx, run: Run, search: Search | None, rows: list[tuple[Match, Vacancy]], now: datetime,
+                   several: bool) -> tuple[str, int]:
+    """Блок резюме в отчёте и число новых для него."""
+    info = (run.stats.get("by_search") or {}).get(str(search.id)) if search else None
+    passed = [v for m, v in rows if m.filter_status in ("passed", "search_passed")]
+    rejected = [(m, v) for m, v in rows if m.filter_status == "rejected"]
+    # Страницы вакансий, которые этот сбор открыл ради резюме (остальные уже были в общем пуле)
+    opened = [v for _, v in rows if v.page_fetched_at and v.page_fetched_at >= run.started_at]
+    broken = sum(1 for v in opened if v.page_status == "error")
+
+    lines = [t("collect.sched_profile", emoji=ctx.profile.emoji, title=html.escape(ctx.profile.title))] if several else []
+    if info is None:
+        lines.append(t("collect.sched_no_search"))
+    else:
+        sent = 1 + len(opened)
+        line = t("collect.sched_requests", n=sent, word=_plural(sent, "запрос", "запроса", "запросов"),
+                 status=info.get("status"))
+        if opened:
+            line += t("collect.sched_pages", n=len(opened))
+            if broken:
+                line += t("collect.sched_pages_broken", n=broken)
+        lines.append(line)
+        if info.get("total") is not None:
+            if not rows:
+                result = t("collect.sched_all_known")
+            elif not rejected:
+                result = t("collect.sched_all_passed", n=len(rows))
+            elif not passed:
+                result = t("collect.sched_all_rejected", n=len(rows))
+            else:
+                result = t("collect.sched_mixed", n=len(rows), passed=len(passed), rejected=len(rejected))
+            parts = [t("collect.sched_found", period=t("collect.filter_period", n=ctx.config.search.period),
+                       total=info["total"])]
+            if (info.get("count") or 0) < info["total"]:
+                parts.append(t("collect.sched_on_page", n=info.get("count") or 0))
+            parts.append(t("collect.sched_uniq", n=info.get("uniq") or 0, result=result))
+            lines.append(", ".join(parts))
+    for m, v in rejected[:REPORT_REJECTED]:
+        reasons = ", ".join(m.reasons)
+        reasons = reasons if len(reasons) <= 120 else reasons[:119] + "…"
+        lines.append(t("collect.sched_rejected", url=html.escape(v.url), title=html.escape(v.title),
+                       reasons=html.escape(reasons)))
+    if len(rejected) > REPORT_REJECTED:
+        lines.append(t("collect.sched_more", n=len(rejected) - REPORT_REJECTED))
+    lines.append(t("collect.sched_query", query=_search_words(ctx.config)))
+    if search:
+        lines.append(t("collect.sched_link", url=html.escape(search.url)))
+    nxt = schedule.next_slot(now, ctx.config.schedule, ctx.user.tz)
+    lines.append(t("collect.sched_next", at=_clock(nxt, ctx.user.tz)) if nxt else t("collect.sched_paused"))
+    return "\n".join(lines), len(rows)
+
+
+async def send_schedule_reports(session: AsyncSession, run: Run, now: datetime) -> int:
+    """Сбор по расписанию → каждому пользователю отдельное сообщение без звука: блок «🔎 Сбор» как в v1
+    (запросы к hh, что нашёл поиск, новые и отсеянные с причинами, запрос, следующий сбор) по каждому его резюме.
+    Иначе при «новых нет» пользователь не видит, что сбор вообще идёт. Возвращает, скольким отправлено."""
+    ctxs = await _contexts(session, list(run.stats["profiles"]), manual=True)
+    if not ctxs:
+        return 0
+    links = dict(
+        (await session.execute(select(ProfileSearch.profile_id, ProfileSearch.search_id).where(
+            ProfileSearch.profile_id.in_([c.profile.id for c in ctxs])
+        ))).all()
+    )
+    searches = {s.id: s for s in await session.scalars(select(Search).where(Search.id.in_(set(links.values()))))}
+    rows = (
+        await session.execute(
+            select(Match, Vacancy).join(Vacancy, Vacancy.id == Match.vacancy_id).where(Match.run_id == run.id)
+            .order_by(Match.id)
+        )
+    ).all()
+    by_profile: dict[int, list[tuple[Match, Vacancy]]] = {}
+    for m, v in rows:
+        by_profile.setdefault(m.profile_id, []).append((m, v))
+
+    by_user: dict[int, list[Ctx]] = {}
+    for ctx in ctxs:
+        by_user.setdefault(ctx.user.id, []).append(ctx)
+    sent = 0
+    for user_ctxs in by_user.values():
+        user = user_ctxs[0].user
+        several = len(user_ctxs) > 1
+        blocks, new = [], 0
+        for ctx in sorted(user_ctxs, key=lambda c: c.profile.id):
+            block, n = _profile_block(ctx, run, searches.get(links.get(ctx.profile.id)), by_profile.get(ctx.profile.id, []),
+                                      now, several)
+            blocks.append(block)
+            new += n
+        if run.status == "error":
+            head = t("collect.sched_failed", at=_clock(run.started_at, user.tz), error=html.escape(run.error or ""))
+        else:
+            head = t("collect.sched_head", at=_clock(run.started_at, user.tz),
+                     new=t("collect.sched_new", n=new) if new else t("collect.sched_no_new"))
+        text = "\n\n".join([head, *blocks]) if several else head + "\n" + blocks[0]
+        if await notify.send(user.tg_id, text[:4000], disable_notification=True):
+            sent += 1
+    return sent
 
 
 # ---------- Запуск из бота ----------
