@@ -8,6 +8,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from app.bot.callbacks import Prof
 from app.bot.texts import t
 from app.db.models import Profile
+from app.domain.filter.describe import describe
 from app.domain.hh.roles import ROLES, WORK_FORMATS
 from app.services.profiles import Loaded
 
@@ -85,15 +86,22 @@ def card_keyboard(p: Profile) -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
-def rules_keyboard(loaded: Loaded) -> InlineKeyboardMarkup:
+def rules_view(loaded: Loaded) -> tuple[str, InlineKeyboardMarkup]:
+    """Нумерованный список правил с расшифровкой; номера — для команд правки сообщением, кнопки — вкл/выкл."""
+    p, rules = loaded.profile, loaded.config.filter.rules
+    items = "\n\n".join(
+        f"<b>{i}.</b> {'✅' if r.enabled else '⬜'} <b>{html.escape(r.label)}</b>\n<i>{html.escape(describe(r))}</i>"
+        for i, r in enumerate(rules, 1)
+    ) or t("profile.no_rules")
+    text = t("rules.title", emoji=p.emoji, title=html.escape(p.title), rules=items)
+    if len(text) > 4000:
+        text = text[:3990] + "…"
     kb = InlineKeyboardBuilder()
-    for r in loaded.config.filter.rules:
-        kb.button(
-            text=f"{'✅' if r.enabled else '⬜'} {r.label}"[:60], callback_data=Prof(action="rule", pid=loaded.profile.id, arg=r.id[:24])
-        )
-    kb.button(text=t("profile.btn_back"), callback_data=Prof(action="open", pid=loaded.profile.id))
-    kb.adjust(1)
-    return kb.as_markup()
+    for i, r in enumerate(rules, 1):
+        kb.button(text=f"{'✅' if r.enabled else '⬜'} {i}", callback_data=Prof(action="rule", pid=p.id, arg=r.id[:24]))
+    kb.button(text=t("profile.btn_back"), callback_data=Prof(action="open", pid=p.id))
+    kb.adjust(*([4] * (len(rules) // 4)), *([len(rules) % 4] if len(rules) % 4 else []), 1)
+    return text, kb.as_markup()
 
 
 def list_view(profiles: list[Profile]) -> tuple[str, InlineKeyboardMarkup]:

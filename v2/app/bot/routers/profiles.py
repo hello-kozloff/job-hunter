@@ -8,6 +8,7 @@ import io
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatAction
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -21,7 +22,9 @@ from app.bot.filters import IsMember
 from app.bot.texts import t
 from app.db.models import User
 from app.domain import resume_text
+from app.domain.filter.describe import describe, parse_command
 from app.domain.llm.draft import ConfigEdit
+from app.domain.profile_config import Rule
 from app.domain.resume_text import ResumeTextError
 from app.services import collect, hh_resume, preview, profiles
 from app.services.llm import LlmError
@@ -42,6 +45,12 @@ class LetterForm(StatesGroup):
 
 
 class EditForm(StatesGroup):
+    text = State()
+    confirm = State()
+
+
+class RulesForm(StatesGroup):
+    # Открыт экран «🧹 Правила»: сообщения — команды правки (describe.parse_command)
     text = State()
     confirm = State()
 
@@ -154,15 +163,35 @@ async def profile_button(
 
     if action == "open":
         await query.answer()
+        if await state.get_state() in (RulesForm.text.state, RulesForm.confirm.state):
+            await state.clear()
         await _show_card(query.message, loaded, edit=True)
     elif action == "rules":
         await query.answer()
-        await query.message.edit_text(t("profile.rules"), reply_markup=view.rules_keyboard(loaded))
+        await _open_rules(query.message, state, loaded, edit=True)
     elif action == "rule":
         await profiles.toggle_rule(session, loaded, callback_data.arg)
         await query.answer()
-        loaded = await profiles.load(session, user.id, pid)
-        await query.message.edit_reply_markup(reply_markup=view.rules_keyboard(loaded))
+        await _open_rules(query.message, state, await profiles.load(session, user.id, pid), edit=True)
+    elif action == "rapply":
+        data = await state.get_data()
+        if data.get("pid") != p.id or "rules" not in data:
+            await query.answer(t("stale"), show_alert=True)
+            return
+        if data.get("version") != loaded.version:
+            # Настройки успели поменяться (кнопка, другая правка) — номера могли съехать
+            await state.set_state(RulesForm.text)
+            await query.answer(t("stale"), show_alert=True)
+            return
+        rules = [Rule.model_validate(r) for r in data["rules"]]
+        version = await profiles.save_rules(session, loaded, rules, data.get("comment", ""))
+        await query.answer()
+        await query.message.edit_text(query.message.html_text + "\n\n" + t("rules.applied", version=version))
+        await _open_rules(query.message, state, await profiles.load(session, user.id, pid))
+    elif action == "rcancel":
+        await state.set_state(RulesForm.text)
+        await query.answer()
+        await query.message.edit_text(t("edit.cancelled"))
     elif action in ("start", "pause"):
         await profiles.set_status(session, p, "active" if action == "start" else "paused")
         await query.answer(t("profile.started") if action == "start" else None, show_alert=action == "start")
@@ -223,10 +252,92 @@ async def profile_button(
         await query.answer(t("stale"))
 
 
+# ---------- Правила: правка сообщением ----------
+
+
+async def _open_rules(message: Message, state: FSMContext, loaded: profiles.Loaded, edit: bool = False) -> None:
+    await state.set_state(RulesForm.text)
+    await state.update_data(pid=loaded.profile.id)
+    text, kb = view.rules_view(loaded)
+    if edit:
+        try:
+            await message.edit_text(text, reply_markup=kb)
+        except TelegramBadRequest:
+            pass
+    else:
+        await message.answer(text, reply_markup=kb)
+
+
+@router.message(StateFilter(RulesForm.text, RulesForm.confirm), F.text, ~F.text.startswith("/"))
+async def rules_command(message: Message, session: AsyncSession, user: User, state: FSMContext) -> None:
+    data = await state.get_data()
+    loaded = await profiles.load(session, user.id, data.get("pid", 0))
+    if loaded is None:
+        await state.clear()
+        await message.answer(t("profile.not_found"))
+        return
+    cmd = parse_command(message.text)
+    if cmd is None:
+        await message.answer(t("rules.hint"))
+        return
+    rules = loaded.config.filter.rules
+    bad = [n for n in cmd.numbers if not 1 <= n <= len(rules)]
+    if bad:
+        await message.answer(t("rules.no_number", n=bad[0], total=len(rules)))
+        return
+
+    progress = None
+    if cmd.action == "delete":
+        gone = {rules[n - 1].id for n in cmd.numbers}
+        new_rules = [r for r in rules if r.id not in gone]
+        what = t("rules.delete", labels=", ".join(f"{n}. {html.escape(rules[n - 1].label)}" for n in cmd.numbers))
+    else:
+        old = rules[cmd.numbers[0] - 1] if cmd.action == "edit" else None
+        progress = await message.answer(t("rules.thinking"))
+        try:
+            out = await profiles.propose_rule(session, user, loaded, cmd.text, old)
+        except LlmError as e:
+            await progress.edit_text(t("resume.error", error=html.escape(str(e))))
+            return
+        if out.question:
+            await progress.edit_text(t("edit.question", question=html.escape(out.question)))
+            return
+        new_rules = profiles.rules_with(rules, out.rule)
+        key = "rules.edit" if old else "rules.add"
+        what = t(key, n=cmd.numbers[0] if old else 0, label=html.escape(out.rule.label), what=html.escape(describe(out.rule)))
+
+    new_filter = loaded.config.filter.model_copy(update={"rules": new_rules})
+    d = await preview.diff(session, loaded.profile.id, loaded.config.filter, new_filter)
+    text = what + _effect(d) + t("rules.confirm")
+    await state.set_state(RulesForm.confirm)
+    await state.update_data(
+        rules=[r.model_dump(mode="json") for r in new_rules], version=loaded.version, comment=f"правила: {message.text}"
+    )
+    kb = InlineKeyboardBuilder()
+    kb.button(text=t("edit.btn_apply"), callback_data=Prof(action="rapply", pid=loaded.profile.id))
+    kb.button(text=t("edit.btn_cancel"), callback_data=Prof(action="rcancel", pid=loaded.profile.id))
+    if progress:
+        await progress.edit_text(text, reply_markup=kb.as_markup())
+    else:
+        await message.answer(text, reply_markup=kb.as_markup())
+
+
+def _effect(d: preview.Diff) -> str:
+    if not d.total:
+        return ""
+    out = t("edit.effect", total=d.total, rejected=len(d.now_rejected), passed=len(d.now_passed))
+    out += "".join(f"\n➖ {html.escape(title)} — {html.escape(', '.join(r))}" for title, r in d.now_rejected[:5])
+    out += "".join(f"\n➕ {html.escape(title)}" for title in d.now_passed[:5])
+    return out
+
+
 # ---------- Правка текстом ----------
 
 
-@router.message(Command("cancel"), StateFilter(EditForm.text, EditForm.confirm, ResumeForm.waiting, LetterForm.text))
+@router.message(
+    Command("cancel"),
+    StateFilter(EditForm.text, EditForm.confirm, ResumeForm.waiting, LetterForm.text, RulesForm.text, RulesForm.confirm),
+)
 async def cancel(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer(t("edit.cancelled"), reply_markup=view.MENU)
@@ -259,12 +370,7 @@ async def edit_text(message: Message, session: AsyncSession, user: User, state: 
     kb.button(text=t("edit.btn_cancel"), callback_data=Prof(action="cancel", pid=loaded.profile.id))
     changes = "\n".join(f"• {html.escape(c)}" for c in edit.changes)
     d = await preview.diff(session, loaded.profile.id, loaded.config.filter, edit.filter)
-    effect = ""
-    if d.total:
-        effect = t("edit.effect", total=d.total, rejected=len(d.now_rejected), passed=len(d.now_passed))
-        effect += "".join(f"\n➖ {html.escape(title)} — {html.escape(', '.join(r))}" for title, r in d.now_rejected[:5])
-        effect += "".join(f"\n➕ {html.escape(title)}" for title in d.now_passed[:5])
-    await progress.edit_text(t("edit.preview", changes=changes) + effect, reply_markup=kb.as_markup())
+    await progress.edit_text(t("edit.preview", changes=changes) + _effect(d), reply_markup=kb.as_markup())
 
 
 # ---------- Настройки писем ----------

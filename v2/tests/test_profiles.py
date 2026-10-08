@@ -3,6 +3,7 @@
 import pytest
 
 from app.domain.llm import draft as prompts
+from app.domain.profile_config import Rule
 from app.services import llm, profiles, users
 
 RESUME = "QA Automation Engineer, 3 года. Playwright, TypeScript, Jest. Опыт работы: Acme, тг @qa_nik. " * 5
@@ -119,3 +120,55 @@ def test_roles_catalog_covers_all_industries() -> None:
     assert len(roles.ROLES) > 150
     assert roles.known_roles([124, 99999, 124, 8]) == [124, 8]
     assert "Административный персонал:" in roles.catalog()
+
+
+def test_rule_commands_and_description() -> None:
+    from app.domain.filter.describe import describe, parse_command
+
+    assert parse_command("+ не брать Selenium").action == "add"
+    assert parse_command("+").__class__ is type(None)
+    c = parse_command("2 только QA в названии")
+    assert (c.action, c.numbers, c.text) == ("edit", [2], "только QA в названии")
+    assert parse_command("3: без Java").numbers == [3]
+    assert parse_command("-3").numbers == [3]
+    assert parse_command("-2, 5").numbers == [2, 5]
+    assert parse_command("- 2 -5").numbers == [2, 5]
+    assert parse_command("привет") is None
+    assert parse_command("5") is None
+
+    rule = Rule.model_validate(
+        {"id": "lead", "label": "Lead", "stage": "search", "kind": "reject",
+         "match": [{"fields": ["title"], "patterns": ["lead", "тимлид*"]}],
+         "unless": [[{"fields": ["title"], "patterns": ["senior"]}]]}
+    )
+    assert describe(rule) == "отсечь, если название: lead, тимлид* · кроме: название: senior"
+
+
+async def test_rule_add_edit_delete(session, fake_llm, monkeypatch) -> None:
+    a, _ = await two_users(session)
+    p = await profiles.create_from_text(session, a, "text", None, RESUME)
+    loaded = await profiles.load(session, a.id, p.id)
+    new = {"id": "junior", "label": "Selenium", "stage": "search", "kind": "reject", "enabled": False,
+           "match": [{"fields": ["title", "skills"], "patterns": ["selenium"]}]}
+    draft = prompts.RuleDraft(question="", rule=Rule.model_validate(new))
+
+    async def ask(session, **kw):
+        return draft.model_copy(deep=True)
+
+    monkeypatch.setattr(llm, "ask", ask)
+
+    # Новое: id занят — не заменяет существующее, а добавляется включённым
+    out = await profiles.propose_rule(session, a, loaded, "без Selenium", None)
+    assert out.rule.id == "junior_3" and out.rule.enabled
+    rules = profiles.rules_with(loaded.config.filter.rules, out.rule)
+    assert [r.id for r in rules] == ["junior", "junior_2", "bad_id", "junior_3"]
+
+    # Правка: на том же месте и с тем же id
+    out = await profiles.propose_rule(session, a, loaded, "только Selenium", loaded.config.filter.rules[1])
+    rules = profiles.rules_with(loaded.config.filter.rules, out.rule)
+    assert [r.label for r in rules] == ["junior", "Selenium", "Java"]
+
+    # Удаление и сохранение — новая версия
+    assert await profiles.save_rules(session, loaded, rules[1:], "правила: -1") == 2
+    loaded = await profiles.load(session, a.id, p.id)
+    assert [r.label for r in loaded.config.filter.rules] == ["Selenium", "Java"]

@@ -62,7 +62,8 @@ async def letter_button(query: CallbackQuery, callback_data: LetterBtn, session:
     await query.answer(t("stale"))
 
 
-@router.message(StateFilter(None), F.reply_to_message, F.text, ~F.text.startswith("/"))
+# На экране правил (RulesForm) ответы на карточки и письма тоже работают
+@router.message(StateFilter(None, "RulesForm:text", "RulesForm:confirm"), F.reply_to_message, F.text, ~F.text.startswith("/"))
 async def reason_reply(message: Message, session: AsyncSession, user: User) -> None:
     # Ответ на письмо — правка письма по пожеланию
     uv = await letters.by_letter_message(session, user, message.reply_to_message.message_id)
