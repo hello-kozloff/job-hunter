@@ -48,6 +48,7 @@ const LAYOUTS = [
   'set_blacklist',
   'set_confirm',
   'set_llm',
+  'open_rescue',
 ];
 // Выходы «Layout» после раскладок: приветствие, вопрос ⚙️ со списком (ForceReply)
 const ROUTE_START = LAYOUTS.length * 2;
@@ -144,7 +145,6 @@ function openView(id) {
   if (!r) return listView(tab, page, `⚠️ Вакансии /v${id} нет в базе`);
 
   const extra = [
-    r.status === 'rejected' && `🚫 Отсеяна фильтром: ${esc(r.reasons)}`,
     ['new', 'detailed'].includes(r.status) && '⚙️ Ждёт оценки нейросетью',
     r.status === 'seen' && '🗄 Из первой выгрузки — не оценивалась',
     r.letter && r.status === 'approved' && '✉️ Письмо готово — в ленте под карточкой',
@@ -157,7 +157,9 @@ function openView(id) {
 
   // Кнопки решения — только если есть исходная карточка в ленте: решение правит и её (W3, callback pv:…)
   let layout = 'open_plain';
-  if (r.tg_message_id && (r.status === 'waiting' || job.choose)) layout = 'open_choose';
+  // Отсеянная фильтром (08.10.2026): решение без карточки в ленте — W3 отправит её сам, или «🤖 На оценку»
+  if (r.status === 'rejected') layout = 'open_rescue';
+  else if (r.tg_message_id && (r.status === 'waiting' || job.choose)) layout = 'open_choose';
   // «📨 Откликался раньше» тоже можно отменить «↩️ Изменить» (отклик через бота — только «↩️ Отменить» под письмом)
   else if (
     r.tg_message_id &&
@@ -179,6 +181,7 @@ function openView(id) {
       earlier: choice('earlier'),
       ban: choice('ban'),
       edit: choice('edit'),
+      score: choice('score'),
       url: r.url,
       back: `p:l:${tab}:${page}`,
     },

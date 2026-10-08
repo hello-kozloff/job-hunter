@@ -17,18 +17,6 @@ const responses = $input.all().map((i) => i.json);
 // Правила, выключенные в настройках бота (⚙️ → 🧹 Фильтр → Правила): only_rf, no_stack
 const off = new Set(loadSettings($('Settings').all())['filter.rules_off']);
 
-// Описание вакансии: HTML → текст с переносами строк
-const htmlToText = (html) =>
-  decodeEntities(
-    String(html ?? '')
-      .replace(/<\s*(br|\/p|\/li|\/h\d|\/div)[^>]*>/gi, '\n')
-      .replace(/<li[^>]*>/gi, '• ')
-      .replace(/<[^>]+>/g, ''),
-  )
-    .replace(/[ \t\u00a0]+/g, ' ')
-    .replace(/\n\s*\n+/g, '\n')
-    .trim();
-
 // «Работа только из РФ». Совпавший кусок пишем в reasons, чтобы ложные срабатывания было видно
 const RF_ONLY = [
   /(только|исключительно)[^.\n]{0,40}(из|на территории|в|по)\s+(рф|росси)/i,
@@ -49,10 +37,7 @@ return rows.map((row, i) => {
 
   const description = htmlToText(v.description);
   const skills = (v.keySkills ?? []).join(', ');
-  const contract = [
-    ...(v.acceptLaborContract ? ['tk'] : []),
-    ...(v.civilLawContracts ?? []).flatMap((c) => c?.civilLawContractsElement ?? (typeof c === 'string' ? [c] : [])).map((c) => String(c).toLowerCase()),
-  ].join(',');
+  const contract = contractOf(v);
 
   const reasons = [];
   if (v.status?.archived || v.closedForApplicants) reasons.push('в архиве');
