@@ -65,7 +65,11 @@ def no_outside_world(monkeypatch):
         raise AssertionError("тест полез в настоящую нейросеть — подмени llm.ask")
 
     monkeypatch.setattr(notify, "send", send)
+    async def delete(chat_id, message_id):
+        return True
+
     monkeypatch.setattr(notify, "edit", edit)
+    monkeypatch.setattr(notify, "delete", delete)
     monkeypatch.setattr(llm, "_gemini", no_llm)
     monkeypatch.setattr(llm, "_claude", no_llm)
     return sent

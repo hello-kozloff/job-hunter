@@ -37,6 +37,10 @@ class ResumeForm(StatesGroup):
     waiting = State()
 
 
+class LetterForm(StatesGroup):
+    text = State()
+
+
 class EditForm(StatesGroup):
     text = State()
     confirm = State()
@@ -182,6 +186,20 @@ async def profile_button(
         await query.answer(t("profile.deleted"))
         text, kb = view.list_view(await profiles.list_for_user(session, user.id))
         await query.message.edit_text(text, reply_markup=kb)
+    elif action == "letters":
+        await query.answer()
+        text, kb = view.letters_view(loaded)
+        await query.message.edit_text(text, reply_markup=kb)
+    elif action == "lset" and callback_data.arg in ("signature", "contact", "sample", "note"):
+        await query.answer()
+        await state.set_state(LetterForm.text)
+        await state.update_data(pid=p.id, field=callback_data.arg)
+        await query.message.answer(t(f"letters.ask_{callback_data.arg}"))
+    elif action == "lclear" and callback_data.arg in ("samples", "notes"):
+        await profiles.set_letter(session, loaded, f"clear_{callback_data.arg}")
+        await query.answer()
+        text, kb = view.letters_view(await profiles.load(session, user.id, pid))
+        await query.message.edit_text(text, reply_markup=kb)
     elif action == "edit":
         await query.answer()
         await state.set_state(EditForm.text)
@@ -208,7 +226,7 @@ async def profile_button(
 # ---------- Правка текстом ----------
 
 
-@router.message(Command("cancel"), StateFilter(EditForm.text, EditForm.confirm, ResumeForm.waiting))
+@router.message(Command("cancel"), StateFilter(EditForm.text, EditForm.confirm, ResumeForm.waiting, LetterForm.text))
 async def cancel(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer(t("edit.cancelled"), reply_markup=view.MENU)
@@ -247,3 +265,20 @@ async def edit_text(message: Message, session: AsyncSession, user: User, state: 
         effect += "".join(f"\n➖ {html.escape(title)} — {html.escape(', '.join(r))}" for title, r in d.now_rejected[:5])
         effect += "".join(f"\n➕ {html.escape(title)}" for title in d.now_passed[:5])
     await progress.edit_text(t("edit.preview", changes=changes) + effect, reply_markup=kb.as_markup())
+
+
+# ---------- Настройки писем ----------
+
+
+@router.message(StateFilter(LetterForm.text), F.text, ~F.text.startswith("/"))
+async def letter_setting(message: Message, session: AsyncSession, user: User, state: FSMContext) -> None:
+    data = await state.get_data()
+    await state.clear()
+    loaded = await profiles.load(session, user.id, data.get("pid", 0))
+    if loaded is None:
+        await message.answer(t("profile.not_found"))
+        return
+    version = await profiles.set_letter(session, loaded, data.get("field", ""), message.text)
+    await message.answer(t("letters.saved", version=version), reply_markup=view.MENU)
+    text, kb = view.letters_view(await profiles.load(session, user.id, loaded.profile.id))
+    await message.answer(text, reply_markup=kb)

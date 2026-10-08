@@ -22,6 +22,7 @@ class Job(BaseModel):
 
 
 class StructuredResume(BaseModel):
+    first_name: str = Field(default="", description="имя кандидата из резюме, только имя (для подписи письма); пусто, если нет")
     headline: str = Field(description="кто кандидат, одной строкой: роль, уровень, главный стек")
     seniority: Literal["intern", "junior", "middle", "senior", "lead"]
     years: float = Field(description="лет коммерческого опыта в этой профессии")

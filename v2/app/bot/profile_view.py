@@ -50,7 +50,8 @@ def card_text(loaded: Loaded) -> str:
         maybe=_bullets(c.llm.maybe),
         skip=_bullets(c.llm.skip),
         cases=cases,
-        contact=html.escape(c.letter.contact) or t("profile.none"),
+        letter=html.escape(" · ".join(x for x in (c.letter.signature, c.letter.contact) if x) or t("profile.none"))
+        + (f", образцов {len(c.letter.samples)}" if c.letter.samples else ""),
     )
     return text[:4000]
 
@@ -59,6 +60,7 @@ def card_keyboard(p: Profile) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text=t("profile.btn_edit"), callback_data=Prof(action="edit", pid=p.id))
     kb.button(text=t("profile.btn_rules"), callback_data=Prof(action="rules", pid=p.id))
+    kb.button(text=t("profile.btn_letters"), callback_data=Prof(action="letters", pid=p.id))
     if p.status == "active":
         kb.button(text=t("profile.btn_pause"), callback_data=Prof(action="pause", pid=p.id))
     else:
@@ -72,7 +74,7 @@ def card_keyboard(p: Profile) -> InlineKeyboardMarkup:
     )
     kb.button(text=t("profile.btn_delete"), callback_data=Prof(action="del", pid=p.id))
     kb.button(text=t("profile.btn_list"), callback_data=Prof(action="list"))
-    kb.adjust(1, 2, 2, 1, 1, 1)
+    kb.adjust(1, 2, 2, 2, 1, 1)
     return kb.as_markup()
 
 
@@ -94,3 +96,26 @@ def list_view(profiles: list[Profile]) -> tuple[str, InlineKeyboardMarkup]:
     kb.button(text=t("profiles.add"), callback_data=Prof(action="add"))
     kb.adjust(1)
     return (t("profiles.title") if profiles else t("profiles.empty")), kb.as_markup()
+
+
+def letters_view(loaded: Loaded) -> tuple[str, InlineKeyboardMarkup]:
+    p, c = loaded.profile, loaded.config.letter
+    text = t(
+        "letters.title",
+        emoji=p.emoji,
+        title=html.escape(p.title),
+        signature=html.escape(c.signature) or t("profile.none"),
+        contact=html.escape(c.contact) or t("profile.none"),
+        samples=len(c.samples),
+        notes="\n".join(f"• {html.escape(n)}" for n in c.notes) or t("profile.none"),
+    )
+    kb = InlineKeyboardBuilder()
+    for field in ("signature", "contact", "sample", "note"):
+        kb.button(text=t(f"letters.btn_{field}"), callback_data=Prof(action="lset", pid=p.id, arg=field))
+    if c.samples:
+        kb.button(text=t("letters.btn_clear_samples"), callback_data=Prof(action="lclear", pid=p.id, arg="samples"))
+    if c.notes:
+        kb.button(text=t("letters.btn_clear_notes"), callback_data=Prof(action="lclear", pid=p.id, arg="notes"))
+    kb.button(text=t("profile.btn_back"), callback_data=Prof(action="open", pid=p.id))
+    kb.adjust(2)
+    return text[:4000], kb.as_markup()
