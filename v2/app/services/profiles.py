@@ -150,6 +150,45 @@ async def toggle_rule(session: AsyncSession, loaded: Loaded, rule_id: str) -> in
     return await save_version(session, loaded.profile, loaded.config, created_by="user", comment=f"правило {rule_id}")
 
 
+async def propose_rule(session: AsyncSession, user: User, loaded: Loaded, request: str, old: Rule | None) -> prompts.RuleDraft:
+    """Правило по описанию: новое (old=None) или замена old на том же месте и с тем же id. Не сохраняет."""
+    out = await llm.ask(
+        session,
+        kind="rule",
+        system=prompts.RULE_SYSTEM,
+        prompt=prompts.rule_prompt(loaded.config, loaded.headline, request, old),
+        schema=prompts.RuleDraft,
+        user_id=user.id,
+        profile_id=loaded.profile.id,
+    )
+    if old is not None:
+        out.rule = out.rule.model_copy(update={"id": old.id, "enabled": True})
+    else:
+        # Новое правило не должно заменить существующее с тем же id
+        out.rule = _unique_rule_ids([*loaded.config.filter.rules, out.rule])[-1].model_copy(update={"enabled": True})
+    if not out.question:
+        check_rules(loaded, rules_with(loaded.config.filter.rules, out.rule))
+    return out
+
+
+def rules_with(rules: list[Rule], rule: Rule) -> list[Rule]:
+    """Заменить правило с тем же id или добавить в конец."""
+    if any(r.id == rule.id for r in rules):
+        return [rule if r.id == rule.id else r for r in rules]
+    return [*rules, rule]
+
+
+def check_rules(loaded: Loaded, rules: list[Rule]) -> list[Rule]:
+    """Новый список правил после проверки (уникальные id, рабочие шаблоны)."""
+    config = loaded.config.model_copy(update={"filter": loaded.config.filter.model_copy(update={"rules": rules})})
+    return _check(config).filter.rules
+
+
+async def save_rules(session: AsyncSession, loaded: Loaded, rules: list[Rule], comment: str) -> int:
+    config = loaded.config.model_copy(update={"filter": loaded.config.filter.model_copy(update={"rules": check_rules(loaded, rules)})})
+    return await save_version(session, loaded.profile, config, created_by="user", comment=comment[:500])
+
+
 async def set_status(session: AsyncSession, profile: Profile, status: str) -> None:
     profile.status = status
     await session.commit()
