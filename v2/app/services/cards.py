@@ -117,6 +117,8 @@ class Pressed:
     markup: InlineKeyboardMarkup
     toast: str = ""
     ask: str = ""
+    # ✅ без письма (или с письмом от другого резюме) — письмо пишется в фоне (letters.spawn)
+    need_letter: bool = False
 
 
 async def _ban(session: AsyncSession, v: Vacancy, profile_ids: list[int]) -> None:
@@ -159,6 +161,7 @@ async def press(session: AsyncSession, user: User, uv_id: int, action: str, arg:
             uv.my_reason = None
         uv.my_decision, uv.status = action, card.STATUS_BY_CHOICE[action]
         if action == "apply":
+            out.need_letter = not uv.letter or uv.chosen_profile_id != pid
             uv.chosen_profile_id = pid
         out.toast = t("card.saved", choice=card.CHOICE[action])
         # Расхождение с нейросетью → «Почему?» (для ✅ — с оценкой выбранного резюме, иначе — с лучшей из оценок)
@@ -176,6 +179,15 @@ async def press(session: AsyncSession, user: User, uv_id: int, action: str, arg:
     out.text = render(uv, v, lines, user.tz)
     out.markup = keyboard(uv, lines)
     return out
+
+
+async def refresh(session: AsyncSession, user: User, uv: UserVacancy) -> None:
+    """Перерисовать карточку (после «📨 Отправил» под письмом и т. п.)."""
+    if not uv.tg_card_id:
+        return
+    v = await session.get(Vacancy, uv.vacancy_id)
+    lines, _, _ = await _lines(session, user.id, uv.vacancy_id)
+    await notify.edit(user.tg_id, uv.tg_card_id, render(uv, v, lines, user.tz), reply_markup=keyboard(uv, lines))
 
 
 async def set_ask(session: AsyncSession, uv: UserVacancy, message_id: int) -> None:

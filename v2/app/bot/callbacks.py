@@ -44,3 +44,10 @@ class Card(CallbackData, prefix="c"):
     action: str
     id: int
     arg: str = ""
+
+
+class LetterBtn(CallbackData, prefix="l"):
+    """Кнопки под письмом: id — строка user_vacancies (проверяется владелец); action — redo | sent | unsent."""
+
+    action: str
+    id: int

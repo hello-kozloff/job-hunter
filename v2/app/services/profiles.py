@@ -102,7 +102,7 @@ async def create_from_text(session: AsyncSession, user: User, source: str, sourc
             search=draft.search,
             filter=draft.filter,
             llm=draft.llm,
-            letter=LetterConfig(contact=f"тг: {tg}" if tg else "", signature=user.first_name or ""),
+            letter=LetterConfig(contact=f"тг: {tg}" if tg else "", signature=draft.resume.first_name or user.first_name or ""),
         )
     )
     profile = Profile(user_id=user.id, title=draft.title[:64], emoji=(draft.emoji or "📄")[:8])
@@ -163,3 +163,24 @@ async def set_shadow(session: AsyncSession, profile: Profile, shadow: bool) -> N
 async def delete(session: AsyncSession, profile: Profile) -> None:
     await session.delete(profile)
     await session.commit()
+
+
+LETTER_LIMITS = {"samples": 5, "notes": 10}
+
+
+async def set_letter(session: AsyncSession, loaded: Loaded, field: str, value: str = "") -> int | None:
+    """Настройки писем: signature / contact — заменить («-» — убрать); sample / note — добавить; clear_* — очистить."""
+    letter = loaded.config.letter.model_copy(deep=True)
+    value = value.strip()
+    if field in ("signature", "contact"):
+        setattr(letter, field, "" if value == "-" else value[:100])
+    elif field == "sample" and value:
+        letter.samples = [*letter.samples, value[:2000]][-LETTER_LIMITS["samples"]:]
+    elif field == "note" and value:
+        letter.notes = [*letter.notes, value[:300]][-LETTER_LIMITS["notes"]:]
+    elif field in ("clear_samples", "clear_notes"):
+        setattr(letter, field.removeprefix("clear_"), [])
+    else:
+        return None
+    config = loaded.config.model_copy(update={"letter": letter})
+    return await save_version(session, loaded.profile, config, created_by="user", comment=f"письма: {field}")

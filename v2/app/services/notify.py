@@ -42,3 +42,14 @@ async def edit(chat_id: int, message_id: int, text: str, **kwargs) -> bool:
     except TelegramAPIError as e:
         log.info("edit %s/%s failed: %s", chat_id, message_id, e)
         return False
+
+
+async def delete(chat_id: int, message_id: int) -> bool:
+    b = bot()
+    if b is None:
+        return False
+    try:
+        return await b.delete_message(chat_id, message_id)
+    except TelegramAPIError as e:
+        log.info("delete %s/%s failed: %s", chat_id, message_id, e)
+        return False

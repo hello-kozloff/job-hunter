@@ -54,7 +54,7 @@ RU = {
     "Роли: {roles}\nВезде в тексте: {anywhere}\nВ названии: {in_name}\n\n"
     "🧹 <b>Фильтр</b> (больше {max_responses} откликов{only_rf})\n{rules}\n\n"
     "🤖 <b>Нейросеть</b>{shadow}\n✅ {apply}\n🤔 {maybe}\n❌ {skip}{cases}\n\n"
-    "✉️ Подпись письма: {contact}",
+    "✉️ Письма: {letter}",
     "profile.only_rf": ", «только из РФ»",
     "profile.shadow_on": " · теневой режим",
     "profile.no_rules": "правил нет",
@@ -107,6 +107,41 @@ RU = {
     "card.ask": "🤖 {verdict} · 👤 {choice}\nПочему? Ответь на это сообщение одной фразой — по ответам поправлю правила.",
     "card.reason_saved": "📝 Записал причину.",
     "card.not_found": "Вакансия не найдена.",
+    # Письмо
+    "letter.writing": "✍️ Пишу письмо…",
+    "letter.busy": "✍️ Письмо уже пишется.",
+    "letter.head_new": '✉️ Письмо · <a href="{url}">{title}</a> · {company}',
+    "letter.head_redo": '🔄 Новый вариант письма · <a href="{url}">{title}</a> · {company}',
+    "letter.head_revise": '✏️ Письмо с правкой · <a href="{url}">{title}</a> · {company}',
+    "letter.failed": "⚠️ Письмо не получилось: {problem}\nНажми «🔄 Переписать», чтобы попробовать ещё раз.",
+    "letter.wish": "<i>Пожелание: «{text}»</i>",
+    "letter.has_test": "📝 У вакансии тест — ответы в форме отклика на hh.",
+    "letter.hint": "<i>Нажми на письмо — скопируется. Поправить — ответь на это сообщение.</i>",
+    "letter.sent": "📨 Отклик отправлен{when}",
+    "letter.btn_apply": "📝 Отклик на hh",
+    "letter.btn_open": "🔗 Вакансия",
+    "letter.btn_redo": "🔄 Переписать",
+    "letter.btn_sent": "📨 Отправил",
+    "letter.btn_unsent": "↩️ Отменить",
+    "letter.revising": "✏️ Переписываю с учётом пожелания…",
+    # Настройки писем резюме
+    "letters.title": "✉️ <b>Письма</b> · {emoji} {title}\n\n"
+    "Подпись: {signature}\nКонтакт: {contact}\nОбразцы писем: {samples}\n"
+    "Пожелания ко всем письмам:\n{notes}\n\n"
+    "Письмо пишется по ✅ на карточке вакансии. Образцы — твои письма, по ним нейросеть берёт тон и подачу.",
+    "letters.btn_signature": "✏️ Подпись",
+    "letters.btn_contact": "✏️ Контакт",
+    "letters.btn_sample": "➕ Образец письма",
+    "letters.btn_note": "➕ Пожелание",
+    "letters.btn_clear_samples": "🗑 Образцы",
+    "letters.btn_clear_notes": "🗑 Пожелания",
+    "letters.ask_signature": "✏️ Как подписывать письма? Например: <code>Никита</code>. /cancel — отмена.",
+    "letters.ask_contact": "✏️ Контакт для связи в конце письма. Например: <code>тг: @username</code>. "
+    "Пришли «-», чтобы не указывать. /cancel — отмена.",
+    "letters.ask_sample": "➕ Пришли текст своего письма-образца (до 2000 знаков). /cancel — отмена.",
+    "letters.ask_note": "➕ Пожелание ко всем письмам этого резюме. Например: «не упоминай фриланс». /cancel — отмена.",
+    "letters.saved": "✅ Сохранено: версия {version}.",
+    "profile.btn_letters": "✉️ Письма",
     # Общее
     "unknown": "Не понял. Резюме — /resumes, часовой пояс — /tz. Резюме можно прислать файлом в любой момент.",
     "not_member": "🔒 Нет доступа. Открой ссылку-приглашение или /start",
