@@ -1,4 +1,4 @@
-// Общий код разбора страницы вакансии hh: W1 «Parse vacancy» и W6 «Archive status».
+// Общий код разбора страницы вакансии hh: W1 «Parse vacancy», W3 «Rescue parse» и W6 «Archive status».
 // В Code-ноду попадает строкой «// @include n8n/shared/hh.js».
 
 // HTML-сущности раскодируем за один проход: иначе &amp;quot; станет кавычкой и сломает JSON
@@ -28,3 +28,22 @@ function parsePage(res) {
     return { error: `страница: ${e.message}` };
   }
 }
+
+// Описание вакансии: HTML → текст с переносами строк
+const htmlToText = (html) =>
+  decodeEntities(
+    String(html ?? '')
+      .replace(/<\s*(br|\/p|\/li|\/h\d|\/div)[^>]*>/gi, '\n')
+      .replace(/<li[^>]*>/gi, '• ')
+      .replace(/<[^>]+>/g, ''),
+  )
+    .replace(/[ \t\u00a0]+/g, ' ')
+    .replace(/\n\s*\n+/g, '\n')
+    .trim();
+
+// Форма оформления: tk,self_employed,individual_entrepreneur,individual_person (колонка contract)
+const contractOf = (v) =>
+  [
+    ...(v.acceptLaborContract ? ['tk'] : []),
+    ...(v.civilLawContracts ?? []).flatMap((c) => c?.civilLawContractsElement ?? (typeof c === 'string' ? [c] : [])).map((c) => String(c).toLowerCase()),
+  ].join(',');

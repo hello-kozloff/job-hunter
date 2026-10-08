@@ -3,7 +3,7 @@
 // Выход: один item или [] (не наше — игнорируем):
 //   { action: 'choice', id, choice, queryId, chatId, messageId, panel } — нажата кнопка решения.
 //      callback_data = v:<id строки>:<apply|maybe|skip|earlier|edit> — на карточке; messageId — id карточки, panel = null;
-//      callback_data = pv:<id>:<choice>:<tab>:<page> — в карточке на панели меню (W7):
+//      callback_data = pv:<id>:<choice>:<tab>:<page> — в карточке на панели меню (W7; score — «🤖 На оценку» у отсеянной):
 //      panel = { messageId, tab, page } — панель перерисуется после решения.
 //   { action: 'letter', id, op, queryId, chatId, messageId } — кнопка под письмом (W5):
 //      callback_data = l:<id строки>:<redo|sent|unsent>; messageId — сообщение с письмом.
@@ -64,7 +64,7 @@ if (cb) {
   if (letter) {
     return [{ json: { action: 'letter', id: Number(letter[1]), op: letter[2], ...pressed } }];
   }
-  const fromPanel = data.match(/^pv:(\d+):(apply|maybe|skip|earlier|ban|edit):([a-z]+):(\d+)$/);
+  const fromPanel = data.match(/^pv:(\d+):(apply|maybe|skip|earlier|ban|edit|score):([a-z]+):(\d+)$/);
   if (fromPanel) {
     const tab = TABS[fromPanel[3]] ? fromPanel[3] : 'all';
     return [

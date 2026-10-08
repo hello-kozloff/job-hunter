@@ -418,6 +418,22 @@ const PANEL_LAYOUTS = [
       [['⬅️ Настройки', 's:root']],
     ],
   ],
+  // Отсеянная фильтром (08.10.2026): решение без карточки в ленте или «🤖 На оценку» — вернуть нейросети
+  [
+    'open rescue',
+    [
+      [
+        ['✅ Откликнусь', panelButton('apply')],
+        ['🤔 Возможно', panelButton('maybe')],
+        ['📨 Уже откликался', panelButton('earlier')],
+      ],
+      [['🤖 На оценку', panelButton('score')]],
+      [
+        ['🔗 На hh', { url: panelButton('url') }],
+        ['⬅️ К списку', panelButton('back')],
+      ],
+    ],
+  ],
 ];
 
 // W3: состояние после нажатия кнопки, которое посчитали ноды «Apply choice» и «Apply sent»
@@ -1094,6 +1110,33 @@ const workflows = {
         returnAll: false,
         limit: 1,
       }),
+      // Отсеянная фильтром без описания (08.10.2026): ✅ / 🤔 / 🤖 с панели — сначала страница с hh (письму и нейросети
+      // нужно описание). Не открылась — решение всё равно принимается
+      node('W3', 'Rescue page?', 'if', 2.3, [770, -300], ifTrue('W3',
+        "={{ $json.status === 'rejected' && !$json.description && ['apply', 'maybe', 'score'].includes($('Route').first().json.choice) }}")),
+      node(
+        'W3',
+        'Rescue page',
+        'httpRequest',
+        4.5,
+        [880, -450],
+        hhRequest({ url: '={{ $json.url }}', headers: [...BROWSER_HEADERS, ['Referer', 'https://hh.ru/search/vacancy']] }),
+      ),
+      code('W3', 'Rescue parse', 'n8n/w3-telegram/rescue-parse.js', [1100, -450]),
+      node('W3', 'Save page', 'dataTable', 1.1, [1320, -450], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        ...byId('={{ $json.id }}'),
+        columns: setColumns({
+          description: '={{ $json.description }}',
+          key_skills: '={{ $json.key_skills }}',
+          has_test: '={{ $json.has_test }}',
+          contract: '={{ $json.contract }}',
+          error: '={{ $json.error }}',
+        }),
+        options: {},
+      }),
       code('W3', 'Apply choice', 'n8n/w3-telegram/apply-choice.js', [880, -100]),
       node('W3', 'Save choice', 'dataTable', 1.1, [1100, -100], {
         resource: 'row',
@@ -1122,7 +1165,24 @@ const workflows = {
         { credentials: TELEGRAM_CREDENTIAL },
       ),
       node('W3', 'Decided?', 'if', 2.3, [1540, -100], ifTrue('W3', `={{ ${CHOICE}.keyboard === 'decided' }}`)),
+      // Отсеянная фильтром: карточки в ленте нет — отправить новую (на неё ответят «Почему?» и письмо)
+      node('W3', 'New card?', 'if', 2.3, [1650, -300], ifTrue('W3', `={{ ${CHOICE}.new_card }}`)),
+      telegram('W3', 'Card: new', [1760, -400], {
+        text: `={{ ${CHOICE}.text }}`,
+        fields: { disable_notification: true },
+        markup: { replyMarkup: 'inlineKeyboard', inlineKeyboard: keyboard([[['↩️ Изменить', `=v:{{ ${CHOICE}.id }}:edit`]]]) },
+      }),
+      node('W3', 'Save card', 'dataTable', 1.1, [1870, -400], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        ...byId(`={{ ${CHOICE}.id }}`),
+        columns: setColumns({ tg_message_id: '={{ $json.result.message_id }}', card_at: '={{ new Date().toISOString() }}' }),
+        options: {},
+      }),
       editCard('Card: decided', [1760, -200], [[['↩️ Изменить', `=v:{{ ${CHOICE}.id }}:edit`]]]),
+      // keyboard = none (🤖 На оценку, закрыта на hh) — перерисовывать нечего
+      node('W3', 'Choose?', 'if', 2.3, [1650, 0], ifTrue('W3', `={{ ${CHOICE}.keyboard === 'choose' }}`)),
       editCard('Card: choose', [1760, 0], [
         [
           ['✅ Откликнусь', `=v:{{ ${CHOICE}.id }}:apply`],
@@ -1137,7 +1197,10 @@ const workflows = {
       node('W3', 'Ask?', 'if', 2.3, [1980, -200], ifTrue('W3', `={{ Boolean(${CHOICE}.ask) }}`)),
       telegram('W3', 'Ask why', [2200, -200], {
         text: `={{ ${CHOICE}.ask }}`,
-        fields: { reply_to_message_id: `={{ ${CHOICE}.messageId }}` },
+        // У отсеянной фильтром карточка только что отправлена («Card: new»)
+        fields: {
+          reply_to_message_id: `={{ ${CHOICE}.messageId || ($('Card: new').isExecuted ? $('Card: new').first().json.result.message_id : '') }}`,
+        },
         markup: { replyMarkup: 'forceReply', forceReply: { force_reply: true } },
       }),
       node('W3', 'Save ask', 'dataTable', 1.1, [2420, -200], {
@@ -1259,6 +1322,10 @@ const workflows = {
         },
         { onError: 'continueRegularOutput' },
       ),
+      // «🤖 На оценку» у отсеянной (08.10.2026): оценить сразу, не дожидаясь сбора. Ниже панели — n8n (execution order v1)
+      // запустит W2 последним
+      node('W3', 'Score?', 'if', 2.3, [1540, 950], ifTrue('W3', `={{ ${CHOICE}.score }}`)),
+      runWorkflow('W3', 'Score now', [1760, 950], IDS.score),
       code('W3', 'Panel job', 'n8n/w3-telegram/panel-job.js', [1760, 150]),
       runWorkflow('W3', 'Panel refresh', [1980, 150], IDS.menu),
       // Письмо: одна нода на три ветки (✅, «🔄 Переписать», ответ на письмо) → W5 Letter
@@ -1314,18 +1381,31 @@ const workflows = {
       ['Panel?', 'Menu', 0],
       ['Panel?', 'Button?', 1],
       ['Button?', 'Vacancy', 0],
-      ['Vacancy', 'Apply choice'],
+      ['Vacancy', 'Rescue page?'],
+      ['Rescue page?', 'Rescue page', 0],
+      ['Rescue page', 'Rescue parse'],
+      ['Rescue parse', 'Save page'],
+      ['Save page', 'Apply choice'],
+      ['Rescue page?', 'Apply choice', 1],
       ['Apply choice', 'Save choice'],
       ['Save choice', 'Answer'],
       ['Answer', 'Decided?'],
       ['Answer', 'From panel?'],
       ['Answer', 'Ban?'],
+      ['Answer', 'Score?'],
+      ['Score?', 'Score now', 0],
       ['Ban?', 'Ban company', 0],
       ['From panel?', 'Panel job', 0],
       ['From panel?', 'Sync job', 1],
       ['Panel job', 'Panel refresh'],
-      ['Decided?', 'Card: decided', 0],
-      ['Decided?', 'Card: choose', 1],
+      ['Decided?', 'New card?', 0],
+      ['New card?', 'Card: new', 0],
+      ['Card: new', 'Save card'],
+      ['Save card', 'Ask?'],
+      ['Save card', 'Letter?'],
+      ['New card?', 'Card: decided', 1],
+      ['Decided?', 'Choose?', 1],
+      ['Choose?', 'Card: choose', 0],
       ['Card: decided', 'Ask?'],
       ['Ask?', 'Ask why', 0],
       ['Ask why', 'Save ask'],

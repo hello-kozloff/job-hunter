@@ -63,7 +63,11 @@ function cardText(r) {
   ]
     .filter(Boolean)
     .join(' · ');
-  const verdict = `🤖 ${VERDICT[r.decision] ?? esc(r.decision)}${r.llm_reason ? ` — ${esc(r.llm_reason)}` : ''}`;
+  // Нейросеть не оценивала, а фильтр отсеял (в том числе вакансия, возвращённая с панели меню, 08.10.2026) — причины фильтра
+  const verdict =
+    !r.decision && r.reasons
+      ? `🧹 Отсеяна фильтром: ${esc(r.reasons)}`
+      : `🤖 ${VERDICT[r.decision] ?? esc(r.decision)}${r.llm_reason ? ` — ${esc(r.llm_reason)}` : ''}`;
   const mine = CHOICE[r.my_decision]
     ? `👤 ${CHOICE[r.my_decision]}${r.my_reason === BAN_REASON ? ' · 🚫 компания в чёрном списке' : ''}`
     : '';
