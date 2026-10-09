@@ -536,9 +536,14 @@ const editMessage = (name, position, { chatId, messageId, text, rows }, wf = 'W3
     { credentials: TELEGRAM_CREDENTIAL, ...extra },
   );
 
+// W3: правка карточки или письма после нажатия. Двойное нажатие (тот же вид) → Telegram «message is not
+// modified» — не ошибка (как правка панели в W7); ноды ниже читают Apply choice / Apply sent, не $json
+const editW3 = (name, position, params) =>
+  editMessage(name, position, params, 'W3', { onError: 'continueRegularOutput' });
+
 // W3: перерисовать карточку после нажатия. src — нода с chatId / messageId / text
 const editCard = (name, position, rows, src = CHOICE, messageId = 'messageId') =>
-  editMessage(name, position, {
+  editW3(name, position, {
     chatId: `={{ ${src}.chatId }}`,
     messageId: `={{ ${src}.${messageId} }}`,
     text: `={{ ${src}.text }}`,
@@ -1237,27 +1242,27 @@ const workflows = {
       answerQuery('W3', 'Answer sent', [1760, 300], `={{ ${SENT}.queryId }}`, `={{ ${SENT}.toast }}`),
       node('W3', 'Sent?', 'if', 2.3, [1980, 300], ifTrue('W3', `={{ ${SENT}.sent }}`)),
       // «📨 Отправил»: у письма — только «↩️ Отменить», у карточки кнопок нет
-      editMessage('Letter: sent', [2200, 250], {
+      editW3('Letter: sent', [2200, 250], {
         chatId: `={{ ${SENT}.chatId }}`,
         messageId: `={{ ${SENT}.letterMessageId }}`,
         text: `={{ ${SENT}.letterText }}`,
         // «📋 К вакансиям» — новая панель со списком там, где был (p:n → W7)
         rows: [[['↩️ Отменить', `=l:{{ ${SENT}.id }}:unsent`]], [['📋 К вакансиям', 'p:n']]],
       }),
-      editMessage('Card: sent', [2420, 250], {
+      editW3('Card: sent', [2420, 250], {
         chatId: `={{ ${SENT}.chatId }}`,
         messageId: `={{ ${SENT}.cardId }}`,
         text: `={{ ${SENT}.cardText }}`,
         rows: null,
       }),
       // «↩️ Отменить»: письму возвращаются все кнопки, карточке — «↩️ Изменить»
-      editMessage('Letter: restore', [2200, 400], {
+      editW3('Letter: restore', [2200, 400], {
         chatId: `={{ ${SENT}.chatId }}`,
         messageId: `={{ ${SENT}.letterMessageId }}`,
         text: `={{ ${SENT}.letterText }}`,
         rows: letterButtons(SENT),
       }),
-      editMessage('Card: restore', [2420, 400], {
+      editW3('Card: restore', [2420, 400], {
         chatId: `={{ ${SENT}.chatId }}`,
         messageId: `={{ ${SENT}.cardId }}`,
         text: `={{ ${SENT}.cardText }}`,

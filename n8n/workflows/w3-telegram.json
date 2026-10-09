@@ -691,7 +691,8 @@
           "id": "jobHunterTgBot01",
           "name": "Telegram bot"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "id": "1bfd95c6-14b5-dcd0-79cc-8bcc1a45f2ef",
@@ -801,7 +802,8 @@
           "id": "jobHunterTgBot01",
           "name": "Telegram bot"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "id": "623faad5-7476-e070-57a1-a5feb6bf1735",
@@ -1269,7 +1271,8 @@
           "id": "jobHunterTgBot01",
           "name": "Telegram bot"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "id": "1cf50071-ca41-5190-64aa-fb57f09eec98",
@@ -1298,7 +1301,8 @@
           "id": "jobHunterTgBot01",
           "name": "Telegram bot"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "id": "02259af1-b9ea-862d-05d0-0cf4c8ef4403",
@@ -1367,7 +1371,8 @@
           "id": "jobHunterTgBot01",
           "name": "Telegram bot"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "id": "47a978e8-61f1-bf99-9cbd-2e823e92c908",
@@ -1412,7 +1417,8 @@
           "id": "jobHunterTgBot01",
           "name": "Telegram bot"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "id": "9045b6c2-9072-4bc8-843e-efb5696356ef",
