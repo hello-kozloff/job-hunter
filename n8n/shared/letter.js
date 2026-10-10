@@ -21,7 +21,9 @@ function letterText(r) {
     head,
     r.mode === 'revise' && r.instruction ? `<i>Пожелание: «${esc(r.instruction)}»</i>` : '',
     `<pre>${esc(r.letter)}</pre>`,
-    !sent && !closed && r.has_test && r.apply_result !== 'test' ? '📝 У вакансии тест — ответы в форме отклика на hh.' : '',
+    // Робот включён, но вакансия ему не подходит (W5 «Format letter») — почему нет 🚀
+    !sent && !closed && r.robot_hint ? `🤖 Робот не откликается: ${esc(r.robot_hint)}` : '',
+    !sent && !closed && r.has_test && r.apply_result !== 'test' && !r.robot_hint ? '📝 У вакансии тест — ответы в форме отклика на hh.' : '',
     sent
       ? robot || `📨 Отклик отправлен${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}`
       : closed
