@@ -98,7 +98,8 @@
         "numberOutputs": 5,
         "output": "={{ ({ enqueue: 0, stop: 0, tick: 1, resume: 2, captcha: 3, dequeue: 4 })[$('Job').first().json.op] ?? 1 }}",
         "options": {}
-      }
+      },
+      "executeOnce": true
     },
     {
       "id": "2c94c696-113e-79f0-f568-3195288151d5",
