@@ -9,7 +9,7 @@
 //          сменили (не ✅) → снять. Повтор безопасен: робот перед кликом проверяет «уже откликались» на hh;
 //   next — кого отправлять (старейшая queued); null — нельзя: wait = disabled | paused | down | blocked | busy | limit;
 //   notice — сообщение: { kind: captcha | alert | info, text, shot, silent, button };
-//   resolved — блок снят: { messageId, text } — поправить прошлую тревогу;
+//   resolved — блок снят: { messageId, text, promptId } — поправить прошлую тревогу и удалить фото капчи;
 //   views — письма, которые перерисовать (нажали 🚀, а робот ждёт: «⏸ Робот ждёт: …»).
 
 // @include n8n/shared/card.js
@@ -80,7 +80,9 @@ if (out.wait === 'blocked') {
         ? {
             kind: 'captcha',
             shot: b.shot,
-            text: `${ROBOT_PROMPTS.captcha} — ответьте на это фото текстом с картинки.\nНе читается — решите в окне робота (${VNC_URL}) и пришлите /go`,
+            text: `${ROBOT_PROMPTS.captcha} — ответьте на это фото текстом с картинки.\nНе читается — решите в окне робота (${VNC_URL}) и пришлите /go${
+              health.fake ? '\n🧪 Фейковый робот: ответьте «ok»' : ''
+            }`,
             silent: !loud,
           }
         : {
@@ -93,11 +95,15 @@ if (out.wait === 'blocked') {
   }
 } else if (state.alertedSince && health) {
   // Блок сняли (▶️, /go, истёк сам) — прошлую тревогу поправить
-  out.resolved = state.alertMessageId
-    ? { messageId: state.alertMessageId, text: `✅ Робот снова в работе · ${thaiTime(new Date(now).toISOString())}` }
-    : null;
+  out.resolved = {
+    messageId: state.alertMessageId ?? 0,
+    text: `✅ Робот снова в работе · ${thaiTime(new Date(now).toISOString())}`,
+    // Фото капчи больше не нужно (решили через /go или «Общий экран») — удалить, чтобы на него не отвечали
+    promptId: state.captchaPromptId ?? 0,
+  };
   state.alertedSince = null;
   state.alertMessageId = null;
+  state.captchaPromptId = null;
 }
 if (!out.notice && out.wait === 'down' && queued.length && state.downDay !== dayKey) {
   state.downDay = dayKey;
