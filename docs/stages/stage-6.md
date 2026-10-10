@@ -148,13 +148,42 @@ node scripts/applier.mjs apply <id> --letter-file <файл>
 Если робот упёрся в капчу или вышел из hh — блок (`status` покажет); после «Общего экрана» —
 `node scripts/applier.mjs resume`.
 
-### Разведка: что выяснили
+### Разведка: что выяснили (10.10.2026)
 
-- 10.10.2026, без входа: страница вакансии отдаёт InitialState как и прежде; `GET /applicant/vacancy_response/popup`
-  отвечает JSON с полем `type` — без входа `need-login` (ключи: `type`, `redirect_uri`, …). После входа там будет тип
-  отклика — по нему сухой прогон предсказывает окно / один клик / вопросы.
-- `navigator.webdriver = true` (Playwright без маскировки) — смотрим, покажет ли hh капчи.
-- У нового профиля на странице всплывают «Ваш регион — Москва?» и баннер cookie — закрыть при входе.
+**Вход.** Вошли через «Общий экран»; `hhtoken` живёт ~13 месяцев (до 11.2027), `hhrole`, `crypted_id`, `_xsrf` —
+сессионные: робот восстанавливает их из бэкапа `storageState`, вход пережил `docker compose restart`.
+
+**Прогноз без клика — `GET /applicant/vacancy_response/popup?vacancyId=N`** (его зовёт сам интерфейс hh):
+
+| `type` | Что сделает hh по «Откликнуться» | Что в ответе |
+|---|---|---|
+| `modal` | окно с полем письма, отправка — кнопкой в окне | `responsePopup {type: normal}`, `responseStatus`, `relocationWarning`, `lastResponseLetter`, `lastResponseResumeHash` |
+| `quickResponse` | отклик уходит сразу, письмо — «Приложить сопроводительное» после | `body {resume_hash, vacancy_id, letterRequired, letterMaxLength, responseStatus}` |
+| `test-required` | переход на страницу вопросов работодателя | `redirect_uri`, `relocationWarning` |
+| `alreadyApplied` | отклик уже есть | — |
+| `need-login` | не вошли | `redirect_uri` на вход |
+
+`relocationWarning.show` — покажет ли hh «Вы откликаетесь на вакансию в другой стране» (на Израиле и Москве — нет).
+Без входа `popup` звать нельзя: hh, похоже, запоминает «откликнуться после входа» — у вакансии с тестом, которую
+открывали до входа, после входа страница сама перешла на `/applicant/vacancy_response` (GET, ничего не отправляет;
+предохранитель теперь такие переходы только пишет в журнал, рвёт лишь не-GET).
+
+**Страница вакансии вошедшему:** `applicantVacancyResponseStatuses[id]` — `alreadyApplied`, `responseImpossible`,
+`usedResumeIds` / `unusedResumeIds` (одно резюме), `test {hasTests, testId, required}`, `resumes`.
+Из 5 вакансий в ✅ три оказались уже отправленными вручную без «📨 Отправил» — тот самый случай автоотметки 6.2.
+
+**«Отклики»** (`/applicant/negotiations`, InitialState `applicantNegotiations`): по 20 на странице (136 всего, 7 страниц),
+`applicantNegotiationsCounters` (всего: ждут ответа 77, отказ 49, собеседование 10). У отклика: `vacancyId`, `chatId`,
+`lastState` (RESPONSE / DISCARD / INTERVIEW …), `viewedByOpponent`, `hasResponseLetter`, `hasNewMessages`, `lastModified`.
+У 3 из 20 последних откликов `hasResponseLetter=false` — письмо до hh не дошло.
+
+**Чаты** — `GET chatik.hh.ru/chatik/api/chats` с cookie браузера (HTTP 200): `chats.items[]` — `id`, `unreadCount`,
+`resources {NEGOTIATION_TOPIC, VACANCY, RESUME}`, `currentParticipantId`, `lastMessage {id, text (полный), creationTime,
+participantId, participantDisplay {name, isBot}}`; `chatsDisplayInfo[chatId] = {title (вакансия), subtitle (компания)}`;
+курсор `nextFrom`. Автоответ работодателя отличим по `isBot`. Счётчик непрочитанных до и после чтения не изменился.
+
+**Прочее.** `navigator.webdriver = true`; за 10 вакансий и «Отклики» капчи не было. У нового профиля всплывали
+«Ваш регион — Москва?» и баннер cookie — закрыты при входе.
 
 ## Риски
 

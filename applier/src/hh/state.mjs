@@ -58,7 +58,9 @@ export function vacancyFacts(state, id) {
     archived: Boolean(v.status?.archived || v.status?.disabled),
     closed: Boolean(v.closedForApplicants ?? short.closedForApplicants),
     canApply: (full.features?.features ?? []).includes('canApply'),
-    applied: ids('usedResumeIds').length > 0,
+    // Вошедшему hh отдаёт и прямой признак alreadyApplied; responseImpossible — откликнуться нельзя (уже, закрыта)
+    applied: ids('usedResumeIds').length > 0 || resp.alreadyApplied === true,
+    responseImpossible: resp.responseImpossible === true,
     resumes: {
       used: ids('usedResumeIds'),
       unused: ids('unusedResumeIds'),
@@ -75,17 +77,24 @@ export function vacancyFacts(state, id) {
   };
 }
 
-// Ответ GET /applicant/vacancy_response/popup?vacancyId=N — его зовёт сам интерфейс hh при нажатии «Откликнуться».
-// Формат точно узнаём на разведке, поэтому разбор терпимый: что нашлось — то и в прогноз
+// Ответ GET /applicant/vacancy_response/popup — его зовёт сам интерфейс hh при нажатии «Откликнуться» и по type решает,
+// что показать (разведка 10.10.2026):
+//   modal          — окно с письмом до отправки (responsePopup, responseStatus, relocationWarning, lastResponseLetter);
+//   quickResponse  — отклик уходит сразу, письмо — после (body: resume_hash, vacancy_id, letterRequired, responseStatus);
+//   test-required  — страница вопросов работодателя (redirect_uri);
+//   alreadyApplied — отклик уже есть;   need-login — не вошли.
+// relocationWarning.show — покажет ли hh «Вы откликаетесь на вакансию в другой стране»
 export function popupPrediction(body) {
   if (!body || typeof body !== 'object') return null;
-  const inc = body.resumeInconsistencies;
+  const status = body.responseStatus ?? body.body?.responseStatus ?? {};
+  const inc = status.resumeInconsistencies;
   return {
-    type: body.type ?? body.responseType ?? null,
-    hasTests: Boolean(body.test?.hasTests),
-    letterRequired: Boolean(body.letterRequired ?? body.responseLetterRequired),
+    type: body.type ?? null,
+    relocation: Boolean(body.relocationWarning?.show),
+    letterRequired: Boolean(body.body?.letterRequired ?? status.shortVacancy?.['@responseLetterRequired']),
+    hasTests: body.type === 'test-required' || Boolean(status.test?.hasTests),
     inconsistencies: Array.isArray(inc) ? inc.length : inc && typeof inc === 'object' ? Object.keys(inc).length : 0,
-    keys: Object.keys(body).slice(0, 40),
+    responseAllowed: status.by_country_applicant_visibility?.responseAllowed ?? null,
   };
 }
 

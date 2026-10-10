@@ -113,13 +113,33 @@ test('isLoginUrl и roleFromCookies', () => {
   assert.equal(roleFromCookies([]), '');
 });
 
-test('popupPrediction: терпимый разбор, неизвестное → null', () => {
+test('popupPrediction: типы hh из разведки и предупреждение «другая страна»', () => {
   assert.equal(popupPrediction(null), null);
-  const p = popupPrediction({ type: 'quick', test: { hasTests: true }, letterRequired: true, resumeInconsistencies: { a: 1 } });
-  assert.equal(p.type, 'quick');
-  assert.equal(p.hasTests, true);
-  assert.equal(p.letterRequired, true);
-  assert.equal(p.inconsistencies, 1);
+  const modal = popupPrediction({
+    type: 'modal',
+    relocationWarning: { show: true },
+    responseStatus: { test: { hasTests: false }, resumeInconsistencies: { a: 1 }, shortVacancy: { '@responseLetterRequired': true } },
+  });
+  assert.equal(modal.type, 'modal');
+  assert.equal(modal.relocation, true);
+  assert.equal(modal.letterRequired, true);
+  assert.equal(modal.inconsistencies, 1);
+  const quick = popupPrediction({ type: 'quickResponse', body: { resume_hash: 'h', letterRequired: false, responseStatus: {} } });
+  assert.equal(quick.type, 'quickResponse');
+  assert.equal(quick.letterRequired, false);
+  assert.equal(quick.relocation, false);
+  assert.equal(popupPrediction({ type: 'test-required', redirect_uri: '/x' }).hasTests, true);
+});
+
+test('vacancyFacts: alreadyApplied и responseImpossible от hh вошедшему', () => {
+  const state = {
+    userType: 'applicant',
+    vacancyView: { vacancyFull: { vacancy: { vacancyId: 9, name: 'X' } } },
+    applicantVacancyResponseStatuses: { 9: { alreadyApplied: true, responseImpossible: true, usedResumeIds: [] } },
+  };
+  const f = vacancyFacts(state, 9);
+  assert.equal(f.applied, true);
+  assert.equal(f.responseImpossible, true);
 });
 
 test('redactState убирает токены и данные аккаунта, shape — только форма', () => {

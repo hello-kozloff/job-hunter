@@ -70,6 +70,10 @@ export async function applyFlow({ vacancyId, letter = '' }) {
   // hh — истина: отклик уже есть (вручную, через бота или повтор после обрыва связи)
   if (facts.applied) return done('already', { confirmed: true, facts: brief(facts) });
   if (facts.hasTests) return done('test', { note: 'у вакансии вопросы работодателя', facts: brief(facts) });
+  // Не закрыта и отклика нет, а hh всё равно не даёт откликнуться (видимость резюме и т. п.) — человеку
+  if (facts.responseImpossible) {
+    return done('error', { note: 'hh не даёт откликнуться на эту вакансию', facts: brief(facts), shot: await shot(`impossible-${id}`) });
+  }
   if (letter.length > facts.letterMax) {
     return done('error', { note: `письмо длиннее ${facts.letterMax} знаков`, facts: brief(facts) });
   }

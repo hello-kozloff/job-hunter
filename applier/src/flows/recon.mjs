@@ -40,7 +40,9 @@ async function reconOne(page, id, dir) {
   await pause(1500, 3000);
   item.dom = await watchSelectors(page, WATCH);
   writeJsonAtomic(join(dir, 'dom.json'), item.dom);
-  if (!item.captcha && facts.found) {
+  item.finalUrl = page.url();
+  // Прогноз — только вошедшему: без входа hh отвечает need-login и, похоже, запоминает «откликнуться после входа»
+  if (!item.captcha && facts.found && facts.loggedIn) {
     const predicted = await predictResponse(page, id);
     writeJsonAtomic(join(dir, 'popup.json'), predicted);
     item.popup = { status: predicted.status, prediction: predicted.prediction };
@@ -54,6 +56,7 @@ async function reconOne(page, id, dir) {
     archived: facts.archived,
     closed: facts.closed,
     applied: facts.applied,
+    responseImpossible: facts.responseImpossible,
     hasTests: facts.hasTests,
     letterRequired: facts.letterRequired,
     country: facts.country,
