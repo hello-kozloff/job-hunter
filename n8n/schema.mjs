@@ -52,6 +52,17 @@ export const TABLES = {
     // 07.10.2026: защита от двойного ✅ (W3 ставит перед вызовом W5) и версия промпта оценки (W2)
     ['letter_lock', 'string'],
     ['prompt_v', 'string'],
+    // этап 6 (робот-отклик, docs/stages/stage-6.md): очередь W9 и исход отклика — статус вакансии они не меняют
+    ['apply_state', 'string'], // '' | queued (в очереди, можно ⛔) | applying (робот отправляет)
+    ['apply_queued_at', 'string'], // когда нажали 🚀 — порядок очереди
+    ['apply_tries', 'number'], // неудачные попытки робота подряд; с 3-й — только вручную
+    ['apply_result', 'string'], // исход робота: applied | already | test | external | hidden | archived | error | dry_run
+    ['apply_letter', 'string'], // как ушло письмо: attached | chat | none
+    ['apply_note', 'string'], // пометка: предупреждения hh, причина сбоя
+    ['apply_by', 'string'], // кто отправил отклик: robot | me («📨 Отправил») | hh (нашёлся на hh, 6.2)
+    ['hh_state', 'string'], // 6.2, W10: sent | viewed | invited | rejected
+    ['hh_state_at', 'string'],
+    ['hh_chat_id', 'string'],
   ],
   // Чёрный список компаний — заполняет пользователь в UI n8n.
   // company: кусок названия компании или её id на hh (только цифры)
