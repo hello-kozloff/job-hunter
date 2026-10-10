@@ -11,6 +11,7 @@
 //   POST /apply {vacancyId, letter, requestId}   отклик (6.0 — только сухой прогон до кнопки)
 //   POST /recon {vacancyIds?, inbox?}            разведка без кликов — фоновое задание, 202
 //   POST /record {on}              запись: пользователь откликается сам в окне робота
+//   POST /record/paste {text}      во время записи: вставить текст (письмо с Mac) туда, где курсор
 //   POST /shot                     скриншот окна сейчас
 // Все адреса, кроме /ping, — с заголовком X-Applier-Token.
 import { createReadStream, existsSync } from 'node:fs';
@@ -214,6 +215,18 @@ const routes = {
       }
     }
     return { ok: true, stopped: await recordStop() };
+  },
+
+  // Мост буфера обмена на время записи: VNC передаёт только латиницу, а письмо русское. Текст с Mac (pbpaste) робот
+  // вставляет в поле, где сейчас курсор, — отправляет по-прежнему человек. Без записи — 409
+  'POST /record/paste': async (body) => {
+    if (!recording()) throw new HttpError(409, { error: 'вставка — только во время записи (record start)' });
+    const text = String(body.text ?? '');
+    if (!text.trim()) throw new HttpError(400, { error: 'пустой текст' });
+    const page = await ensure();
+    await page.keyboard.insertText(text);
+    log('record.paste', { length: text.length });
+    return { ok: true, length: text.length };
   },
 
   'POST /shot': () => lock.run('shot', async () => ({ shot: await shot('manual') }), { wait: 5000 }),

@@ -7,6 +7,8 @@
 //   node scripts/applier.mjs recon <id> [<id>…]      разведка вакансий без кликов → fixtures/applier/recon-…
 //   node scripts/applier.mjs recon --inbox           разведка «Откликов» и чатов (чаты не открываются)
 //   node scripts/applier.mjs record start|stop       запись: вы откликаетесь сами в окне робота, он смотрит
+//   node scripts/applier.mjs paste                   во время записи: буфер обмена Mac (pbpaste) → туда, где курсор
+//                                                    в окне робота (VNC передаёт только латиницу, письмо — русское)
 //   node scripts/applier.mjs apply <id> --letter-file <файл>   сухой прогон отклика: до кнопки, без клика
 //   node scripts/applier.mjs resume                  перепроверить вход и капчу, снять блок
 //   node scripts/applier.mjs shot                    скриншот окна робота → fixtures/applier/
@@ -173,6 +175,16 @@ const commands = {
     const r = await api('POST', '/apply', { vacancyId: id, letter: readFileSync(args[i + 1], 'utf8').trim(), requestId: `cli-${Date.now()}` });
     console.log(`${r.outcome} (${r.group}) за ${Math.round(r.ms / 1000)} с${r.note ? ` — ${r.note}` : ''}${r.shot ? ` · скриншот ${r.shot}` : ''}`);
     for (const t of r.trace ?? []) console.log(`  ${t.ms} мс  ${t.s} ${JSON.stringify({ ...t, s: undefined, ms: undefined })}`);
+  },
+
+  async paste() {
+    // Текст — из pipe или из буфера обмена Mac: скопировали письмо в Telegram → кликнули в поле в окне робота → paste
+    let text = '';
+    if (!process.stdin.isTTY) text = readFileSync(0, 'utf8');
+    if (!text.trim()) text = execFileSync('pbpaste', { encoding: 'utf8' });
+    if (!text.trim()) throw new Error('буфер обмена пуст — скопируйте письмо в Telegram');
+    const r = await api('POST', '/record/paste', { text: text.trim() });
+    console.log(`Вставлено ${r.length} знаков туда, где курсор в окне робота`);
   },
 
   async resume() {
