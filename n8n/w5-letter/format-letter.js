@@ -18,6 +18,16 @@ return $input.all().map((item) => {
   const r = item.json;
   const job = jobs.get(r.id) ?? {};
   const row = rows.get(r.id) ?? {};
+  const robot = Boolean(r.ok) && robotEligible({ ...row, letter: r.letter }, robotOn);
+  // Робот включён, а 🚀 нет — письмо объясняет почему (иначе непонятно, куда делась кнопка)
+  const robotHint =
+    robotOn && r.ok && !robot
+      ? row.has_test
+        ? 'у вакансии тест работодателя — ответы на вопросы и отклик вручную (📝)'
+        : row.apply_type === 'external'
+          ? 'отклик на сайте работодателя — вручную'
+          : ''
+      : '';
   return {
     json: {
       id: r.id,
@@ -26,12 +36,12 @@ return $input.all().map((item) => {
       letter: r.letter ?? '',
       instruction: job.instruction ?? '',
       // Новое письмо — новая отметка об отклике не нужна: строка остаётся approved
-      text: letterText({ ...row, ...r, status: 'approved', instruction: job.instruction }),
+      text: letterText({ ...row, ...r, status: 'approved', instruction: job.instruction, robot_hint: robotHint }),
       replyTo: row.tg_message_id,
       apply_url: row.apply_url,
       url: row.url,
       letter_notes: row.letter_notes ?? '',
-      robot: Boolean(r.ok) && robotEligible({ ...row, letter: r.letter }, robotOn),
+      robot,
     },
   };
 });
