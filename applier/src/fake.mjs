@@ -159,10 +159,11 @@ export async function fakeApply({ vacancyId }) {
   }
 }
 
-// POST /captcha: «ok» — решено, иначе новая «капча»
+// POST /captcha: «ok» / «ок» — решено, иначе новая «капча»
 export function fakeCaptcha(text) {
   if (store.blocked?.kind !== 'captcha') return { status: 409, body: { ok: false, error: 'капчи нет' } };
-  if (String(text).trim().toLowerCase() === 'ok') {
+  // «ok» латиницей или «ок» кириллицей — решено
+  if (/^(ok|ок)$/i.test(String(text).trim())) {
     store.unblock('фейк: капча «ok»');
     return { status: 200, body: { ok: true } };
   }
