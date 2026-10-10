@@ -27,6 +27,7 @@ if (accepted) {
 } else if (body.shot) {
   out.notice = {
     kind: 'captcha',
+    key: `captcha:${body.shot}`,
     shot: body.shot,
     text: `${ROBOT_PROMPTS.captcha} — не подошло, вот новая. Ответьте на это фото текстом с картинки.\nНе читается — решите в окне робота (${VNC_URL}) и пришлите /go`,
     silent: false,

@@ -7,7 +7,7 @@ import { log } from './log.mjs';
 import { robotDayStart, writeJsonAtomic } from './util.mjs';
 
 const PATH = join(config.dataDir, 'state.json');
-const EMPTY = { blocked: null, day: null, lastApplyAt: null, lastInboxAt: null };
+const EMPTY = { blocked: null, day: null, lastApplyAt: null, lastInboxAt: null, notices: {} };
 let state = null;
 
 function load() {
@@ -87,6 +87,19 @@ export const store = {
       d.streak = 0;
       save();
     }
+  },
+  // Сообщение с ключом key уже отправляли? Первый спросивший получает true, остальные — false. n8n запускает W9
+  // параллельно (расписание раз в минуту + вызов себя), static data n8n не атомарна — одна тревога на блок решается
+  // здесь: сервис один и однопоточный. Ключи старше 3 суток забываются
+  ackNotice(key) {
+    const s = load();
+    s.notices ??= {};
+    if (s.notices[key]) return false;
+    const old = Date.now() - 3 * 24 * 3600 * 1000;
+    for (const [k, at] of Object.entries(s.notices)) if (Date.parse(at) < old) delete s.notices[k];
+    s.notices[key] = new Date().toISOString();
+    save();
+    return true;
   },
   markInbox() {
     load().lastInboxAt = new Date().toISOString();
