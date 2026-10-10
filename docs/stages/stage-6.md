@@ -116,8 +116,8 @@ cookie и токена; разведка вырезает токены и дан
 
 | | Что | Готово, когда |
 |---|---|---|
-| **6.0** ← сейчас | robot: сервис, вход, разведка, запись, сухой прогон (`feature/applier-recon`) | вошли через «Общий экран», сессия переживает перезапуск и сутки; разведка ~10 вакансий разных типов совпала с реальностью; запись 2–3 откликов пользователя; сухой прогон без новых откликов на hh |
-| 6.1a | 🚀 и очередь W9 на фейковом роботе (`feature/robot-queue`) | все исходы и блоки проходят W3 → W9 → Telegram на `APPLIER_FAKE=1` |
+| 6.0 ✅ | robot: сервис, вход, разведка, запись, сухой прогон (`feature/applier-recon`) | вошли через «Общий экран», сессия переживает перезапуск и сутки; разведка ~10 вакансий разных типов совпала с реальностью; запись 2–3 откликов пользователя; сухой прогон без новых откликов на hh |
+| **6.1a** ← сейчас | 🚀 и очередь W9 на фейковом роботе (`feature/robot-queue`) | все исходы и блоки проходят W3 → W9 → Telegram на `APPLIER_FAKE=1` |
 | 6.1b | боевой сценарий: сухой → 3–5 живых под присмотром (`feature/robot-apply`) | на hh в «Откликах» — то резюме и письмо; строка робота в сводке |
 | 6.2 | статусы откликов и чаты HR, 🎉, воронка (`feature/robot-inbox`) | непрочитанные на hh не меняются; 🎉 и воронка сходятся |
 
@@ -181,6 +181,27 @@ node scripts/applier.mjs apply <id> --letter-file <файл>
 `resources {NEGOTIATION_TOPIC, VACANCY, RESUME}`, `currentParticipantId`, `lastMessage {id, text (полный), creationTime,
 participantId, participantDisplay {name, isBot}}`; `chatsDisplayInfo[chatId] = {title (вакансия), subtitle (компания)}`;
 курсор `nextFrom`. Автоответ работодателя отличим по `isBot`. Счётчик непрочитанных до и после чтения не изменился.
+
+### Запись: как hh отправляет отклик (10.10.2026, 2 отклика пользователя в окне робота)
+
+**Окно с письмом** (`modal`, вакансия с обязательным письмом): «Откликнуться» → `GET popup?vacancyId=N&isTest=…` →
+окно (`vacancy-response-popup-form-letter-input`, `vacancy-response-submit-popup`) → письмо → «Откликнуться» в окне →
+`POST /applicant/vacancy_response/popup` (multipart: `_xsrf`, `vacancy_id`, `resume_hash`, `ignore_postponed=true`,
+`incomplete=false`, `mark_applicant_visible_in_vacancy_country=false`, `country_ids=[]`, `letter`, `lux=true`,
+`withoutTest=no`) → ответ `{success: "true", topic_id, chat_id, responseStatus, …}` → вместо кнопки — «Чат»
+(`vacancy-response-link-view-topic`). **Подтверждение отклика для робота — `success: "true"` в этом ответе.**
+
+**В один клик** (`quickResponse`): клик по «Откликнуться» — это GET `/applicant/vacancy_response?vacancyId=…` →
+**302 на `/vacancy/N?forceQuickResponse=true`** → страница сама шлёт `POST …/popup` (тот же ответ, письма нет, в форме
+есть пустое `captchaText`) → «Резюме доставлено», «Приложить сопроводительное письмо», «Чат». Дальше «Приложить…» →
+окно «Сопроводительное письмо» (`…letter-input`, «Отправить» `vacancy-response-letter-submit`) →
+`POST /applicant/vacancy_response/edit_ajax` (`_xsrf`, `text`) — **у Nitka вернул 403**, письмо не прицепилось.
+Письмо дошло через чат: «Чат» → iframe chatik → `POST chatik.hh.ru/chatik/api/save {text}` → `{text, messageId}`.
+Значит, запасной путь «письмо в чат» нужен на практике. Открытие чата шлёт `POST chatik/api/notify_chat_opened` —
+поэтому входящие (6.2) читаем без открытия чатов.
+
+**Предохранитель:** в сухом прогоне и разведке рвём не-GET к `/applicant/…`, `/shards/applicant/…`, chatik и переход
+на `?forceQuickResponse=true` (страница сама отправила бы отклик).
 
 **Прочее.** `navigator.webdriver = true`; за 10 вакансий и «Отклики» капчи не было. У нового профиля всплывали
 «Ваш регион — Москва?» и баннер cookie — закрыты при входе.

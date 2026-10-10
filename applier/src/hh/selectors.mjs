@@ -95,3 +95,8 @@ export const WATCH = {
 // «прочитано»). Переход документом на /applicant/vacancy_response (адрес кнопки «Откликнуться») — только в журнал
 export const GUARD_URL = /^https:\/\/(?:[a-z0-9-]+\.)*hh\.ru\/(?:applicant|shards\/applicant)\/|^https:\/\/chatik\.hh\.ru\//;
 export const RESPONSE_PAGE = /\/applicant\/vacancy_response(?!\/popup)/;
+// Клик по «Откликнуться» у вакансии «в один клик» — это GET /applicant/vacancy_response → 302 на
+// /vacancy/<id>?forceQuickResponse=true, и страница сама шлёт POST отклика (запись 10.10.2026).
+// В сухом прогоне и разведке такой переход рвём ещё до POST
+export const FORCE_QUICK = /[?&]forceQuickResponse=true/;
+export const FORCE_QUICK_URL = /^https:\/\/(?:[a-z0-9-]+\.)*hh\.ru\/vacancy\/\d+\?/;

@@ -17,6 +17,7 @@ import {
   GROUP,
 } from '../src/hh/state.mjs';
 import { robotDayStart, stamp } from '../src/util.mjs';
+import { FORCE_QUICK, FORCE_QUICK_URL, GUARD_URL } from '../src/hh/selectors.mjs';
 
 const fixture = (name) => new URL(`../../fixtures/${name}`, import.meta.url);
 const page = (state) =>
@@ -166,4 +167,14 @@ test('robotDayStart: «день» робота начинается в 09:00 п�
   assert.equal(robotDayStart(new Date('2026-10-11T01:59:00Z')).toISOString(), '2026-10-10T02:00:00.000Z');
   assert.equal(robotDayStart(new Date('2026-10-11T02:00:00Z')).toISOString(), '2026-10-11T02:00:00.000Z');
   assert.equal(stamp(new Date('2026-10-11T07:05:09.123Z')), '20261011-070509');
+});
+
+test('предохранитель: адреса отклика, чатов и forceQuickResponse', () => {
+  assert.ok(GUARD_URL.test('https://hh.ru/applicant/vacancy_response/popup'));
+  assert.ok(GUARD_URL.test('https://spb.hh.ru/applicant/vacancy_response/edit_ajax'));
+  assert.ok(GUARD_URL.test('https://chatik.hh.ru/chatik/api/save'));
+  assert.ok(!GUARD_URL.test('https://hh.ru/vacancy/138092086'));
+  const forced = 'https://hh.ru/vacancy/138092086?forceQuickResponse=true';
+  assert.ok(FORCE_QUICK_URL.test(forced) && FORCE_QUICK.test(forced));
+  assert.ok(!FORCE_QUICK.test('https://hh.ru/vacancy/138092086?from=telegram'));
 });

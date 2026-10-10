@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { config } from './config.mjs';
 import { log } from './log.mjs';
-import { GUARD_URL, HH, RESPONSE_PAGE } from './hh/selectors.mjs';
+import { FORCE_QUICK, FORCE_QUICK_URL, GUARD_URL, HH, RESPONSE_PAGE } from './hh/selectors.mjs';
 import { roleFromCookies } from './hh/state.mjs';
 import { stamp, writeJsonAtomic } from './util.mjs';
 
@@ -64,6 +64,15 @@ async function launch() {
       return route.abort('blockedbyclient');
     }
     if (req.resourceType() === 'document' && RESPONSE_PAGE.test(req.url())) log('nav.response_page', { path });
+    return route.continue();
+  });
+  // Переход на /vacancy/<id>?forceQuickResponse=true — страница сама отправит отклик «в один клик»
+  await context.route(FORCE_QUICK_URL, (route) => {
+    const req = route.request();
+    if (guardOn && req.resourceType() === 'document' && FORCE_QUICK.test(req.url())) {
+      log('guard.blocked', { method: req.method(), path: new URL(req.url()).pathname, force: 'quickResponse' });
+      return route.abort('blockedbyclient');
+    }
     return route.continue();
   });
   page = context.pages()[0] ?? (await context.newPage());
