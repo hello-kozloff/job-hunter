@@ -13,6 +13,7 @@
 //   POST /record {on}              запись: пользователь откликается сам в окне робота
 //   POST /record/paste {text}      во время записи: вставить текст (письмо с Mac) туда, где курсор
 //   POST /shot                     скриншот окна сейчас
+//   POST /notice {key}             первый ли раз сообщают о key ({ first }) — одна тревога на блок при параллельных W9
 //   POST /fake {outcomes}          только при APPLIER_FAKE=1: очередь исходов для проверки n8n (src/fake.mjs)
 // Все адреса, кроме /ping, — с заголовком X-Applier-Token.
 import { createReadStream, existsSync } from 'node:fs';
@@ -232,6 +233,8 @@ const routes = {
   },
 
   'POST /shot': () => lock.run('shot', async () => ({ shot: await shot('manual') }), { wait: 5000 }),
+
+  'POST /notice': (body) => noticeAck(body),
 };
 
 async function handle(req, res) {
@@ -270,6 +273,12 @@ async function handle(req, res) {
   }
 }
 
+function noticeAck(body) {
+  const key = String(body.key ?? '').slice(0, 100);
+  if (!key) throw new HttpError(400, { error: 'нужен key' });
+  return { first: store.ackNotice(key) };
+}
+
 // Фейковый режим (APPLIER_FAKE=1): браузера нет, исходы — по команде (src/fake.mjs)
 async function fakeRoute(key, req) {
   const body = req.method === 'POST' ? await readBody(req) : {};
@@ -295,6 +304,8 @@ async function fakeRoute(key, req) {
       return fakeCaptcha(body.text ?? '');
     case 'POST /resume':
       return { status: 200, body: fakeResume() };
+    case 'POST /notice':
+      return { status: 200, body: noticeAck(body) };
     case 'POST /fake': {
       const outcomes = Array.isArray(body.outcomes) ? body.outcomes.map(String) : [];
       const out = fakePush(outcomes);

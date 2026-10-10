@@ -4,7 +4,7 @@
 // Нода: Code, режим «Run Once for All Items». Вход: ответ Telegram { result: { message_id } } или { error }.
 const state = $getWorkflowStaticData('global');
 const sent = $input.first()?.json?.result?.message_id;
-const kind = $('Notice kind').first()?.json?.notice?.kind;
+const kind = $('Notice item').first()?.json?.notice?.kind;
 if (sent && kind === 'captcha') state.captchaPromptId = sent;
 else if (sent) state.alertMessageId = sent;
 return [{ json: { messageId: sent ?? 0 } }];

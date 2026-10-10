@@ -2232,7 +2232,7 @@ const workflows = {
   'w9-robot': (() => {
     const view = letterViewNodes('W9', [2420, -1300]);
     const GATE = "$('Gate').first().json";
-    const NOTICE = "$('Notice kind').first().json.notice";
+    const NOTICE = "$('Notice item').first().json.notice";
     const RESULT = "$('Result').first().json";
     const JOB = "$('Job').first().json";
     return workflow(
@@ -2412,10 +2412,20 @@ const workflows = {
         ),
         // Сообщения: капча — фото с ForceReply; блок — тревога с ▶️; «не отвечает», «лимит» — текстом
         node('W9', 'Notice?', 'if', 2.3, [1760, -200], ifTrue('W9', '={{ Boolean($json.notice) }}')),
-        node('W9', 'Notice kind', 'switch', 3.4, [1980, -700], {
+        code('W9', 'Notice item', 'n8n/w9-robot/notice-item.js', [1870, -700]),
+        // Одна тревога на блок: параллельные запуски W9 (расписание + вызов себя) видят один блок, а «first» робот
+        // отдаёт только одному. Робот не отвечает — отправляем (это и есть тревога «не отвечает»)
+        applierNode('W9', 'Notice ack', [1980, -800], {
+          method: 'POST',
+          path: '/notice',
+          body: `={{ JSON.stringify({ key: ${NOTICE}.key || '' }) }}`,
+          timeout: 5000,
+        }),
+        node('W9', 'First?', 'if', 2.3, [2090, -700], ifTrue('W9', '={{ $json.first !== false }}')),
+        node('W9', 'Notice kind', 'switch', 3.4, [2200, -700], {
           mode: 'expression',
           numberOutputs: 3,
-          output: '={{ ({ captcha: 0, alert: 1, info: 2 })[$json.notice.kind] ?? 2 }}',
+          output: `={{ ({ captcha: 0, alert: 1, info: 2 })[${NOTICE}.kind] ?? 2 }}`,
           options: {},
         }),
         applierNode('W9', 'Get captcha', [2200, -800], { path: `/shots/{{ ${NOTICE}.shot }}`, timeout: 10000, file: true }),
@@ -2425,8 +2435,8 @@ const workflows = {
           markup: { replyMarkup: 'forceReply', forceReply: { force_reply: true } },
         }),
         telegram('W9', 'Alert', [2200, -700], {
-          text: '={{ $json.notice.text }}',
-          fields: { disable_notification: '={{ $json.notice.silent }}' },
+          text: `={{ ${NOTICE}.text }}`,
+          fields: { disable_notification: `={{ ${NOTICE}.silent }}` },
           markup: { replyMarkup: 'inlineKeyboard', inlineKeyboard: keyboard([[['▶️ Продолжить', 'rb:go']]]) },
           extra: { onError: 'continueRegularOutput' },
         }),
@@ -2439,8 +2449,8 @@ const workflows = {
           fields: { disable_notification: true, reply_to_message_id: "={{ $('Remember').first().json.messageId }}" },
         }),
         telegram('W9', 'Info', [2200, -600], {
-          text: '={{ $json.notice.text }}',
-          fields: { disable_notification: '={{ $json.notice.silent }}' },
+          text: `={{ ${NOTICE}.text }}`,
+          fields: { disable_notification: `={{ ${NOTICE}.silent }}` },
           extra: { onError: 'continueRegularOutput' },
         }),
         // Нажали 🚀, а робот ждёт — письмо сразу говорит, чего
@@ -2629,7 +2639,10 @@ const workflows = {
         ['Resolved?', 'Prompt sent?', 0],
         ['Prompt sent?', 'Delete prompt', 0],
         ['Gate', 'Notice?'],
-        ['Notice?', 'Notice kind', 0],
+        ['Notice?', 'Notice item', 0],
+        ['Notice item', 'Notice ack'],
+        ['Notice ack', 'First?'],
+        ['First?', 'Notice kind', 0],
         ['Notice kind', 'Get captcha', 0],
         ['Get captcha', 'Captcha prompt'],
         ['Captcha prompt', 'Remember'],

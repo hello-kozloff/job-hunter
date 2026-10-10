@@ -8,7 +8,8 @@
 //   heal — починка: applying дольше 6 мин (n8n или робот упали посреди отклика) → queued; в очереди, но решение
 //          сменили (не ✅) → снять. Повтор безопасен: робот перед кликом проверяет «уже откликались» на hh;
 //   next — кого отправлять (старейшая queued); null — нельзя: wait = disabled | paused | down | blocked | busy | limit;
-//   notice — сообщение: { kind: captcha | alert | info, text, shot, silent, button };
+//   notice — сообщение: { kind: captcha | alert | info, key, text, shot, silent, button }; key — для POST /notice
+//            робота: параллельные запуски W9 видят один блок, а отправит тревогу только первый;
 //   resolved — блок снят: { messageId, text, promptId } — поправить прошлую тревогу и удалить фото капчи;
 //   views — письма, которые перерисовать (нажали 🚀, а робот ждёт: «⏸ Робот ждёт: …»).
 
@@ -79,6 +80,7 @@ if (out.wait === 'blocked') {
       b.kind === 'captcha' && b.shot
         ? {
             kind: 'captcha',
+            key: `block:${b.since}`,
             shot: b.shot,
             text: `${ROBOT_PROMPTS.captcha} — ответьте на это фото текстом с картинки.\nНе читается — решите в окне робота (${VNC_URL}) и пришлите /go${
               health.fake ? '\n🧪 Фейковый робот: ответьте «ok»' : ''
@@ -87,6 +89,7 @@ if (out.wait === 'blocked') {
           }
         : {
             kind: 'alert',
+            key: `block:${b.since}`,
             shot: b.shot ?? '',
             text: texts[b.kind] ?? `⏸ Робот ждёт: ${BLOCK[b.kind] ?? esc(b.kind)}. Продолжить — ▶️.`,
             silent: !loud,
@@ -109,6 +112,7 @@ if (!out.notice && out.wait === 'down' && queued.length && state.downDay !== day
   state.downDay = dayKey;
   out.notice = {
     kind: 'info',
+    key: `down:${dayKey}`,
     text: `⚠️ Робот-отклик не отвечает — очередь (${queued.length}) ждёт.\nЗапуск: <code>scripts/deploy.sh --applier</code>`,
     silent: !loud,
   };
@@ -117,6 +121,7 @@ if (!out.notice && out.wait === 'limit' && queued.length && state.limitDay !== d
   state.limitDay = dayKey;
   out.notice = {
     kind: 'info',
+    key: `limit:${dayKey}`,
     text: `⏸ Лимит робота на сегодня — ${limit} откликов. Очередь (${queued.length}) уйдёт после 09:00; поменять — ⚙️ → 🚀 Робот`,
     silent: true,
   };
