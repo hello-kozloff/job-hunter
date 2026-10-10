@@ -22,7 +22,8 @@ const out = {
   toast: '',
   layout: '',
   chatId: job.chatId,
-  messageId: job.messageId || row.tg_letter_id || 0,
+  // Правим всегда само письмо: 🚀 могли нажать и на фото «не смог» ([🚀 Ещё раз])
+  messageId: row.tg_letter_id || job.messageId || 0,
   queryId: job.queryId,
   url: row.url ?? '',
   apply_url: row.apply_url ?? '',
