@@ -13,6 +13,7 @@
 //   POST /record {on}              запись: пользователь откликается сам в окне робота
 //   POST /record/paste {text}      во время записи: вставить текст (письмо с Mac) туда, где курсор
 //   POST /shot                     скриншот окна сейчас
+//   POST /fake {outcomes}          только при APPLIER_FAKE=1: очередь исходов для проверки n8n (src/fake.mjs)
 // Все адреса, кроме /ping, — с заголовком X-Applier-Token.
 import { createReadStream, existsSync } from 'node:fs';
 import http from 'node:http';
@@ -41,6 +42,7 @@ import { applyFlow } from './flows/apply.mjs';
 import { captchaShown } from './flows/dom.mjs';
 import { reconInbox, reconVacancies } from './flows/recon.mjs';
 import { recordStart, recordStop, recording } from './flows/record.mjs';
+import { FAKE_OUTCOMES, fakeApply, fakeCaptcha, fakePush, fakeQueue, fakeResume } from './fake.mjs';
 
 if (config.token.length < 16) {
   console.error('APPLIER_TOKEN не задан или короче 16 символов — без него API робота открыт, не стартую');
@@ -245,13 +247,16 @@ async function handle(req, res) {
     const name = shotMatch[1];
     const path = join(SHOTS, name);
     if (!SHOT_NAME.test(name) || !existsSync(path)) return send(res, 404, { error: 'нет такого скриншота' });
-    res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store' });
+    res.writeHead(200, { 'content-type': name.endsWith('.png') ? 'image/png' : 'image/jpeg', 'cache-control': 'no-store' });
     return createReadStream(path).pipe(res);
   }
 
+  if (config.fake) {
+    const out = await fakeRoute(`${req.method} ${url.pathname}`, req).catch((e) => ({ status: e.code ?? 500, body: e.body ?? { error: e.message } }));
+    return send(res, out.status, out.body);
+  }
   const route = routes[`${req.method} ${url.pathname}`];
   if (!route) return send(res, 404, { error: 'нет такого адреса' });
-  if (config.fake) return send(res, 501, { error: 'фейковый режим появится в 6.1a' });
   try {
     const body = req.method === 'POST' ? await readBody(req) : {};
     const out = await route(body);
@@ -262,6 +267,41 @@ async function handle(req, res) {
     if (e instanceof HttpError) return send(res, e.code, e.body);
     log('http.error', { path: url.pathname, error: e.message.split('\n')[0] });
     return send(res, 500, { error: e.message.split('\n')[0] });
+  }
+}
+
+// Фейковый режим (APPLIER_FAKE=1): браузера нет, исходы — по команде (src/fake.mjs)
+async function fakeRoute(key, req) {
+  const body = req.method === 'POST' ? await readBody(req) : {};
+  switch (key) {
+    case 'GET /health':
+      return {
+        status: 200,
+        body: {
+          ...(await health()),
+          browser: { status: 'fake', since: null, guard: true },
+          role: 'applicant',
+          loggedIn: true,
+          fake: true,
+          fakeQueue: fakeQueue(),
+        },
+      };
+    case 'POST /apply': {
+      if (store.blocked) return { status: 423, body: { blocked: store.blocked } };
+      const out = await lock.run('apply', () => fakeApply(body));
+      return out.status === 200 ? { status: 200, body: { ...out.body, requestId: body.requestId ?? null } } : out;
+    }
+    case 'POST /captcha':
+      return fakeCaptcha(body.text ?? '');
+    case 'POST /resume':
+      return { status: 200, body: fakeResume() };
+    case 'POST /fake': {
+      const outcomes = Array.isArray(body.outcomes) ? body.outcomes.map(String) : [];
+      const out = fakePush(outcomes);
+      return { status: out.ok ? 200 : 400, body: { ...out, known: FAKE_OUTCOMES } };
+    }
+    default:
+      return { status: 501, body: { error: 'в фейковом режиме этого адреса нет', known: FAKE_OUTCOMES } };
   }
 }
 

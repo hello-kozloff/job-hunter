@@ -143,7 +143,7 @@ export async function shutdown() {
 }
 
 // Скриншот видимой части окна: JPEG q70 — Telegram не принимает длинные картинки во всю страницу
-export const SHOT_NAME = /^\d{8}-\d{6}-[a-z0-9-]+\.jpg$/;
+export const SHOT_NAME = /^\d{8}-\d{6}-[a-z0-9-]+\.(jpg|png)$/;
 export async function shot(tag, dir = SHOTS) {
   const p = await ensure();
   mkdirSync(dir, { recursive: true });

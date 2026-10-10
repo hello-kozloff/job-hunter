@@ -12,6 +12,9 @@
 //   node scripts/applier.mjs apply <id> --letter-file <файл>   сухой прогон отклика: до кнопки, без клика
 //   node scripts/applier.mjs resume                  перепроверить вход и капчу, снять блок
 //   node scripts/applier.mjs shot                    скриншот окна робота → fixtures/applier/
+//   node scripts/applier.mjs fake <исход> […]        фейковый режим (APPLIER_FAKE=1): следующие исходы /apply по порядку
+//                                                    (applied, applied_chat, already, test, external, hidden, archived,
+//                                                    error, dry_run, captcha, smart, login, limit, busy, down, slow)
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
@@ -190,6 +193,17 @@ const commands = {
   async resume() {
     const r = await api('POST', '/resume');
     console.log(`вошли: ${r.loggedIn ? 'да' : 'нет'} · блок: ${r.blocked ? r.blocked.kind : 'нет'}`);
+  },
+
+  async fake(args) {
+    if (!args.length) throw new Error('fake <исход> […] — список: node scripts/applier.mjs fake help');
+    if (args[0] === 'help') {
+      const h = await api('GET', '/health');
+      console.log(`Фейковый режим: ${h.fake ? 'вкл' : 'ВЫКЛ (APPLIER_FAKE=1 в .env → scripts/deploy.sh --applier)'}; очередь: ${(h.fakeQueue ?? []).join(', ') || '—'}`);
+      return;
+    }
+    const r = await api('POST', '/fake', { outcomes: args });
+    console.log(`Очередь исходов: ${r.queue.join(', ')}`);
   },
 
   async shot() {
