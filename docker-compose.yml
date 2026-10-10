@@ -67,5 +67,47 @@ services:
     volumes:
       - ./ngrok/policy.yml:/etc/ngrok/policy.yml:ro
 
+  # Робот-отклик (этап 6, docs/stages/stage-6.md): Chromium с окном + HTTP API для n8n (http://applier:3000).
+  # Включается профилем applier (COMPOSE_PROFILES в .env), запускается и пересобирается только
+  # `scripts/deploy.sh --applier` — обычный деплой его не трогает, чтобы не оборвать отклик.
+  # Окно робота: «Общий экран» macOS → vnc://localhost:5901 (5900 занят «Общим экраном» самого Mac).
+  # API для CLI scripts/applier.mjs: 127.0.0.1:5682 (5681 — брокер второго CLI-процесса n8n).
+  applier:
+    build: ./applier
+    image: job-hunter-applier
+    container_name: job-hunter-applier
+    restart: unless-stopped
+    profiles: [applier]
+    init: true
+    # Chromium падает с маленьким /dev/shm
+    shm_size: 1gb
+    mem_limit: 2g
+    # Мягкая остановка: доделать отклик (до 180 с) и сохранить сессию hh
+    stop_grace_period: 200s
+    ports:
+      - "127.0.0.1:5901:5900"
+      - "127.0.0.1:5682:3000"
+    environment:
+      # Без токена робот не стартует (applier/src/server.mjs)
+      APPLIER_TOKEN: ${APPLIER_TOKEN:-}
+      # Предохранитель: без APPLY_LIVE=1 робот не нажимает «Откликнуться» (сухой прогон до кнопки)
+      APPLY_LIVE: ${APPLY_LIVE:-0}
+      APPLIER_FAKE: ${APPLIER_FAKE:-0}
+      APPLIER_DAILY_CAP: ${APPLIER_DAILY_CAP:-40}
+      HH_RESUME_TITLE: ${HH_RESUME_TITLE:-}
+      VNC_PASSWORD: ${VNC_PASSWORD:-}
+    volumes:
+      # Профиль браузера и сессия hh — только в томе: не в репозитории и не в n8n
+      - applier_data:/data
+      # Разведка и запись — на Mac в fixtures/applier (не в git: там личные данные)
+      - ./fixtures/applier:/data/recon
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/ping').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
 volumes:
   n8n_data:
+  applier_data:

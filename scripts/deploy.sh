@@ -5,6 +5,9 @@
 #   scripts/deploy.sh --paused      то же, но W8 Clock и W6 остаются выключенными (сбор и сводка не работают;
 #                                   паузу без деплоя ставит бот: ⚙️ Настройки → 🕐 Сбор → ⏸)
 #   scripts/deploy.sh --any-branch  деплой не с develop / production (осознанно, в обход git flow)
+#   scripts/deploy.sh --applier     ещё и пересобрать и перезапустить робота-отклика (этап 6): сначала ждёт, пока
+#                                   робот закончит текущее действие. Без флага робот не трогается — отклик не оборвётся.
+#                                   Смена APPLY_LIVE / APPLIER_FAKE / VNC_PASSWORD в .env — тоже через --applier
 #   (--publish — прежнее название обычного деплоя, работает как без флага)
 #
 # Git flow (docs/git-flow.md): в n8n уходит develop (проверка на живых запусках) или production (hotfix, откат).
@@ -23,10 +26,12 @@ cd "$(dirname "$0")/.."
 
 PAUSED=false
 ANY_BRANCH=false
+APPLIER=false
 for arg in "$@"; do
   case "$arg" in
     --paused) PAUSED=true ;;
     --any-branch) ANY_BRANCH=true ;;
+    --applier) APPLIER=true ;;
     --publish) ;;
     *)
       echo "Неизвестный флаг: $arg" >&2
@@ -59,13 +64,36 @@ fi
 
 node scripts/build-workflows.mjs
 
-# Туннель: WEBHOOK_URL и COMPOSE_PROFILES в .env по NGROK_DOMAIN
-if grep -q '^NGROK_DOMAIN=..*' .env 2>/dev/null; then
+# Туннель и профили: WEBHOOK_URL и COMPOSE_PROFILES в .env по NGROK_DOMAIN и APPLIER_TOKEN
+if grep -qE '^(NGROK_DOMAIN|APPLIER_TOKEN)=..*' .env 2>/dev/null; then
   node scripts/n8n-api.mjs tunnel-env
 fi
 
-# Применить изменения docker-compose.yml / .env (переменные, тома, туннель ngrok)
-docker compose up -d --wait
+# Применить изменения docker-compose.yml / .env (переменные, тома, туннель ngrok).
+# Сервисы — поимённо: робот-отклик (профиль applier) обычный деплой не пересоздаёт
+SERVICES=(n8n)
+if grep -q '^NGROK_DOMAIN=..*' .env 2>/dev/null; then
+  SERVICES+=(ngrok)
+fi
+docker compose up -d --wait "${SERVICES[@]}"
+
+# Робот-отклик: дождаться конца текущего действия (до 5 мин), пересобрать образ, пересоздать контейнер
+if [[ "$APPLIER" == true ]]; then
+  if ! grep -q '^APPLIER_TOKEN=..*' .env 2>/dev/null; then
+    echo "Для робота нужен APPLIER_TOKEN в .env (openssl rand -hex 24) — см. .env.example" >&2
+    exit 1
+  fi
+  APPLIER_TOKEN=$(grep '^APPLIER_TOKEN=' .env | head -1 | cut -d= -f2- | tr -d "'\"")
+  for _ in $(seq 1 60); do
+    busy=$(curl -s -m 5 -H "X-Applier-Token: $APPLIER_TOKEN" http://127.0.0.1:5682/health |
+      node -e 'let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{try{console.log(JSON.parse(s).busy?"yes":"no")}catch{console.log("no")}})')
+    [[ "$busy" == no ]] && break
+    echo "Робот занят — жду, пока закончит действие…"
+    sleep 5
+  done
+  docker compose build applier
+  docker compose up -d --wait applier
+fi
 
 # Ключи идут через pipe прямо в контейнер, на диск хоста не попадают
 node scripts/credentials.mjs |
