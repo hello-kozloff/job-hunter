@@ -206,6 +206,34 @@ participantId, participantDisplay {name, isBot}}`; `chatsDisplayInfo[chatId] = {
 **Прочее.** `navigator.webdriver = true`; за 10 вакансий и «Отклики» капчи не было. У нового профиля всплывали
 «Ваш регион — Москва?» и баннер cookie — закрыты при входе.
 
+## 6.1a: W9 Robot — как устроено
+
+```
+🚀 (l:<id>:robot) → W3 «Robot?» → W9 enqueue: Row → Plan → Enqueue (Update: id + status=approved + apply_state пусто → queued)
+   → Done → View (письмо «⏳ Робот откликается…» [⛔]) · Answer (тост) · Tick? → очередь
+Очередь (tick: расписание раз в минуту, после 🚀, ▶️, капчи, смены ⚙️, сам W9 после успеха):
+   Queue (apply_state не пуст) → Today (живые отклики робота с 09:00 по Таиланду) → Health (GET /health) → Gate
+   Gate → Heal (applying > 6 мин → queued; не ✅ → снять) · Resolved (блок снят → «✅ снова в работе») ·
+          Notice (капча — фото с ForceReply; вход / «Я не робот» / 3 сбоя / стоп hh — тревога с [▶️]; не отвечает, лимит — текст)
+          · Gate views (нажали 🚀, а робот ждёт — «⏸ Робот ждёт: …») · Next → Claim (queued → applying) → Apply (POST /apply)
+          → Result → View · Save result · Card: done · Shot (скриншот при сбое и сухом прогоне) · Panel sync (W7) · More → W9
+⛔ (l:<id>:stop) → W9 stop: Unqueue (Update: id + apply_state=queued → '') → письмо с кнопками
+▶️ (rb:go) / /go → W9 resume: POST /resume → тост или сообщение → очередь
+Ответ на фото капчи → W3 → W9 captcha: POST /captcha → фото и ответ удаляются → «✅ Капча принята» → очередь | новое фото
+⚙️ → 🚀 Робот: выключили → W9 dequeue (очередь назад в ✅, письма без 🚀); сняли паузу, сменили лимит → W9 tick
+```
+
+- **Очередь — колонка `apply_state`**, статус вакансии остаётся `approved` до отклика. Все переходы — Update с условием:
+  двойное нажатие, ⛔ во время отправки и два параллельных W9 ничего не ломают (Update отдаёт только обновлённые строки).
+- **Static data W9:** `alertedSince` (одна тревога на блок), `alertMessageId` (её поправить, когда блок снимут),
+  `captchaPromptId`, `downDay` / `limitDay` (такие сообщения — раз в «день» робота). Импорт workflow её не стирает.
+- **Тихие часы:** тревога, которую нашёл тик расписания (не нажатие), в 23–09 по Таиланду — без звука.
+- **Письмо с 🚀** — W5 `Send letter: robot`, если `apply.enabled` и вакансия подходит (✅, письмо есть, нет теста, не на сайте
+  работодателя); «↩️ Отменить» под «📨 Отправил» возвращает 🚀 так же. Старые письма — без 🚀 (решение пользователя).
+- **Защиты W3:** пока вакансия в очереди, кнопки карточки, «📨 Отправил» и правка письма ответом не действуют.
+- **Фейковый робот** (`APPLIER_FAKE=1` в `.env` → `scripts/deploy.sh --applier`): `node scripts/applier.mjs fake applied
+  captcha login …` — следующие исходы по порядку (список — `fake help`); `/captcha ok` решает «капчу», ▶️ снимает блок.
+
 ## Риски
 
 | Риск | Защита |

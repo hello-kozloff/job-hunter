@@ -199,6 +199,46 @@
             {
               "name": "prompt_v",
               "type": "string"
+            },
+            {
+              "name": "apply_state",
+              "type": "string"
+            },
+            {
+              "name": "apply_queued_at",
+              "type": "string"
+            },
+            {
+              "name": "apply_tries",
+              "type": "number"
+            },
+            {
+              "name": "apply_result",
+              "type": "string"
+            },
+            {
+              "name": "apply_letter",
+              "type": "string"
+            },
+            {
+              "name": "apply_note",
+              "type": "string"
+            },
+            {
+              "name": "apply_by",
+              "type": "string"
+            },
+            {
+              "name": "hh_state",
+              "type": "string"
+            },
+            {
+              "name": "hh_state_at",
+              "type": "string"
+            },
+            {
+              "name": "hh_chat_id",
+              "type": "string"
             }
           ]
         },

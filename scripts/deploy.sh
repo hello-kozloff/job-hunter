@@ -52,9 +52,10 @@ fi
 
 CONTAINER=job-hunter-n8n
 # Вызываемые через Execute Workflow публикуются всегда (в n8n 2.42 вызвать можно только опубликованный):
-# W5 (письма) и W7 (меню бота) — из W3, W1 (сбор) — из W8 Clock и W7 («🔄 Собрать сейчас»), W2 — из W1.
+# W5 (письма) и W7 (меню бота) — из W3, W1 (сбор) — из W8 Clock и W7 («🔄 Собрать сейчас»), W2 — из W1,
+# W9 (робот-отклик, этап 6) — из W3 и W7; его расписание раз в минуту безвредно и при --paused: пустая очередь — выход.
 # Своего расписания у W1 нет (07.10.2026): сбор запускают «часы» W8 — без них (--paused) сборов нет
-WORKFLOWS_TO_PUBLISH=(jobHunterW4Error jobHunterW5Lettr jobHunterW7Menu1 jobHunterW1Colle jobHunterW2Score)
+WORKFLOWS_TO_PUBLISH=(jobHunterW4Error jobHunterW5Lettr jobHunterW7Menu1 jobHunterW1Colle jobHunterW2Score jobHunterW9Robot)
 if [[ "$PAUSED" != true ]]; then
   WORKFLOWS_TO_PUBLISH+=(jobHunterW8Clock jobHunterW6Summ1)
 fi
