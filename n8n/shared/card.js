@@ -72,10 +72,10 @@ function cardText(r) {
     ? `👤 ${CHOICE[r.my_decision]}${r.my_reason === BAN_REASON ? ' · 🚫 компания в чёрном списке' : ''}`
     : '';
   // «📨 Откликался раньше» уже в строке «👤 …» — второй раз не пишем
+  // Робот (этап 6): «🚀 … роботом»; нашёлся на hh без «📨 Отправил» (6.2) — «📨 … на hh»
+  const who = r.apply_by === 'robot' ? '🚀 Отклик отправлен роботом' : r.apply_by === 'hh' ? '📨 Отклик есть на hh' : '📨 Отклик отправлен';
   const sent =
-    r.status === 'applied' && r.my_decision !== 'earlier'
-      ? `📨 Отклик отправлен${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}`
-      : '';
+    r.status === 'applied' && r.my_decision !== 'earlier' ? `${who}${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}` : '';
   return [`<a href="${r.url}"><b>${esc(r.title)}</b></a>`, meta, flags, verdict, mine, sent, FINAL[r.status] ?? '']
     .filter(Boolean)
     .join('\n');

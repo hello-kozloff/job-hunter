@@ -1,7 +1,8 @@
 // W7 · Render — раздел «⚙️ Настройки» панели меню (07.10.2026). Подключается в render.js строкой
 // «// @include n8n/w7-menu/settings-view.js», после помощников времени (thaiMsk, hhmm).
 // Значения — из таблицы settings плюс изменение этого нажатия: «Setting change» выполнилась раньше (ветка выше).
-// Раскладки: settings (корень), set_collect, set_search, set_filter, set_rules, set_blacklist, set_confirm, set_llm.
+// Раскладки: settings (корень), set_collect, set_search, set_filter, set_rules, set_blacklist, set_confirm, set_llm,
+// set_apply (🚀 Робот, этап 6: состояние робота — «Robot health», GET /health робота).
 // Кнопки «▸» — следующее значение по кругу, «✏️» — вопрос со списком (ответ — сообщением).
 
 const ranNode = (name) => {
@@ -57,12 +58,19 @@ function settingsRootView(note) {
     `🔎 <b>Поиск</b>: ${periodText(settings['search.period'])} · везде — ${settings['search.anywhere'].length} сл., в названии — ${settings['search.in_name'].length}`,
     `🧹 <b>Фильтр</b>: правил ${rulesOn().length} из ${Object.keys(FILTER_RULES).length} · отклики — ${responsesText(settings['filter.max_responses'])} · стоп-слов ${settings['filter.stop_words'].length} · ЧС ${blacklist.length}`,
     `🤖 <b>Нейросеть</b>: ${providerText(settings['llm.provider'])} · теневой режим ${settings['llm.shadow'] ? 'вкл' : 'выкл'} · спорных случаев ${settings['llm.cases'].length}`,
+    `🚀 <b>Робот</b>: ${settings['apply.enabled'] ? 'вкл' : 'выкл'}${settings['apply.paused'] ? ' · ⏸ пауза' : ''} · сегодня ${robotToday(rows, now)}/${settings['apply.daily_limit']} · ${robotState().short}`,
   ];
   if (note) lines.push('', note);
   return {
     layout: 'settings',
     text: lines.join('\n'),
-    b: { collect: { cb: 's:collect' }, search: { cb: 's:search' }, filter: { cb: 's:filter' }, llm: { cb: 's:llm' } },
+    b: {
+      collect: { cb: 's:collect' },
+      search: { cb: 's:search' },
+      filter: { cb: 's:filter' },
+      llm: { cb: 's:llm' },
+      apply: { cb: 's:apply' },
+    },
   };
 }
 
@@ -230,7 +238,46 @@ function settingsLlmView() {
   };
 }
 
+// Состояние робота по GET /health («Robot health»): не отвечает, ждёт (блок), не вошёл, на связи
+function robotState() {
+  const h = ranNode('Robot health')[0] ?? {};
+  if (!h.ok || h.error) return { short: '⚠️ не отвечает', long: '⚠️ не отвечает — запуск: <code>scripts/deploy.sh --applier</code>', up: false };
+  const mode = h.fake ? 'фейк' : h.live ? 'боевой' : '🧪 сухой прогон (APPLY_LIVE=0)';
+  if (h.blocked) return { short: `⏸ ждёт (${h.blocked.kind})`, long: `⏸ ждёт: ${esc(h.blocked.kind)} — реши в окне робота, потом ▶️ · ${mode}`, up: true };
+  if (!h.loggedIn) return { short: '🔑 не вошёл в hh', long: `🔑 не вошёл в hh — <code>node scripts/applier.mjs login</code> · ${mode}`, up: true };
+  return { short: '✅ на связи', long: `✅ на связи, вошёл в hh · ${mode}${h.busy ? ` · занят (${esc(h.by ?? '')})` : ''}`, up: true };
+}
+
+function settingsApplyView() {
+  const on = settings['apply.enabled'];
+  const paused = settings['apply.paused'];
+  const limit = settings['apply.daily_limit'];
+  const lines = [
+    '🚀 <b>Робот-отклик</b>',
+    '',
+    on
+      ? `Включён: под новыми письмами — [🚀 Откликнуться роботом]${paused ? '\n⏸ <b>Очередь на паузе</b>: нажатия копятся, робот ждёт' : ''}`
+      : 'Выключен: кнопки 🚀 под письмами нет, откликаешься сам',
+    `Состояние: ${robotState().long}`,
+    `Сегодня: ${robotToday(rows, now)} из ${limit} (день — с 09:00 по Таиланду) · в очереди: ${count(rows, (r) => r.apply_state)}`,
+    '',
+    `Окно робота — «Общий экран»: ${VNC_URL} (режим «Управление»). Капча и вход в hh — там; потом ▶️ или /go.`,
+  ];
+  const notes = changeNotes();
+  if (notes.length) lines.push('', ...notes);
+  return {
+    layout: 'set_apply',
+    text: lines.join('\n'),
+    b: {
+      enabled: { text: `Робот: ${on ? 'вкл' : 'выкл'} ▸`, cb: 'sc:apply.enabled' },
+      paused: { text: paused ? '▶️ Снять паузу' : '⏸ Пауза', cb: 'sc:apply.paused' },
+      limit: { text: `Лимит: ${limit} в день ▸`, cb: 'sc:apply.daily_limit' },
+    },
+  };
+}
+
 function settingsView(section) {
+  if (section === 'apply') return settingsApplyView();
   if (section === 'llm') return settingsLlmView();
   if (section === 'collect') return settingsCollectView();
   if (section === 'search') return settingsSearchView();

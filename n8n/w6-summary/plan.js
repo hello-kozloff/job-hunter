@@ -15,7 +15,8 @@ const cardTime = (r) => Date.parse(r.card_at || r.createdAt) || now;
 const waiting = rows.filter((r) => r.status === 'waiting');
 const expire = waiting.filter((r) => now - cardTime(r) > 3 * DAY);
 const expired = new Set(expire.map((r) => r.id));
-const check = [...waiting.filter((r) => !expired.has(r.id)), ...rows.filter((r) => r.status === 'approved')]
+// ✅ в очереди робота (этап 6) не проверяем: робот сам увидит, что вакансия закрыта
+const check = [...waiting.filter((r) => !expired.has(r.id)), ...rows.filter((r) => r.status === 'approved' && !r.apply_state)]
   .sort((a, b) => cardTime(a) - cardTime(b))
   .slice(0, 40);
 

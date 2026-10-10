@@ -59,7 +59,13 @@ const input = inputArg.endsWith('.json')
     }));
 
 // Мини-версии $input и $('Имя') из n8n
-const accessor = (items) => ({ all: () => items, first: () => items[0], last: () => items.at(-1) });
+// itemMatching(i) — связанный item по номеру (в n8n — по pairedItem; здесь — тот же номер)
+const accessor = (items) => ({
+  all: () => items,
+  first: () => items[0],
+  last: () => items.at(-1),
+  itemMatching: (i) => items[i],
+});
 const $input = accessor(input);
 const $ = (name) => {
   if (!refs[name]) throw new Error(`Нет данных для $('${name}') — передай --ref ${name}=...`);

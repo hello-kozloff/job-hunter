@@ -16,13 +16,15 @@
 // @include n8n/shared/settings.js
 // @include n8n/shared/search.js
 // @include n8n/shared/schedule.js
+// @include n8n/shared/robot.js
 
 const job = $('Job').first().json;
 const rows = $('Rows')
   .all()
   .map((i) => i.json)
   .filter((r) => r.id);
-const runs = $input
+// Журнал сборов — по имени ноды: перед «Render» может стоять «Robot health» (⚙️ → 🚀 Робот)
+const runs = $('Runs')
   .all()
   .map((i) => i.json)
   .filter((r) => r.id)
@@ -49,6 +51,7 @@ const LAYOUTS = [
   'set_confirm',
   'set_llm',
   'open_rescue',
+  'set_apply',
 ];
 // Выходы «Layout» после раскладок: приветствие, вопрос ⚙️ со списком (ForceReply)
 const ROUTE_START = LAYOUTS.length * 2;
@@ -88,13 +91,13 @@ const inTab = (key) => {
 const counts = Object.fromEntries(Object.keys(TABS).map((key) => [key, inTab(key).length]));
 
 function itemLines(r, n) {
-  const icons = `${VERDICT_ICON[r.decision] ?? ''}${STATUS_ICON[r.status] ?? ''}`;
+  const icons = `${VERDICT_ICON[r.decision] ?? ''}${statusIcon(r)}`;
   const age = now - at(r.createdAt);
   const meta = [
     esc(r.company),
     r.status === 'rejected' ? `🚫 ${esc(String(r.reasons ?? '').split(', ')[0].replace(/:.*$/, ''))}` : salary(r),
     r.status === 'applied' && r.applied_at
-      ? `📨 ${thaiDate(r.applied_at)}`
+      ? `${r.apply_by === 'robot' ? '🚀' : '📨'} ${thaiDate(r.applied_at)}`
       : r.my_decision === 'earlier'
         ? '📨 раньше'
       : age < DAY
@@ -147,7 +150,9 @@ function openView(id) {
   const extra = [
     ['new', 'detailed'].includes(r.status) && '⚙️ Ждёт оценки нейросетью',
     r.status === 'seen' && '🗄 Из первой выгрузки — не оценивалась',
-    r.letter && r.status === 'approved' && '✉️ Письмо готово — в ленте под карточкой',
+    r.letter && r.status === 'approved' && !r.apply_state && '✉️ Письмо готово — в ленте под карточкой',
+    // Робот-отклик (этап 6): очередь, пометка об исходе
+    robotLine(r),
   ].filter(Boolean);
   // Строка «🤖 …» пустая, если нейросеть вакансию не оценивала (отсеяна фильтром, бэкфилл)
   const card = cardText(r)
@@ -258,6 +263,14 @@ function statsView() {
     '',
     `🧪 Теневой режим: ${shadow.length}/50${shadow.length ? `, совпало ${agree} (${pct(agree, shadow.length)}%)` : ''}`,
   ];
+  // Робот-отклик (этап 6): сегодня — с 09:00 по Таиланду
+  const robotSent = rows.filter((r) => r.status === 'applied' && r.apply_by === 'robot');
+  if (robotSent.length || rows.some((r) => r.apply_state)) {
+    lines.push(
+      '',
+      `🚀 <b>Робот</b>: сегодня ${robotToday(rows, now)}/${settings['apply.daily_limit']} · в очереди ${count(rows, (r) => r.apply_state)} · всего ${robotSent.length} (✉️ ${count(robotSent, (r) => r.apply_letter === 'attached')} · 💬 ${count(robotSent, (r) => r.apply_letter === 'chat')})`,
+    );
+  }
   return {
     layout: 'stats',
     tab: panel.tab,

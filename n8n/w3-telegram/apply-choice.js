@@ -17,6 +17,7 @@
 //     с причинами фильтра (по ответам правим фильтр); 🤖 На оценку (choice = score) — status = detailed,
 //     score: W3 сразу запустит W2, карточку пришлёт он. Страница с hh («Rescue parse») закрыта — «🔒 закрыта».
 //   keyboard: decided | choose | none (карточки нет или перерисовывать нечего).
+//   Вакансия в очереди робота (apply_state ≠ '', этап 6) — решение не меняется, тост «сначала ⛔ под письмом».
 
 // @include n8n/shared/card.js
 
@@ -49,6 +50,14 @@ try {
   // не загружали
 }
 const rescue = row.status === 'rejected' && action.choice !== 'edit';
+
+// Робот (этап 6) уже взял вакансию в очередь или отправляет отклик — решение не меняем
+if (row.apply_state) {
+  out.keyboard = 'none';
+  out.toast = '🚀 Робот в работе — сначала ⛔ под письмом';
+  out.text = cardText(row);
+  return [{ json: out }];
+}
 
 if (rescue && page?.closed) {
   out.status = 'archived';
