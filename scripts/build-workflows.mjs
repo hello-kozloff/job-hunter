@@ -2249,13 +2249,22 @@ const workflows = {
         node('W9', 'Manual', 'manualTrigger', 1, [0, 200], {}),
         code('W9', 'Job', 'n8n/w9-robot/job.js', [220, 0]),
         settingsNode('W9', [440, 0]),
-        // 0 — 🚀 / ⛔, 1 — очередь, 2 — ▶️ / /go, 3 — ответ на капчу, 4 — робот выключен
-        node('W9', 'Op', 'switch', 3.4, [660, 0], {
-          mode: 'expression',
-          numberOutputs: 5,
-          output: `={{ ({ enqueue: 0, stop: 0, tick: 1, resume: 2, captcha: 3, dequeue: 4 })[${JOB}.op] ?? 1 }}`,
-          options: {},
-        }),
+        // 0 — 🚀 / ⛔, 1 — очередь, 2 — ▶️ / /go, 3 — ответ на капчу, 4 — робот выключен.
+        // Один раз: «Settings» отдаёт по item на настройку — иначе каждая ветка шла бы столько же раз
+        node(
+          'W9',
+          'Op',
+          'switch',
+          3.4,
+          [660, 0],
+          {
+            mode: 'expression',
+            numberOutputs: 5,
+            output: `={{ ({ enqueue: 0, stop: 0, tick: 1, resume: 2, captcha: 3, dequeue: 4 })[${JOB}.op] ?? 1 }}`,
+            options: {},
+          },
+          { executeOnce: true },
+        ),
 
         // ---- 🚀 / ⛔: запись с условием (двойное нажатие и гонка с роботом ничего не ломают)
         node(
