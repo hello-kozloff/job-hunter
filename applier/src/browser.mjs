@@ -53,15 +53,17 @@ async function launch() {
     page = null;
     log('browser.closed');
   });
-  // Предохранитель: всё, что может изменить аккаунт, — не-GET к /applicant/…, /shards/applicant/… и chatik,
-  // плюс переход документом на страницу отклика. Перехватываем только эти адреса — кэш остальных не трогаем
+  // Предохранитель: всё, что может изменить аккаунт, — не-GET к /applicant/…, /shards/applicant/… и chatik.
+  // GET ничего не отправляет (отклик — POST): переход на страницу отклика hh делает и сам — у вакансии с тестом
+  // (разведка 10.10.2026), его только пишем в журнал. Перехватываем только эти адреса — кэш остальных не трогаем
   await context.route(GUARD_URL, (route) => {
     const req = route.request();
-    const risky = req.method() !== 'GET' || (req.resourceType() === 'document' && RESPONSE_PAGE.test(req.url()));
-    if (guardOn && risky) {
-      log('guard.blocked', { method: req.method(), path: new URL(req.url()).pathname });
+    const path = new URL(req.url()).pathname;
+    if (guardOn && req.method() !== 'GET') {
+      log('guard.blocked', { method: req.method(), path });
       return route.abort('blockedbyclient');
     }
+    if (req.resourceType() === 'document' && RESPONSE_PAGE.test(req.url())) log('nav.response_page', { path });
     return route.continue();
   });
   page = context.pages()[0] ?? (await context.newPage());

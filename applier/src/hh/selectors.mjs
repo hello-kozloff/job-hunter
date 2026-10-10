@@ -91,7 +91,7 @@ export const WATCH = {
 };
 
 // Сетевой предохранитель: в сухом прогоне и разведке рвём всё, что может изменить аккаунт —
-// не-GET запросы к /applicant/… и /shards/applicant/… (отклик, правки), любые не-GET в chatik (сообщения, «прочитано»)
-// и переход документом на /applicant/vacancy_response (адрес кнопки «Откликнуться»)
+// не-GET запросы к /applicant/… и /shards/applicant/… (отклик, правки) и любые не-GET в chatik (сообщения,
+// «прочитано»). Переход документом на /applicant/vacancy_response (адрес кнопки «Откликнуться») — только в журнал
 export const GUARD_URL = /^https:\/\/(?:[a-z0-9-]+\.)*hh\.ru\/(?:applicant|shards\/applicant)\/|^https:\/\/chatik\.hh\.ru\//;
 export const RESPONSE_PAGE = /\/applicant\/vacancy_response(?!\/popup)/;

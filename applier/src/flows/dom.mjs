@@ -73,13 +73,20 @@ export async function predictResponse(page, vacancyId) {
   }
 }
 
-// Короткая подпись прогноза для Telegram: «окно с письмом / один клик / вопросы»
+// Короткая подпись прогноза для Telegram — что hh покажет по «Откликнуться» (типы — src/hh/state.mjs popupPrediction)
+const TYPE_TEXT = {
+  modal: 'окно с письмом до отправки',
+  quickResponse: 'отклик в один клик, письмо — сразу после',
+  'test-required': 'вопросы работодателя',
+  alreadyApplied: 'отклик уже есть',
+  'need-login': 'робот не вошёл в hh',
+};
 export function predictionText(p, facts) {
   if (!p) return 'исход заранее неизвестен';
-  if (p.hasTests || facts?.hasTests) return 'вопросы работодателя';
-  const parts = [p.type ? `тип отклика hh: ${p.type}` : 'тип отклика hh не указан'];
+  const parts = [TYPE_TEXT[p.type] ?? `hh: ${p.type ?? 'тип не указан'}`];
   if (p.letterRequired || facts?.letterRequired) parts.push('письмо обязательно');
+  if (p.relocation) parts.push('hh спросит «вакансия в другой стране»');
   if (p.inconsistencies) parts.push('hh предупредит «может получить отказ»');
-  if (facts?.country && facts.country !== 'RU') parts.push(`другая страна (${facts.country})`);
+  if (p.responseAllowed === false) parts.push('hh не даст откликнуться: видимость резюме');
   return parts.join(', ');
 }
