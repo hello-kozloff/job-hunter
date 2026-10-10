@@ -2512,7 +2512,14 @@ const workflows = {
         ),
         node('W9', 'Shot?', 'if', 2.3, [2640, 300], ifTrue('W9', '={{ Boolean($json.shot) }}')),
         applierNode('W9', 'Get shot', [2860, 300], { path: '/shots/{{ $json.shot }}', timeout: 10000, file: true }),
-        sendPhoto('W9', 'Send shot', [3080, 300], {
+        // Робот не смог, а повторить можно — на фото сразу [🚀 Ещё раз]: письмо с 🚀 выше и легко теряется
+        node('W9', 'Retry shot?', 'if', 2.3, [3080, 300], ifTrue('W9', `={{ ${RESULT}.group === 'error' && ${RESULT}.layout === 'robot' }}`)),
+        sendPhoto('W9', 'Send shot: retry', [3300, 250], {
+          caption: `={{ ${RESULT}.caption }}`,
+          fields: { disable_notification: true, reply_to_message_id: `={{ ${RESULT}.messageId }}` },
+          markup: { replyMarkup: 'inlineKeyboard', inlineKeyboard: keyboard([[['🚀 Ещё раз', `=l:{{ ${RESULT}.id }}:robot`]]]) },
+        }),
+        sendPhoto('W9', 'Send shot', [3300, 350], {
           caption: `={{ ${RESULT}.caption }}`,
           fields: { disable_notification: true, reply_to_message_id: `={{ ${RESULT}.messageId }}` },
         }),
@@ -2664,7 +2671,9 @@ const workflows = {
         ['Card?', 'Card: done', 0],
         ['Result', 'Shot?'],
         ['Shot?', 'Get shot', 0],
-        ['Get shot', 'Send shot'],
+        ['Get shot', 'Retry shot?'],
+        ['Retry shot?', 'Send shot: retry', 0],
+        ['Retry shot?', 'Send shot', 1],
         ['Result', 'Sync job'],
         ['Sync job', 'Panel sync'],
         ['Result', 'More?'],
