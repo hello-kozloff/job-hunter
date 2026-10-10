@@ -143,6 +143,9 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
                  127.0.0.1:5901 для «Общего экрана»), постоянный профиль и сессия hh в томе applier_data, HTTP API
                  http://applier:3000 (CLI — 127.0.0.1:5682, scripts/applier.mjs); предохранитель APPLY_LIVE=0 — не нажимает
                  «Откликнуться»; 6.0 — вход, разведка, запись, сухой прогон; 6.1 — W9 Robot (🚀), 6.2 — W10 Inbox
+[W9 Robot]     🚀 под письмом → W3 → W9: очередь в колонке apply_state ('' → queued → applying), лимит дня, отклик через
+                 applier (POST /apply), итог — правка письма и карточки; капча — фото в Telegram, ответ текстом; вход / сбои —
+                 тревога с [▶️]; Schedule раз в минуту + вызов себя после успеха (docs/stages/stage-6.md → 6.1a)
 [Страж]        healthchecks.io (OnCalendar = расписание сбора, grace = интервал днём + 20 мин; бот обновляет его через API
                  при смене расписания): W1 шлёт сигнал после поиска; нет сигнала → их бот пишет в Telegram
 ```
@@ -162,6 +165,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - этап 4: `letter`, `tg_letter_id` (сообщение с письмом — на него отвечают с правкой), `letter_notes` (пожелания к письмам через « | »), `applied_at`;
 - этап 5: `card_at` (когда W2 отправил карточку — от него считаются 3 дня);
 - 07.10.2026: `letter_lock` (защита от двойного ✅), `prompt_v` (версия промпта оценки: хеш правил без резюме — по нему теневой режим разбирается по версиям);
+- этап 6 (робот-отклик): `apply_state` ('' | queued | applying — очередь W9, статус не меняет), `apply_queued_at`, `apply_tries`, `apply_result`, `apply_letter` (attached | chat | none), `apply_note`, `apply_by` (robot | me | hh); 6.2 — `hh_state`, `hh_state_at`, `hh_chat_id`;
 - таблица `blacklist`: `company, comment`;
 - таблица `runs` — журнал сборов W1: `started_at, finished_at, kind` (schedule | catchup | bot | manual), `status` (running | ok | error), `found, uniq, fresh, rejected, scoring, pages, cards, error`;
 - таблица `settings` — настройки из бота: `name, value_json` (только изменения; значения по умолчанию — в коде);
@@ -173,6 +177,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - свой бот (токен в Credentials), один личный чат для всего;
 - chat_id — в `.env` как `TG_CHAT_ID`, в нодах `{{ $env.TG_CHAT_ID }}` (Variables в Community edition нет);
 - кнопки ловит W3 через Telegram Trigger (v1.5: проверяет секретный заголовок, Restrict to Chat IDs = TG_CHAT_ID). Публичный HTTPS → контейнер ngrok (`COMPOSE_PROFILES=tunnel`, `ngrok/policy.yml`), `WEBHOOK_URL=https://<NGROK_DOMAIN>/` (→ `N8N_WEBHOOK_URL`);
+- робот-отклик (этап 6): `l:<id>:robot` — 🚀, `l:<id>:stop` — ⛔, `rb:go` и `/go` — ▶️ после блока, ответ на фото капчи → W9; ⚙️ → 🚀 Робот (`s:apply`);
 - callback_data кнопок: `v:<id строки>:<apply|maybe|skip|earlier|ban|edit>` — карточка (`ban` — «🚫 В ЧС»: компания в `blacklist`, вакансия — ❌ с причиной «чёрный список») (`earlier` — «📨 Уже откликался», 07.10.2026: status = applied без письма и `applied_at`, без «Почему?», вне теневого режима); `l:<id>:<redo|sent|unsent>` — письмо; панель меню (W7): `p:l:<tab>:<page>`, `p:s`, `p:x`, `p:n` («📋 К вакансиям» под отправленным письмом), `pv:<id>:<choice>:<tab>:<page>` (`score` — «🤖 На оценку» у отсеянной фильтром, 08.10.2026);
 - меню бота (07.10.2026, `docs/bot-menu.md`): кнопки под полем ввода `[📋 Вакансии] [📊 Статистика]` (ставит `/start`), одна живая панель — нажатие пользователя и прошлая панель удаляются, листание правит панель на месте;
 - тихие часы: 23:00–09:00 по Таиланду — карточки и сводка без звука (`disable_notification`), тревоги со звуком;
@@ -340,7 +345,8 @@ n8n/w5-letter/*.js                  код Code-нод W5 (промпт пись
 n8n/w6-summary/*.js                 код Code-нод W6 (устаревшие, закрытые на hh, сводка)
 n8n/w7-menu/*.js                    код Code-нод W7 (меню бота: список, карточка, статистика, настройки)
 n8n/w8-clock/*.js                   код Code-нод W8 («часы» сбора)
-n8n/shared/*.js                     общий код Code-нод (карточка, письмо, разбор страницы hh, меню, расписание W1,
+n8n/w9-robot/*.js                   код Code-нод W9 (робот-отклик: план 🚀/⛔, ворота очереди, исход, капча, блоки)
+n8n/shared/*.js                     общий код Code-нод (карточка, письмо, разбор страницы hh, меню, расписание W1, робот-отклик,
                                     поисковый запрос hh, признак AI-вакансии),
                                     подключается строкой // @include
 n8n/w4-errors/*.js                  код Code-нод W4
@@ -376,8 +382,9 @@ Workflow в n8n (постоянные id):
 | `jobHunterW6Summ1` | W6 Summary | утренняя сводка, устаревшие и закрытые карточки |
 | `jobHunterW7Menu1` | W7 Bot menu | меню бота: список вакансий, карточка с решением, статистика (вызывает W3; Manual — приветствие с кнопками) |
 | `jobHunterW8Clock` | W8 Clock | «часы» сбора: каждые 15 мин решают по настройкам бота, пора ли запускать W1 |
+| `jobHunterW9Robot` | W9 Robot | робот-отклик: очередь 🚀, отклик через applier, капча и блоки (вызывают W3 и W7; Schedule раз в минуту) |
 
-Credentials: `jobHunterTgBot01` «Telegram bot», `jobHunterGemini1` «Gemini», `jobHunterClaude1` «Claude», `jobHunterN8nApi1` «n8n API» (ключ публичного API, создаёт `n8n-api.mjs api-key`), `jobHunterHcApi01` «healthchecks API» (`HC_API_KEY`, если есть в `.env`).
+Credentials: `jobHunterTgBot01` «Telegram bot», `jobHunterGemini1` «Gemini», `jobHunterClaude1` «Claude», `jobHunterN8nApi1` «n8n API» (ключ публичного API, создаёт `n8n-api.mjs api-key`), `jobHunterHcApi01` «healthchecks API» (`HC_API_KEY`, если есть в `.env`), `jobHunterApplier` «Applier» (`APPLIER_TOKEN` — заголовок `X-Applier-Token` к роботу-отклику).
 
 ## 14. Git
 
