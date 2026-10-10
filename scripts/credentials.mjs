@@ -4,6 +4,7 @@
 //   GEMINI_API_KEY → «Gemini»       (оценка вакансий, W2)
 //   ANTHROPIC_API_KEY → «Claude»    (запасная нейросеть, LLM_PROVIDER=claude)
 //   HC_API_KEY     → «healthchecks API» (бот обновляет расписание стража при смене расписания сбора, W7)
+//   APPLIER_TOKEN  → «Applier» (робот-отклик, этап 6: W6, W7, W9 ходят в его API с заголовком X-Applier-Token)
 // n8n при импорте шифрует ключи N8N_ENCRYPTION_KEY. Используется только через pipe в scripts/deploy.sh —
 // на диск хоста ключи не пишутся.
 import { readFileSync } from 'node:fs';
@@ -43,6 +44,12 @@ const credentials = [
     name: 'healthchecks API',
     type: 'httpHeaderAuth',
     data: { name: 'X-Api-Key', value: env.HC_API_KEY },
+  },
+  env.APPLIER_TOKEN && {
+    id: 'jobHunterApplier',
+    name: 'Applier',
+    type: 'httpHeaderAuth',
+    data: { name: 'X-Applier-Token', value: env.APPLIER_TOKEN },
   },
 ].filter(Boolean);
 
