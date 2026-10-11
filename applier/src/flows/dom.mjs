@@ -41,7 +41,9 @@ export async function captchaKind(page) {
 
 // Текст страницы (до 200 тыс. знаков) — для текстов-маркеров hh после клика
 export const bodyText = (page) =>
-  page.evaluate(() => (document.body?.innerText ?? '').slice(0, 200000)).catch(() => '');
+  page
+    .evaluate(() => (document.body?.innerText ?? '').slice(0, 200000).replace(/[\u00a0\u202f]/g, ' '))
+    .catch(() => '');
 
 // Закрыть открытые окна hh (Escape, потом крестик окна отклика)
 export async function closeDialogs(page) {

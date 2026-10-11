@@ -154,9 +154,9 @@ document.addEventListener('click', async (e) => {
 }
 
 // Чат отклика (chatik.hh.ru/chat/<id>): «Добавить сопроводительное» → поле → «Отправить» → POST /chatik/api/save
-const CHAT_PAGE = `<!doctype html><html lang="ru"><head><meta charset="utf-8"></head><body>
+const chatPage = (action) => `<!doctype html><html lang="ru"><head><meta charset="utf-8"></head><body>
 <div>Отклик на вакансию · Без сопроводительного письма</div>
-<div data-qa="chatik-chat-message-applicant-action"><span data-qa="chatik-chat-message-applicant-action-text">⊕ Добавить сопроводительное</span></div>
+<div data-qa="chatik-chat-message-applicant-action"><span data-qa="chatik-chat-message-applicant-action-text">⊕ ${action}</span></div>
 <div id="box"></div>
 <script>
 fetch('/chatik/api/notify_chat_opened', { method: 'POST', body: '{"chatId":555}' });
@@ -208,7 +208,9 @@ export async function handle(route) {
   }
   const id = url.pathname.match(/^\/vacancy\/(\d+)/)?.[1] ?? url.searchParams.get('vacancyId');
   if (host === 'chatik.hh.ru') {
-    if (url.pathname.startsWith('/chat/')) return route.fulfill({ contentType: 'text/html; charset=utf-8', body: CHAT_PAGE });
+    if (url.pathname.startsWith('/chat/')) {
+      return route.fulfill({ contentType: 'text/html; charset=utf-8', body: chatPage(sc.chatAction ?? 'Добавить сопроводительное') });
+    }
     return json(route, 200, { enable_dark_theme: false, enable_zp_theme: false });
   }
   if (url.pathname.startsWith('/vacancy/')) {

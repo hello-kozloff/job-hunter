@@ -52,28 +52,35 @@ export const SEL = {
   dialog: '[role="dialog"], [role="alertdialog"]',
 };
 
-// Тексты-маркеры — дословно из переводов hh (InitialState → trl, fixtures/vacancy.html, 10.10.2026)
+// Тексты-маркеры — дословно из переводов hh (InitialState → trl.RU / trl.EN). Язык сайта hh меняет сам: 10.10.2026
+// у робота был русский, 11.10.2026 — английский (locale.siteLanguage = EN), поэтому каждый маркер — на обоих языках
 export const TEXT = {
-  // negotiationsLimitExceeded: «В течение 24 часов можно совершить не более 200 откликов. Вы исчерпали лимит…»
-  limit: /не более \d+ откликов|исчерпали лимит откликов/i,
-  // alreadyResponded, alreadyApplied, responded.success.title
-  responded: /Вы откликнулись|Вы уже откликались|Резюме доставлено|Вас пригласили/i,
-  viewed: /Отклик уже просмотрен работодателем/i,
-  test: /требуется ответить на вопросы теста/i,
-  // hidden.resumes, changeResumeVisibilityDenied
-  hidden: /поменяйте видимость резюме|с текущей видимостью резюме/i,
+  // negotiationsLimitExceeded.error
+  limit: /не более \d+ откликов|исчерпали лимит откликов|more than \d+ applications per 24|reached your application limit/i,
+  // alreadyResponded.*.short, alreadyApplied.error, responded.success.title
+  responded:
+    /Вы откликнулись|Вы уже откликались|Резюме доставлено|Вас пригласили|You applied|already applied for this vacancy|You have been invited/i,
+  // letter.viewed
+  viewed: /Отклик уже просмотрен работодателем|response has been viewed by the employer/i,
+  // test.error
+  test: /требуется ответить на вопросы теста|must answer the questions of the test/i,
+  // hidden.resumes.formatted (в EN не переведён), changeResumeVisibilityDenied.error
+  hidden: /поменяйте видимость резюме|с текущей видимостью резюме|current resume visibility settings/i,
   // resourcePolicyViolation, spamDetected, inappropriateLanguage — дальше не отправляем, зовём человека
-  stop: /нарушает правила сервиса|Недопустимое сообщение|уберите нецензурные слова/i,
-  // unknown.error, testServiceDown, vacancyResponseAbort, tooLongLetter, letter.tooLong
-  failed: /Произошла ошибка|сайт перегружен|Отклик не был доставлен|Превышен лимит символов|не может превышать \d+ символов/i,
-  // vacancy.respond.popup.title + force («Все равно откликнуться»)
-  relocation: /Вы откликаетесь на вакансию в другой стране/i,
-  // vacancyResponse.rejectWarning.title, inconsistency.title
-  rejectWarning: /Скорее всего, будет отказ|Такой отклик может получить отказ/i,
-  forceApply: /Вс[её] равно откликнуться/i,
-  attachLetter: /Приложить сопроводительное/i,
-  // Чат отклика: действие у сообщения отклика без письма (запись 10.10.2026)
-  addLetter: /Добавить сопроводительное/i,
+  stop: /нарушает правила сервиса|Недопустимое сообщение|уберите нецензурные слова|violation of the service rules|Invalid message|remove the obscene words/i,
+  // unknown.error, testServiceDown.error, tooLongLetter, letter.tooLong
+  failed:
+    /Произошла ошибка|сайт перегружен|Отклик не был доставлен|Превышен лимит символов|не может превышать \d+ символов|An error occurred|site is overloaded|Character limit exceeded|must not be longer than \d+ characters/i,
+  // vacancy.respond.popup.title (+ force — «Все равно откликнуться»)
+  relocation: /Вы откликаетесь на вакансию в другой стране|applying from another country/i,
+  // vacancy.respond.popup.message, inconsistency.title
+  rejectWarning: /Скорее всего, будет отказ|Такой отклик может получить отказ|most likely be rejected|may get rejected/i,
+  forceApply: /Вс[её] равно откликнуться|Still apply/i,
+  // letter.informer.attachLetter, responded.success.attachCoverLetter
+  attachLetter: /Приложить сопроводительное|Add a cover letter/i,
+  // Чат отклика: действие у сообщения отклика без письма (запись 10.10.2026; переводы чата — в самом чате, EN — по
+  // образцу letter.button.add «Add cover letter»)
+  addLetter: /Добавить сопроводительное|Add (?:a )?cover(?:ing)? letter/i,
 };
 
 // Что разведка и запись проверяют на каждой странице: есть ли, видно ли, первые слова текста
