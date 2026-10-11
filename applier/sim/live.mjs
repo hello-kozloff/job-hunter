@@ -37,6 +37,18 @@ const SCENARIOS = [
     },
   },
   {
+    name: 'quick-chat-en: сайт hh на английском — в чате «Add cover letter»',
+    type: 'quickResponse',
+    edit: [403, { error: 'notEditable' }],
+    chatAction: 'Add cover letter',
+    expect: {
+      outcome: 'applied',
+      via: 'quick',
+      letter: 'chat',
+      posts: ['/applicant/vacancy_response/popup', '/applicant/vacancy_response/edit_ajax', '/chatik/api/notify_chat_opened', '/chatik/api/save'],
+    },
+  },
+  {
     name: 'quick-attach: один клик → «Приложить» прошло',
     type: 'quickResponse',
     edit: [200, {}],

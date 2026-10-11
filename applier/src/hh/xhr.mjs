@@ -81,12 +81,16 @@ const SCREEN_TEXTS = [
   ['responded', TEXT.responded],
 ];
 export function screenText(now, before = '') {
+  const [after, was] = [plain(now), plain(before)];
   for (const [outcome, re] of SCREEN_TEXTS) {
-    const m = String(now ?? '').match(re);
-    if (m && !re.test(String(before ?? ''))) return { outcome, text: m[0] };
+    const m = after.match(re);
+    if (m && !re.test(was)) return { outcome, text: m[0] };
   }
   return null;
 }
+
+// Неразрывные пробелы (в переводах hh — &nbsp;: «с&nbsp;текущей видимостью») → обычные: маркеры написаны с пробелами
+export const plain = (s) => String(s ?? '').replace(/[\u00a0\u202f]/g, ' ');
 
 // Письмо в поле — то же, что просили вставить (переводы строк браузер приводит к \n)
 export const sameText = (a, b) =>

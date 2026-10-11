@@ -159,3 +159,48 @@ test('запись 10.10.2026: отклик с письмом, в один кл�
   assert.ok(ACTION_URL.chat.test(save.url));
   assert.equal(chatResult(save.status).ok, true);
 });
+
+// Маркеры TEXT против настоящих переводов hh на обоих языках: RU — fixtures/vacancy.html (10.10.2026),
+// EN — страница разведки 11.10.2026 (сайт hh сам переключился на английский)
+const RU_PAGE = new URL('../../fixtures/vacancy.html', import.meta.url);
+const EN_PAGE = new URL('../../fixtures/applier/recon-20261011-070939/138324725/page.html', import.meta.url);
+const MARKERS = {
+  limit: ['vacancy.response.popup.negotiationsLimitExceeded.error'],
+  responded: [
+    'vacancy.response.alreadyResponded.applied.short',
+    'vacancy.response.popup.alreadyApplied.error',
+    'vacancy.response.alreadyResponded.invitation.short',
+    'vacancy.responded.success.title',
+  ],
+  viewed: ['vacancy.response.popup.letter.viewed'],
+  test: ['vacancy.response.popup.test.error'],
+  hidden: ['vacancy.response.popup.hidden.resumes.formatted', 'vacancy.response.popup.changeResumeVisibilityDenied.error'],
+  stop: ['vacancy.response.popup.resourcePolicyViolation', 'vacancy.response.popup.spamDetected', 'vacancy.response.popup.inappropriateLanguage'],
+  failed: [
+    'vacancy.response.popup.unknown.error',
+    'vacancy.response.popup.testServiceDown.error',
+    'vacancy.response.popup.tooLongLetter',
+    'vacancy.response.popup.letter.tooLong',
+  ],
+  relocation: ['vacancy.respond.popup.title'],
+  rejectWarning: ['vacancy.respond.popup.message', 'vacancy.response.popup.inconsistency.title'],
+  forceApply: ['vacancy.respond.popup.force'],
+  attachLetter: ['vacancy.response.letter.informer.attachLetter', 'vacancy.responded.success.attachCoverLetter'],
+};
+for (const [lang, file] of [['RU', RU_PAGE], ['EN', EN_PAGE]]) {
+  test(`маркеры TEXT ловят переводы hh: ${lang}`, { skip: !existsSync(file) }, async () => {
+    const { initialState } = await import('../src/hh/state.mjs');
+    const { TEXT } = await import('../src/hh/selectors.mjs');
+    const { plain } = await import('../src/hh/xhr.mjs');
+    const trl = initialState(readFileSync(file, 'utf8'))?.trl?.[lang];
+    assert.ok(trl, `переводы ${lang} на странице`);
+    for (const [marker, keys] of Object.entries(MARKERS)) {
+      for (const key of keys) {
+        assert.ok(trl[key], `${lang}: нет перевода ${key}`);
+        // Как это увидит робот: &nbsp; → неразрывный пробел → обычный, {0} → число
+        const shown = plain(trl[key].replace(/&nbsp;/g, ' ').replace(/\{0\}/g, '10000'));
+        assert.ok(TEXT[marker].test(shown), `${lang}: ${marker} не ловит ${key} «${shown.slice(0, 80)}»`);
+      }
+    }
+  });
+}
