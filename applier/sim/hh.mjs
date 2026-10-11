@@ -41,6 +41,7 @@ function vacancyPage(id, sc) {
     type: sc.type,
     click: sc.click ?? 'popup',
     relocation: Boolean(sc.relocation),
+    visibility: sc.visibility ?? '',
     captchaInModal: sc.captchaInModal ?? false,
     errorText: sc.errorText ?? 'Произошла ошибка, попробуйте ещё раз',
   };
@@ -117,6 +118,12 @@ document.addEventListener('click', async (e) => {
     if (SIM.click === 'nothing') return;
     if (SIM.click === 'external') return window.open('https://employer.example.com/apply', '_blank');
     await fetch('/applicant/vacancy_response/popup?vacancyId=' + SIM.id);
+    if (SIM.visibility) {
+      // Та же кнопка «Разрешить и продолжить» без текста про страну — её робот жать не должен
+      return document.body.append(el(\`<div role="dialog">
+        <div>Чтобы откликнуться на вакансию, разрешите работодателям из \${SIM.visibility} видеть ваш профиль и предлагать вакансии</div>
+        <button>Отменить</button><button data-qa="sim-allow">Разрешить и продолжить</button></div>\`));
+    }
     if (SIM.relocation) {
       return document.body.append(el(\`<div role="alertdialog">
         <div data-qa="relocation-warning-title">Вы откликаетесь на вакансию в другой стране</div>
@@ -125,7 +132,7 @@ document.addEventListener('click', async (e) => {
     }
     return proceed();
   }
-  if (qa === 'relocation-warning-confirm') { closeDialogs(); return proceed(); }
+  if (qa === 'relocation-warning-confirm' || qa === 'sim-allow') { closeDialogs(); return proceed(); }
   if (qa === 'response-popup-close') return closeDialogs();
   if (qa === 'vacancy-response-submit-popup') {
     const letter = document.querySelector('[data-qa="vacancy-response-popup-form-letter-input"]').value;

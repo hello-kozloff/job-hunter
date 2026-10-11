@@ -185,6 +185,8 @@ const MARKERS = {
   relocation: ['vacancy.respond.popup.title'],
   rejectWarning: ['vacancy.respond.popup.message', 'vacancy.response.popup.inconsistency.title'],
   forceApply: ['vacancy.respond.popup.force'],
+  otherCountries: ['otherCountriesProfileVisibilityAgreement.title.common', 'otherCountriesProfileVisibilityAgreement.title.uzbekistan'],
+  allowCountries: ['otherCountriesProfileVisibilityAgreement.agree'],
   attachLetter: ['vacancy.response.letter.informer.attachLetter', 'vacancy.responded.success.attachCoverLetter'],
 };
 for (const [lang, file] of [['RU', RU_PAGE], ['EN', EN_PAGE]]) {

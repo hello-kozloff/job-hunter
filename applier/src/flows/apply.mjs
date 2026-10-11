@@ -7,7 +7,8 @@
 //   окно с письмом (modal)      письмо в поле → «Откликнуться» → POST popup, response_label «…-with-letter»;
 //   отклик в один клик (quick)  отклик уходит сразу → «Приложить сопроводительное письмо» (edit_ajax) →
 //                               не вышло (в записи 403 notEditable) → чат отклика: «Добавить сопроводительное»;
-//   «другая страна», «может получить отказ» → подтвердить, текст — в warnings (решение пользователя 10.10.2026);
+//   «другая страна», «может получить отказ», «разрешите работодателям из … видеть профиль» → подтвердить, текст —
+//   в warnings (решения пользователя 10–11.10.2026);
 //   вопросы работодателя, сайт работодателя, скрытое резюме → человеку; лимит hh, «нарушает правила» → блок.
 // Необратимое — только в живом режиме и по одному действию предохранителя (browser.mjs → guardAllow).
 // Непонятный экран → error + скриншот, без повторных кликов; 3 живых сбоя подряд → блок errors.
@@ -266,7 +267,8 @@ async function liveApply({ page, id, letter, facts, prediction, net, step, done 
       case 'captcha':
         return done('captcha', { shot: await captchaBlock(page, screen.captcha, `captcha-${id}`) });
       case 'confirm':
-        // «Вакансия в другой стране», «Скорее всего, будет отказ» — решение пользователя: всегда подтверждать
+        // «Вакансия в другой стране», «Скорее всего, будет отказ», «Разрешите работодателям из … видеть профиль» —
+        // решения пользователя 10–11.10.2026: всегда подтверждать, текст — в отчёт
         if (++confirms > 3) return done('error', { note: 'hh снова и снова просит подтвердить', shot: await shot(`confirm-${id}`) });
         warnings.add(screen.text);
         await pause(700, 1500);
@@ -367,6 +369,13 @@ async function readScreen(page, net, before) {
   }
   const force = page.getByRole('button', { name: TEXT.forceApply }).first();
   if (await visible(force)) return { kind: 'confirm', button: force, text: await warningText(page, 'hh предупредил: возможен отказ') };
+  // «Разрешите работодателям из <страны> видеть ваш профиль» → «Разрешить и продолжить» (решение пользователя
+  // 11.10.2026). Только если на экране именно этот текст: кнопку с тем же названием в другом окне не жмём
+  const allow = page.getByRole('button', { name: TEXT.allowCountries }).first();
+  if (await visible(allow)) {
+    const m = (await bodyText(page)).match(TEXT.otherCountries);
+    if (m) return { kind: 'confirm', button: allow, text: `открыл профиль работодателям из ${m[1] ?? m[2]}` };
+  }
   if (await visible(page.locator(`${SEL.questions}, ${SEL.taskTextarea}`))) return { kind: 'questions' };
   if (await shownTall(page.locator(SEL.hiddenResume))) return { kind: 'hidden' };
   if (await visible(page.locator(SEL.modalSubmit))) return { kind: 'modal' };

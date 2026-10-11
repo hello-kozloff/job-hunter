@@ -76,6 +76,10 @@ export const TEXT = {
   // vacancy.respond.popup.message, inconsistency.title
   rejectWarning: /Скорее всего, будет отказ|Такой отклик может получить отказ|most likely be rejected|may get rejected/i,
   forceApply: /Вс[её] равно откликнуться|Still apply/i,
+  // otherCountriesProfileVisibilityAgreement.title.* / .agree — открыть профиль работодателям страны вакансии
+  // (решение пользователя 11.10.2026: нажимать, страну — в отчёт); страна — первая группа
+  otherCountries: /разрешите работодателям из (.+?) видеть ваш профиль|allow employers from (.+?) to see your profile/i,
+  allowCountries: /Разрешить и продолжить|Allow and continue/i,
   // letter.informer.attachLetter, responded.success.attachCoverLetter
   attachLetter: /Приложить сопроводительное|Add a cover letter/i,
   // Чат отклика: действие у сообщения отклика без письма (запись 10.10.2026; переводы чата — в самом чате, EN — по

@@ -26,6 +26,12 @@ const SCENARIOS = [
     expect: { outcome: 'applied', via: 'modal', letter: 'attached', warning: /другой стране/, posts: ['/applicant/vacancy_response/popup'] },
   },
   {
+    name: 'visibility: «разрешите работодателям из Узбекистана видеть профиль» → разрешить',
+    type: 'modal',
+    visibility: 'Узбекистана',
+    expect: { outcome: 'applied', via: 'modal', letter: 'attached', warning: /работодателям из Узбекистана/, posts: ['/applicant/vacancy_response/popup'] },
+  },
+  {
     name: 'quick-chat: один клик → «Приложить» 403 → чат отклика',
     type: 'quickResponse',
     edit: [403, { error: 'notEditable' }],
