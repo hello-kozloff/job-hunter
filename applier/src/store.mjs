@@ -57,6 +57,14 @@ export const store = {
     log('block', { kind, ...fields });
     return s.blocked;
   },
+  // Поправить поля текущего блока, не меняя since (новая картинка капчи: тревога уже ушла, фото шлёт W9 сам)
+  amend(fields) {
+    const s = load();
+    if (!s.blocked) return null;
+    Object.assign(s.blocked, fields);
+    save();
+    return s.blocked;
+  },
   unblock(reason) {
     const s = load();
     if (!s.blocked) return;

@@ -9,7 +9,8 @@
 //   node scripts/applier.mjs record start|stop       запись: вы откликаетесь сами в окне робота, он смотрит
 //   node scripts/applier.mjs paste                   во время записи: буфер обмена Mac (pbpaste) → туда, где курсор
 //                                                    в окне робота (VNC передаёт только латиницу, письмо — русское)
-//   node scripts/applier.mjs apply <id> --letter-file <файл>   сухой прогон отклика: до кнопки, без клика
+//   node scripts/applier.mjs apply <id> --letter-file <файл>   сухой прогон отклика: до кнопки, без клика (всегда —
+//                                                    и при APPLY_LIVE=1: живой отклик только из W9, он ведёт таблицу)
 //   node scripts/applier.mjs resume                  перепроверить вход и капчу, снять блок
 //   node scripts/applier.mjs shot                    скриншот окна робота → fixtures/applier/
 //   node scripts/applier.mjs fake <исход> […]        фейковый режим (APPLIER_FAKE=1): следующие исходы /apply по порядку
@@ -174,8 +175,13 @@ const commands = {
     const id = args.find((a) => /^\d+$/.test(a));
     const i = args.indexOf('--letter-file');
     if (!id || i < 0 || !args[i + 1]) throw new Error('apply <id вакансии hh> --letter-file <файл с письмом>');
-    // CLI никогда не просит живой отклик: робот при APPLY_LIVE=0 и так не жмёт кнопку
-    const r = await api('POST', '/apply', { vacancyId: id, letter: readFileSync(args[i + 1], 'utf8').trim(), requestId: `cli-${Date.now()}` });
+    // CLI никогда не просит живой отклик (dry: true): иначе таблица n8n не узнала бы об отклике
+    const r = await api('POST', '/apply', {
+      vacancyId: id,
+      letter: readFileSync(args[i + 1], 'utf8').trim(),
+      requestId: `cli-${Date.now()}`,
+      dry: true,
+    });
     console.log(`${r.outcome} (${r.group}) за ${Math.round(r.ms / 1000)} с${r.note ? ` — ${r.note}` : ''}${r.shot ? ` · скриншот ${r.shot}` : ''}`);
     for (const t of r.trace ?? []) console.log(`  ${t.ms} мс  ${t.s} ${JSON.stringify({ ...t, s: undefined, ms: undefined })}`);
   },

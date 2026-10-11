@@ -34,12 +34,18 @@ export const SEL = {
   // Вопросы и тест работодателя
   questions: '[data-qa="employer-asking-for-test"], [data-qa="task-question"], [data-qa="task-body"]',
   taskTextarea: 'textarea[name^="task_"]',
-  // Чат отклика (iframe chatik.hh.ru)
-  chatText: 'textarea[data-qa="text-input"]',
+  // Чат отклика (iframe chatik.hh.ru/chat/<id>, запись 10.10.2026): у сообщения отклика «⊕ Добавить
+  // сопроводительное» → поле письма → «Отправить» → POST chatik/api/save — письмо встаёт в само сообщение отклика
+  chatAddLetter: '[data-qa="chatik-chat-message-applicant-action"]',
+  chatText: 'textarea[data-qa="text-input"], [data-qa="text-input"] textarea, [data-qa="chatik-message-input"] textarea',
   chatSend: '[data-qa="chatik-do-send-message"]',
   // Вход и капча — только по структуре: слово «captcha» есть и на обычных страницах (CLAUDE.md §8.1)
   loginForm: '[data-qa="account-login-form"]',
   captcha: 'form[action*="/account/captcha"], input[name="captchaText"], iframe[src*="smartcaptcha"]',
+  captchaForm: 'form[action*="/account/captcha"]',
+  captchaInput: 'input[name="captchaText"]',
+  captchaSubmit: 'form[action*="/account/captcha"] [type="submit"]',
+  smartCaptcha: 'iframe[src*="smartcaptcha"]',
   captchaImage: 'form[action*="/account/captcha"] img, img[src*="captcha"]',
   // Отклики
   negotiationsItem: '[data-qa="negotiations-item"]',
@@ -66,6 +72,8 @@ export const TEXT = {
   rejectWarning: /Скорее всего, будет отказ|Такой отклик может получить отказ/i,
   forceApply: /Вс[её] равно откликнуться/i,
   attachLetter: /Приложить сопроводительное/i,
+  // Чат отклика: действие у сообщения отклика без письма (запись 10.10.2026)
+  addLetter: /Добавить сопроводительное/i,
 };
 
 // Что разведка и запись проверяют на каждой странице: есть ли, видно ли, первые слова текста
@@ -100,3 +108,25 @@ export const RESPONSE_PAGE = /\/applicant\/vacancy_response(?!\/popup)/;
 // В сухом прогоне и разведке такой переход рвём ещё до POST
 export const FORCE_QUICK = /[?&]forceQuickResponse=true/;
 export const FORCE_QUICK_URL = /^https:\/\/(?:[a-z0-9-]+\.)*hh\.ru\/vacancy\/\d+\?/;
+
+// Действия живого отклика (запись 10.10.2026) — имя → адреса. Предохранитель пропускает не-GET только к адресам
+// действий, которые сценарий открыл (browser.mjs → guardAllow), сетевой журнал отклика ловит их ответы (flows/net.mjs):
+//   respond   POST /applicant/vacancy_response/popup — сам отклик (окно «Откликнуться» и отклик в один клик)
+//   letter    POST /applicant/vacancy_response/edit_ajax — «Приложить сопроводительное письмо» после отклика
+//   chat      POST chatik/api/save — письмо в сообщение отклика в чате; notify_chat_opened — чат открыт
+// quick — не адрес, а разрешение перехода на /vacancy/<id>?forceQuickResponse=true (FORCE_QUICK выше)
+export const ACTION_URL = {
+  respond: /^https:\/\/(?:[a-z0-9-]+\.)*hh\.ru\/applicant\/vacancy_response\/popup(?:[?#]|$)/,
+  letter: /^https:\/\/(?:[a-z0-9-]+\.)*hh\.ru\/applicant\/vacancy_response\/edit_ajax(?:[?#]|$)/,
+  chat: /^https:\/\/chatik\.hh\.ru\/chatik\/api\/save(?:[?#]|$)/,
+  chatOpened: /^https:\/\/chatik\.hh\.ru\/chatik\/api\/notify_chat_opened(?:[?#]|$)/,
+};
+export const GUARD_ALLOW = {
+  respond: [ACTION_URL.respond],
+  letter: [ACTION_URL.letter],
+  chat: [ACTION_URL.chat, ACTION_URL.chatOpened],
+};
+// Кадр чата отклика (iframe виджета чатов на странице вакансии или отдельная вкладка)
+export const CHAT_FRAME = /^https:\/\/chatik\.hh\.ru\/chat\/\d+/;
+// Страница hh (а не сайт работодателя): клик «Откликнуться» увёл с hh → отклик на внешнем сайте
+export const HH_PAGE = /^https:\/\/(?:[a-z0-9-]+\.)*hh\.ru(?:[/:?#]|$)/;

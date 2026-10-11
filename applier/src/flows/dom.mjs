@@ -4,13 +4,51 @@ import { SEL } from '../hh/selectors.mjs';
 import { popupPrediction } from '../hh/state.mjs';
 import { pause, rand } from '../util.mjs';
 
+// Видно ли (Playwright: ненулевой размер и не visibility:hidden — свёрнутое max-height:0 предупреждение не видно)
+export const visible = (locator) => locator.first().isVisible().catch(() => false);
+// Дождаться видимости ≤ ms
+export const visibleWithin = (locator, ms) =>
+  locator
+    .first()
+    .waitFor({ state: 'visible', timeout: ms })
+    .then(
+      () => true,
+      () => false,
+    );
+
+// Показано по-настоящему, с высотой: hh держит предупреждения окна отклика в разметке свёрнутыми (max-height: 0,
+// запись 10.10.2026 — «поменяйте видимость резюме» есть и в окне, где отклик прошёл)
+// boundingBox ждёт появления элемента до таймаута контекста (20 с) — сначала count, он не ждёт (симуляция 11.10.2026)
+export async function shownTall(locator, min = 8) {
+  if (!(await locator.count().catch(() => 0))) return false;
+  const box = await locator.first().boundingBox({ timeout: 1000 }).catch(() => null);
+  return Boolean(box && box.width > 0 && box.height >= min);
+}
+
 export async function captchaShown(page) {
   if (/\/account\/captcha/.test(page.url())) return true;
-  return page
-    .locator(SEL.captcha)
-    .first()
-    .isVisible()
-    .catch(() => false);
+  return visible(page.locator(SEL.captcha));
+}
+
+// Какая капча: smart — «Я не робот» (SmartCaptcha, решает человек в окне робота), captcha — картинка с текстом
+// (фото в Telegram, ответ текстом → POST /captcha), null — капчи нет
+export async function captchaKind(page) {
+  if (await visible(page.locator(SEL.smartCaptcha))) return 'smart';
+  if (/\/account\/captcha/.test(page.url())) return 'captcha';
+  if (await visible(page.locator(`${SEL.captchaForm}, ${SEL.captchaInput}`))) return 'captcha';
+  return null;
+}
+
+// Текст страницы (до 200 тыс. знаков) — для текстов-маркеров hh после клика
+export const bodyText = (page) =>
+  page.evaluate(() => (document.body?.innerText ?? '').slice(0, 200000)).catch(() => '');
+
+// Закрыть открытые окна hh (Escape, потом крестик окна отклика)
+export async function closeDialogs(page) {
+  await page.keyboard.press('Escape').catch(() => {});
+  await pause(300, 600);
+  const close = page.locator(SEL.modalClose).first();
+  if (await visible(close)) await close.click({ timeout: 3000 }).catch(() => {});
 }
 
 // Пауза «чтения» 3–8 с с прокруткой — как человек, открывший вакансию по ссылке из Telegram
