@@ -14,8 +14,8 @@ const job = $('Job').first().json;
 const res = $input.first()?.json ?? {};
 const body = res.body && typeof res.body === 'object' ? res.body : {};
 const accepted = Number(res.statusCode) === 200 && body.ok === true;
-// Капчи уже нет: блок сняли раньше (/go, «Общий экран») — ответ на старое фото не ошибка
-const gone = Number(res.statusCode) === 409;
+// Капчи уже нет: блок сняли раньше (/go, «Общий экран») — ответ на старое фото не ошибка. 409 { busy } — робот занят
+const gone = Number(res.statusCode) === 409 && !body.busy;
 const solved = accepted || gone;
 const out = { solved, deleteIds: [job.promptId, job.userMessageId].filter(Boolean), notice: null, text: '' };
 const state = $getWorkflowStaticData('global');
@@ -33,6 +33,7 @@ if (accepted) {
     silent: false,
   };
 } else {
-  out.text = `⚠️ Капча: ${esc(body.error ?? res.error?.message ?? 'робот не ответил')}. Решите в окне робота (${VNC_URL}) и пришлите /go`;
+  const why = body.error ?? (body.busy ? 'робот занят — ответьте на фото ещё раз через минуту' : res.error?.message ?? 'робот не ответил');
+  out.text = `⚠️ Капча: ${esc(why)}. Или решите в окне робота (${VNC_URL}) и пришлите /go`;
 }
 return [{ json: out }];

@@ -8,7 +8,8 @@
 //   GET  /shots/<имя>.jpg          скриншот
 //   POST /login                    открыть вход hh в окне робота («Общий экран» → vnc://localhost:5901)
 //   POST /resume                   перепроверить вход и капчу, снять блок
-//   POST /apply {vacancyId, letter, requestId}   отклик (6.0 — только сухой прогон до кнопки)
+//   POST /captcha {text}           ответ на капчу-картинку (фото в Telegram): ввести и отправить
+//   POST /apply {vacancyId, letter, requestId, dry}   отклик; APPLY_LIVE=0 или dry: true — сухой прогон до кнопки
 //   POST /recon {vacancyIds?, inbox?}            разведка без кликов — фоновое задание, 202
 //   POST /record {on}              запись: пользователь откликается сам в окне робота
 //   POST /record/paste {text}      во время записи: вставить текст (письмо с Mac) туда, где курсор
@@ -24,7 +25,7 @@ import { config } from './config.mjs';
 import { log } from './log.mjs';
 import { Busy, lock } from './lock.mjs';
 import { recallResult, rememberResult, store } from './store.mjs';
-import { prune } from './util.mjs';
+import { pause, prune, sleep } from './util.mjs';
 import {
   SHOTS,
   SHOT_NAME,
@@ -36,11 +37,12 @@ import {
   recycle,
   role,
   shot,
+  shotOf,
   shutdown,
 } from './browser.mjs';
-import { LOGIN_URL } from './hh/selectors.mjs';
+import { LOGIN_URL, SEL } from './hh/selectors.mjs';
 import { applyFlow } from './flows/apply.mjs';
-import { captchaShown } from './flows/dom.mjs';
+import { captchaKind, captchaShown, visible } from './flows/dom.mjs';
 import { reconInbox, reconVacancies } from './flows/recon.mjs';
 import { recordStart, recordStop, recording } from './flows/record.mjs';
 import { FAKE_OUTCOMES, fakeApply, fakeCaptcha, fakePush, fakeQueue, fakeResume } from './fake.mjs';
@@ -176,21 +178,72 @@ const routes = {
       if (loggedIn) await backupSession();
       const blocked = store.blocked;
       if (blocked?.kind === 'login' && loggedIn) store.unblock('вход восстановлен');
-      if (blocked?.kind === 'captcha' && !(await captchaShown(page))) store.unblock('капча пройдена');
+      if (['captcha', 'smart'].includes(blocked?.kind) && !(await captchaShown(page))) store.unblock('капча пройдена');
       if (blocked?.kind === 'errors') store.unblock('продолжить после сбоев');
+      // «hh не принял отклик» (спам, правила): человек посмотрел аккаунт и нажал ▶️
+      if (blocked?.kind === 'blocked') store.unblock('аккаунт проверен');
       if (!store.blocked) store.resetStreak();
       return { ok: true, loggedIn, blocked: store.blocked };
     }),
+
+  // Ответ пользователя на фото капчи (W9 ← ответ в Telegram): ввести текст в форму /account/captcha и отправить.
+  // 409 — капчи нет (блок сняли раньше: /go, «Общий экран»); не подошло — новая картинка { ok: false, shot }
+  'POST /captcha': (body) =>
+    lock.run(
+      'captcha',
+      async () => {
+        const text = String(body.text ?? '').trim();
+        if (!text) throw new HttpError(400, { ok: false, error: 'пустой ответ' });
+        if (store.blocked?.kind !== 'captcha') throw new HttpError(409, { ok: false, error: 'капчи нет' });
+        const page = await ensure();
+        const input = page.locator(SEL.captchaInput).first();
+        if (!(await visible(input))) {
+          if (await captchaShown(page)) return { ok: false, error: 'на экране капча без поля для текста' };
+          // Капчи на экране нет: решили в окне робота или страница ушла
+          store.unblock('капчи на экране нет');
+          return { ok: true, gone: true };
+        }
+        await input.fill(text);
+        await pause(300, 800);
+        const submit = page.locator(SEL.captchaSubmit).first();
+        if (await visible(submit)) await submit.click({ timeout: 5000 });
+        else await input.press('Enter');
+        await page.waitForURL((u) => !/\/account\/captcha/.test(u.href), { timeout: 10000 }).catch(() => {});
+        await page.waitForLoadState('domcontentloaded').catch(() => {});
+        await sleep(1000);
+        const kind = await captchaKind(page);
+        log('captcha.answer', { length: text.length, after: kind ?? 'none' });
+        if (kind === 'captcha') {
+          const name = await shotOf(page.locator(SEL.captchaForm), 'captcha');
+          store.amend({ shot: name });
+          return { ok: false, kind, shot: name };
+        }
+        if (kind === 'smart') {
+          store.block('smart', { shot: await shot('smart') });
+          return { ok: false, kind, error: 'hh показал капчу «Я не робот»' };
+        }
+        store.unblock('капча решена');
+        return { ok: true };
+      },
+      { wait: 10000 },
+    ),
 
   'POST /apply': async (body) => {
     const vacancyId = String(body.vacancyId ?? '').replace(/\D/g, '');
     if (!vacancyId) throw new HttpError(400, { error: 'нужен vacancyId' });
     const letter = String(body.letter ?? '');
+    // CLI просит только сухой прогон — даже при APPLY_LIVE=1 (живой отклик — только из W9: он ведёт таблицу)
+    const dry = body.dry === true;
     // Повтор после обрыва связи (деплой n8n, сон Mac): исход уже известен — не откликаемся второй раз
     const cached = recallResult(vacancyId);
     if (cached && cached.group === 'done') return { ...cached, cached: true };
     assertNotBlocked();
-    const result = await lock.run('apply', () => applyFlow({ vacancyId, letter }));
+    // Потолок живых откликов за «день» робота — сверх лимита из настроек бота (его считает W9): защита от ошибки в n8n
+    const today = store.today().applied;
+    if (config.live && !dry && today >= config.dailyCap) {
+      throw new HttpError(429, { error: `потолок дня робота: ${today} из ${config.dailyCap}`, today, cap: config.dailyCap });
+    }
+    const result = await lock.run('apply', () => applyFlow({ vacancyId, letter, dry }));
     rememberResult(vacancyId, result);
     return { ...result, requestId: body.requestId ?? null };
   },

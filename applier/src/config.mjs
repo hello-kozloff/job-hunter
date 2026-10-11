@@ -1,6 +1,6 @@
 // Настройки робота из environment контейнера (docker-compose.yml ← .env).
 export const config = {
-  version: '6.0.0',
+  version: '6.1.0',
   port: Number(process.env.PORT ?? 3000),
   // Без токена сервер не стартует: API робота — это доступ к аккаунту hh (server.mjs)
   token: String(process.env.APPLIER_TOKEN ?? ''),

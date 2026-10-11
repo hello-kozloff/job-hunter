@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { config } from './config.mjs';
 import { log } from './log.mjs';
-import { FORCE_QUICK, FORCE_QUICK_URL, GUARD_URL, HH, RESPONSE_PAGE } from './hh/selectors.mjs';
+import { FORCE_QUICK, FORCE_QUICK_URL, GUARD_ALLOW, GUARD_URL, HH, RESPONSE_PAGE } from './hh/selectors.mjs';
 import { roleFromCookies } from './hh/state.mjs';
 import { stamp, writeJsonAtomic } from './util.mjs';
 
@@ -19,13 +19,16 @@ let page = null;
 let starting = null;
 let status = 'down';
 let launchedAt = 0;
-// Сетевой предохранитель включён по умолчанию; выключают только запись (человек откликается сам) и живой отклик
+// Сетевой предохранитель включён по умолчанию; выключает только запись (человек откликается сам). Живой отклик
+// его не выключает, а открывает по одному действию (guardAllow): всё остальное, что может изменить аккаунт, рвётся
 let guardOn = true;
+let allowed = new Set();
 
 export const browserStatus = () => ({
   status,
   since: launchedAt ? new Date(launchedAt).toISOString() : null,
   guard: guardOn,
+  allowed: [...allowed],
 });
 export const launchedHoursAgo = () => (launchedAt ? (Date.now() - launchedAt) / 3600000 : 0);
 
@@ -33,6 +36,31 @@ export function setGuard(on) {
   if (guardOn === Boolean(on)) return;
   guardOn = Boolean(on);
   log('guard', { on: guardOn });
+}
+
+// Живой отклик: открыть действия по именам (hh/selectors.mjs → GUARD_ALLOW, quick — переход forceQuickResponse).
+// Сценарий открывает их по мере шагов и закрывает все в конце (guardReset)
+export function guardAllow(...names) {
+  for (const name of names) allowed.add(name);
+  log('guard.allow', { names: [...allowed] });
+}
+export function guardReset() {
+  if (!allowed.size) return;
+  allowed = new Set();
+  log('guard.reset');
+}
+const isAllowed = (url) => [...allowed].some((name) => (GUARD_ALLOW[name] ?? []).some((re) => re.test(url)));
+
+// Рвать ли запрос: не-GET к адресам, которые могут изменить аккаунт (кроме открытых действий), и переход на
+// ?forceQuickResponse=true (без открытого quick). Отдельной функцией — её же зовёт симуляция отклика (applier/sim)
+export function guardBlocks(req) {
+  if (!guardOn) return false;
+  const url = req.url();
+  const write = req.method() !== 'GET' && GUARD_URL.test(url) && !isAllowed(url);
+  const quick = req.resourceType() === 'document' && FORCE_QUICK_URL.test(url) && FORCE_QUICK.test(url) && !allowed.has('quick');
+  if (!write && !quick) return false;
+  log('guard.blocked', { method: req.method(), path: new URL(url).pathname, ...(quick && { force: 'quickResponse' }) });
+  return true;
 }
 
 async function launch() {
@@ -58,23 +86,16 @@ async function launch() {
   // (разведка 10.10.2026), его только пишем в журнал. Перехватываем только эти адреса — кэш остальных не трогаем
   await context.route(GUARD_URL, (route) => {
     const req = route.request();
-    const path = new URL(req.url()).pathname;
-    if (guardOn && req.method() !== 'GET') {
-      log('guard.blocked', { method: req.method(), path });
-      return route.abort('blockedbyclient');
+    if (guardBlocks(req)) return route.abort('blockedbyclient');
+    if (req.resourceType() === 'document' && RESPONSE_PAGE.test(req.url())) {
+      log('nav.response_page', { path: new URL(req.url()).pathname });
     }
-    if (req.resourceType() === 'document' && RESPONSE_PAGE.test(req.url())) log('nav.response_page', { path });
     return route.continue();
   });
   // Переход на /vacancy/<id>?forceQuickResponse=true — страница сама отправит отклик «в один клик»
-  await context.route(FORCE_QUICK_URL, (route) => {
-    const req = route.request();
-    if (guardOn && req.resourceType() === 'document' && FORCE_QUICK.test(req.url())) {
-      log('guard.blocked', { method: req.method(), path: new URL(req.url()).pathname, force: 'quickResponse' });
-      return route.abort('blockedbyclient');
-    }
-    return route.continue();
-  });
+  await context.route(FORCE_QUICK_URL, (route) =>
+    guardBlocks(route.request()) ? route.abort('blockedbyclient') : route.continue(),
+  );
   page = context.pages()[0] ?? (await context.newPage());
   await restoreSession();
   status = 'up';
@@ -144,11 +165,24 @@ export async function shutdown() {
 
 // Скриншот видимой части окна: JPEG q70 — Telegram не принимает длинные картинки во всю страницу
 export const SHOT_NAME = /^\d{8}-\d{6}-[a-z0-9-]+\.(jpg|png)$/;
+const shotName = (tag) =>
+  `${stamp()}-${String(tag).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'shot'}.jpg`;
 export async function shot(tag, dir = SHOTS) {
   const p = await ensure();
   mkdirSync(dir, { recursive: true });
-  const slug = String(tag).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'shot';
-  const name = `${stamp()}-${slug}.jpg`;
+  const name = shotName(tag);
   await p.screenshot({ path: join(dir, name), type: 'jpeg', quality: 70 });
   return name;
+}
+
+// Снимок одного элемента (картинка капчи для Telegram — крупно); не вышло — всё окно
+export async function shotOf(locator, tag) {
+  mkdirSync(SHOTS, { recursive: true });
+  const name = shotName(tag);
+  try {
+    await locator.screenshot({ path: join(SHOTS, name), type: 'jpeg', quality: 85, timeout: 5000 });
+    return name;
+  } catch {
+    return shot(tag);
+  }
 }
