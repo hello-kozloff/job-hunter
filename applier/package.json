@@ -1,0 +1,17 @@
+{
+  "name": "job-hunter-applier",
+  "private": true,
+  "version": "6.0.0",
+  "description": "Робот-отклик на hh.ru (этап 6): Playwright с постоянным профилем и HTTP API для n8n",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "playwright-core": "1.64.0"
+  }
+}

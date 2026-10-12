@@ -27,12 +27,16 @@ const IDS = {
   summary: 'jobHunterW6Summ1',
   menu: 'jobHunterW7Menu1',
   clock: 'jobHunterW8Clock',
+  // Робот-отклик (этап 6, docs/stages/stage-6.md): очередь 🚀, капча, блоки
+  robot: 'jobHunterW9Robot',
   n8nApiCredential: 'jobHunterN8nApi1',
   // Ключ API healthchecks.io (HC_API_KEY в .env) — бот обновляет расписание стража (07.10.2026)
   hcCredential: 'jobHunterHcApi01',
   telegramCredential: 'jobHunterTgBot01',
   geminiCredential: 'jobHunterGemini1',
   claudeCredential: 'jobHunterClaude1',
+  // Токен API робота-отклика (APPLIER_TOKEN в .env) — заголовок X-Applier-Token
+  applierCredential: 'jobHunterApplier',
 };
 
 const uuid = (seed) => {
@@ -340,6 +344,8 @@ const PANEL_LAYOUTS = [
         ['🧹 Фильтр', panelButton('filter.cb')],
         ['🤖 Нейросеть', panelButton('llm.cb')],
       ],
+      // Робот-отклик (этап 6)
+      [['🚀 Робот', panelButton('apply.cb')]],
     ],
   ],
   [
@@ -416,6 +422,37 @@ const PANEL_LAYOUTS = [
       // Спорные случаи — списком «случай: решение» (решение пользователя 07.10.2026: текстом, а не кнопками)
       [['✏️ Спорные случаи', 'sw:llm.cases']],
       [['⬅️ Настройки', 's:root']],
+    ],
+  ],
+  // Отсеянная фильтром (08.10.2026): решение без карточки в ленте или «🤖 На оценку» — вернуть нейросети
+  [
+    'open rescue',
+    [
+      [
+        ['✅ Откликнусь', panelButton('apply')],
+        ['🤔 Возможно', panelButton('maybe')],
+        ['📨 Уже откликался', panelButton('earlier')],
+      ],
+      [['🤖 На оценку', panelButton('score')]],
+      [
+        ['🔗 На hh', { url: panelButton('url') }],
+        ['⬅️ К списку', panelButton('back')],
+      ],
+    ],
+  ],
+  // ⚙️ → 🚀 Робот (этап 6): вкл/выкл, пауза очереди, лимит в день; ▶️ — продолжить после капчи или входа (W9)
+  [
+    'set apply',
+    [
+      [
+        [panelButton('enabled.text'), panelButton('enabled.cb')],
+        [panelButton('paused.text'), panelButton('paused.cb')],
+      ],
+      [[panelButton('limit.text'), panelButton('limit.cb')]],
+      [
+        ['▶️ Продолжить', 'rb:go'],
+        ['⬅️ Настройки', 's:root'],
+      ],
     ],
   ],
 ];
@@ -520,9 +557,14 @@ const editMessage = (name, position, { chatId, messageId, text, rows }, wf = 'W3
     { credentials: TELEGRAM_CREDENTIAL, ...extra },
   );
 
+// W3: правка карточки или письма после нажатия. Двойное нажатие (тот же вид) → Telegram «message is not
+// modified» — не ошибка (как правка панели в W7); ноды ниже читают Apply choice / Apply sent, не $json
+const editW3 = (name, position, params) =>
+  editMessage(name, position, params, 'W3', { onError: 'continueRegularOutput' });
+
 // W3: перерисовать карточку после нажатия. src — нода с chatId / messageId / text
 const editCard = (name, position, rows, src = CHOICE, messageId = 'messageId') =>
-  editMessage(name, position, {
+  editW3(name, position, {
     chatId: `={{ ${src}.chatId }}`,
     messageId: `={{ ${src}.${messageId} }}`,
     text: `={{ ${src}.text }}`,
@@ -540,6 +582,104 @@ const letterButtons = (src) => [
     ['📨 Отправил', `=l:{{ ${src}.id }}:sent`],
   ],
 ];
+
+// ---------- Робот-отклик (этап 6, docs/stages/stage-6.md) ----------
+
+// Робот — сервис applier в том же docker compose (applier/src/server.mjs)
+const APPLIER = 'http://applier:3000';
+const APPLIER_CREDENTIAL = { httpHeaderAuth: { id: IDS.applierCredential, name: 'Applier' } };
+
+// Запрос к роботу. full — полный ответ без исключений (коды 409 / 423 / 429 — часть контракта), иначе — тело ответа;
+// file — ответ файлом в binary «data» (скриншот). Нет связи — item { error } (onError: continue)
+const applierNode = (wf, name, position, { method = 'GET', path, body, timeout = 10000, full = false, file = false }, extra = {}) =>
+  node(
+    wf,
+    name,
+    'httpRequest',
+    4.5,
+    position,
+    {
+      method,
+      url: `=${APPLIER}${path}`,
+      authentication: 'genericCredentialType',
+      genericAuthType: 'httpHeaderAuth',
+      ...(body && { sendBody: true, contentType: 'json', specifyBody: 'json', jsonBody: body }),
+      options: {
+        response: {
+          response: file
+            ? { responseFormat: 'file' }
+            : { fullResponse: full, neverError: true, responseFormat: 'json' },
+        },
+        timeout,
+      },
+    },
+    { credentials: APPLIER_CREDENTIAL, onError: 'continueRegularOutput', ...extra },
+  );
+
+// Фото из binary «data» (скриншот робота): подпись HTML; reply, звук — в fields
+const sendPhoto = (wf, name, position, { caption, fields = {}, markup, extra = {} }) =>
+  node(
+    wf,
+    name,
+    'telegram',
+    1.2,
+    position,
+    {
+      resource: 'message',
+      operation: 'sendPhoto',
+      chatId: '={{ $env.TG_CHAT_ID }}',
+      binaryData: true,
+      binaryPropertyName: 'data',
+      ...(markup ?? {}),
+      additionalFields: { caption, parse_mode: 'HTML', fileName: 'shot.jpg', ...fields },
+    },
+    { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput', ...extra },
+  );
+
+// Кнопки письма с роботом: [🚀 Откликнуться роботом] сверху (решение пользователя 10.10.2026)
+const robotLetterButtons = (src) => [[['🚀 Откликнуться роботом', `=l:{{ ${src}.id }}:robot`]], ...letterButtons(src)];
+// Вид письма → кнопки: robot (с 🚀) | manual (без 🚀) | wait (в очереди робота: только ⛔) | done (отправлено роботом)
+// | none (закрыта — без кнопок). Telegram-нода не меняет число кнопок на ходу — по ноде на вид
+const LETTER_VIEWS = [
+  ['robot', (src) => robotLetterButtons(src)],
+  ['manual', (src) => letterButtons(src)],
+  ['wait', (src) => [[['⛔ Отменить', `=l:{{ ${src}.id }}:stop`]]]],
+  [
+    'done',
+    (src) => [
+      [
+        ['🔗 Вакансия', { url: `={{ ${src}.url }}` }],
+        ['📋 К вакансиям', 'p:n'],
+      ],
+    ],
+  ],
+  ['none', () => null],
+];
+// Перерисовать письмо по $json.layout: Switch «View» → нода правки на каждый вид; вид '' или неизвестный — последний
+// выход, ни к чему не подключён. Вход: { chatId, messageId, text, layout, id, url, apply_url }
+function letterViewNodes(wf, [x, y]) {
+  const names = LETTER_VIEWS.map(([layout]) => layout);
+  return {
+    nodes: [
+      node(wf, 'View', 'switch', 3.4, [x, y], {
+        mode: 'expression',
+        numberOutputs: names.length + 1,
+        output: `={{ ((i) => (i < 0 ? ${names.length} : i))(${JSON.stringify(names)}.indexOf($json.layout)) }}`,
+        options: {},
+      }),
+      ...LETTER_VIEWS.map(([layout, rows], i) =>
+        editMessage(
+          `Letter: ${layout}`,
+          [x + 220, y - 200 + i * 100],
+          { chatId: '={{ $json.chatId }}', messageId: '={{ $json.messageId }}', text: '={{ $json.text }}', rows: rows('$json') },
+          wf,
+          { onError: 'continueRegularOutput' },
+        ),
+      ),
+    ],
+    links: names.map((layout, i) => ['View', `Letter: ${layout}`, i]),
+  };
+}
 
 // ---------- Workflow ----------
 
@@ -1084,6 +1224,9 @@ const workflows = {
       // Меню бота (кнопки под полем ввода, команды, кнопки панели) — в W7 Bot menu
       node('W3', 'Panel?', 'if', 2.3, [440, -400], ifTrue('W3', "={{ $json.action === 'panel' }}")),
       runWorkflow('W3', 'Menu', [660, -500], IDS.menu),
+      // Робот-отклик (этап 6): 🚀, ⛔, ▶️, /go, ответ на фото капчи — всё решает W9 Robot (он и отвечает на нажатие)
+      node('W3', 'Robot?', 'if', 2.3, [440, -250], ifTrue('W3', "={{ $json.action === 'robot' }}")),
+      runWorkflow('W3', 'Robot', [660, -300], IDS.robot),
       node('W3', 'Button?', 'if', 2.3, [440, 0], ifTrue('W3', "={{ $json.action === 'choice' }}")),
       // Кнопка на карточке
       node('W3', 'Vacancy', 'dataTable', 1.1, [660, -100], {
@@ -1093,6 +1236,33 @@ const workflows = {
         ...byId('={{ $json.id }}'),
         returnAll: false,
         limit: 1,
+      }),
+      // Отсеянная фильтром без описания (08.10.2026): ✅ / 🤔 / 🤖 с панели — сначала страница с hh (письму и нейросети
+      // нужно описание). Не открылась — решение всё равно принимается
+      node('W3', 'Rescue page?', 'if', 2.3, [770, -300], ifTrue('W3',
+        "={{ $json.status === 'rejected' && !$json.description && ['apply', 'maybe', 'score'].includes($('Route').first().json.choice) }}")),
+      node(
+        'W3',
+        'Rescue page',
+        'httpRequest',
+        4.5,
+        [880, -450],
+        hhRequest({ url: '={{ $json.url }}', headers: [...BROWSER_HEADERS, ['Referer', 'https://hh.ru/search/vacancy']] }),
+      ),
+      code('W3', 'Rescue parse', 'n8n/w3-telegram/rescue-parse.js', [1100, -450]),
+      node('W3', 'Save page', 'dataTable', 1.1, [1320, -450], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        ...byId('={{ $json.id }}'),
+        columns: setColumns({
+          description: '={{ $json.description }}',
+          key_skills: '={{ $json.key_skills }}',
+          has_test: '={{ $json.has_test }}',
+          contract: '={{ $json.contract }}',
+          error: '={{ $json.error }}',
+        }),
+        options: {},
       }),
       code('W3', 'Apply choice', 'n8n/w3-telegram/apply-choice.js', [880, -100]),
       node('W3', 'Save choice', 'dataTable', 1.1, [1100, -100], {
@@ -1122,7 +1292,24 @@ const workflows = {
         { credentials: TELEGRAM_CREDENTIAL },
       ),
       node('W3', 'Decided?', 'if', 2.3, [1540, -100], ifTrue('W3', `={{ ${CHOICE}.keyboard === 'decided' }}`)),
+      // Отсеянная фильтром: карточки в ленте нет — отправить новую (на неё ответят «Почему?» и письмо)
+      node('W3', 'New card?', 'if', 2.3, [1650, -300], ifTrue('W3', `={{ ${CHOICE}.new_card }}`)),
+      telegram('W3', 'Card: new', [1760, -400], {
+        text: `={{ ${CHOICE}.text }}`,
+        fields: { disable_notification: true },
+        markup: { replyMarkup: 'inlineKeyboard', inlineKeyboard: keyboard([[['↩️ Изменить', `=v:{{ ${CHOICE}.id }}:edit`]]]) },
+      }),
+      node('W3', 'Save card', 'dataTable', 1.1, [1870, -400], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        ...byId(`={{ ${CHOICE}.id }}`),
+        columns: setColumns({ tg_message_id: '={{ $json.result.message_id }}', card_at: '={{ new Date().toISOString() }}' }),
+        options: {},
+      }),
       editCard('Card: decided', [1760, -200], [[['↩️ Изменить', `=v:{{ ${CHOICE}.id }}:edit`]]]),
+      // keyboard = none (🤖 На оценку, закрыта на hh) — перерисовывать нечего
+      node('W3', 'Choose?', 'if', 2.3, [1650, 0], ifTrue('W3', `={{ ${CHOICE}.keyboard === 'choose' }}`)),
       editCard('Card: choose', [1760, 0], [
         [
           ['✅ Откликнусь', `=v:{{ ${CHOICE}.id }}:apply`],
@@ -1137,7 +1324,10 @@ const workflows = {
       node('W3', 'Ask?', 'if', 2.3, [1980, -200], ifTrue('W3', `={{ Boolean(${CHOICE}.ask) }}`)),
       telegram('W3', 'Ask why', [2200, -200], {
         text: `={{ ${CHOICE}.ask }}`,
-        fields: { reply_to_message_id: `={{ ${CHOICE}.messageId }}` },
+        // У отсеянной фильтром карточка только что отправлена («Card: new»)
+        fields: {
+          reply_to_message_id: `={{ ${CHOICE}.messageId || ($('Card: new').isExecuted ? $('Card: new').first().json.result.message_id : '') }}`,
+        },
         markup: { replyMarkup: 'forceReply', forceReply: { force_reply: true } },
       }),
       node('W3', 'Save ask', 'dataTable', 1.1, [2420, -200], {
@@ -1168,33 +1358,47 @@ const workflows = {
         operation: 'update',
         dataTableId: VACANCIES,
         ...byId('={{ $json.id }}'),
-        columns: setColumns({ status: '={{ $json.status }}', applied_at: '={{ $json.applied_at }}' }),
+        columns: setColumns({
+          status: '={{ $json.status }}',
+          applied_at: '={{ $json.applied_at }}',
+          apply_by: '={{ $json.apply_by }}',
+        }),
         options: {},
       }),
       answerQuery('W3', 'Answer sent', [1760, 300], `={{ ${SENT}.queryId }}`, `={{ ${SENT}.toast }}`),
+      // Вакансия в очереди робота (этап 6) — только тост, кнопки письма и карточки не трогаем
+      node('W3', 'Busy sent?', 'if', 2.3, [1870, 300], ifTrue('W3', `={{ ${SENT}.busy }}`)),
       node('W3', 'Sent?', 'if', 2.3, [1980, 300], ifTrue('W3', `={{ ${SENT}.sent }}`)),
       // «📨 Отправил»: у письма — только «↩️ Отменить», у карточки кнопок нет
-      editMessage('Letter: sent', [2200, 250], {
+      editW3('Letter: sent', [2200, 250], {
         chatId: `={{ ${SENT}.chatId }}`,
         messageId: `={{ ${SENT}.letterMessageId }}`,
         text: `={{ ${SENT}.letterText }}`,
         // «📋 К вакансиям» — новая панель со списком там, где был (p:n → W7)
         rows: [[['↩️ Отменить', `=l:{{ ${SENT}.id }}:unsent`]], [['📋 К вакансиям', 'p:n']]],
       }),
-      editMessage('Card: sent', [2420, 250], {
+      editW3('Card: sent', [2420, 250], {
         chatId: `={{ ${SENT}.chatId }}`,
         messageId: `={{ ${SENT}.cardId }}`,
         text: `={{ ${SENT}.cardText }}`,
         rows: null,
       }),
       // «↩️ Отменить»: письму возвращаются все кнопки, карточке — «↩️ Изменить»
-      editMessage('Letter: restore', [2200, 400], {
+      editW3('Letter: restore', [2200, 400], {
         chatId: `={{ ${SENT}.chatId }}`,
         messageId: `={{ ${SENT}.letterMessageId }}`,
         text: `={{ ${SENT}.letterText }}`,
         rows: letterButtons(SENT),
       }),
-      editMessage('Card: restore', [2420, 400], {
+      // Вакансия подходит роботу (этап 6) — письму возвращается и 🚀; выключенного робота W9 поймает при нажатии
+      node('W3', 'Restore robot?', 'if', 2.3, [2090, 450], ifTrue('W3', `={{ ${SENT}.robot }}`)),
+      editW3('Letter: restore robot', [2200, 550], {
+        chatId: `={{ ${SENT}.chatId }}`,
+        messageId: `={{ ${SENT}.letterMessageId }}`,
+        text: `={{ ${SENT}.letterText }}`,
+        rows: robotLetterButtons(SENT),
+      }),
+      editW3('Card: restore', [2420, 400], {
         chatId: `={{ ${SENT}.chatId }}`,
         messageId: `={{ ${SENT}.cardId }}`,
         text: `={{ ${SENT}.cardText }}`,
@@ -1221,6 +1425,13 @@ const workflows = {
         limit: 1,
       }),
       code('W3', 'Reply kind', 'n8n/w3-telegram/reply-kind.js', [1100, 500]),
+      // Ответ на письмо, пока робот его отправляет (этап 6), — правку не применяем
+      node('W3', 'Busy?', 'if', 2.3, [1210, 450], ifTrue('W3', "={{ $json.kind === 'busy' }}")),
+      telegram('W3', 'Busy reply', [1320, 350], {
+        text: '🚀 Робот уже откликается с этим письмом — правку не применяю. Сначала ⛔ под письмом',
+        fields: { reply_to_message_id: "={{ $('Route').first().json.messageId }}", disable_notification: true },
+        markup: MENU_KEYBOARD,
+      }),
       node('W3', 'Revise?', 'if', 2.3, [1320, 500], ifTrue('W3', "={{ $json.kind === 'revise' }}")),
       node('W3', 'Save reason', 'dataTable', 1.1, [1540, 600], {
         resource: 'row',
@@ -1259,6 +1470,10 @@ const workflows = {
         },
         { onError: 'continueRegularOutput' },
       ),
+      // «🤖 На оценку» у отсеянной (08.10.2026): оценить сразу, не дожидаясь сбора. Ниже панели — n8n (execution order v1)
+      // запустит W2 последним
+      node('W3', 'Score?', 'if', 2.3, [1540, 950], ifTrue('W3', `={{ ${CHOICE}.score }}`)),
+      runWorkflow('W3', 'Score now', [1760, 950], IDS.score),
       code('W3', 'Panel job', 'n8n/w3-telegram/panel-job.js', [1760, 150]),
       runWorkflow('W3', 'Panel refresh', [1980, 150], IDS.menu),
       // Письмо: одна нода на три ветки (✅, «🔄 Переписать», ответ на письмо) → W5 Letter
@@ -1312,20 +1527,35 @@ const workflows = {
       ['Telegram Trigger', 'Route'],
       ['Route', 'Panel?'],
       ['Panel?', 'Menu', 0],
-      ['Panel?', 'Button?', 1],
+      ['Panel?', 'Robot?', 1],
+      ['Robot?', 'Robot', 0],
+      ['Robot?', 'Button?', 1],
       ['Button?', 'Vacancy', 0],
-      ['Vacancy', 'Apply choice'],
+      ['Vacancy', 'Rescue page?'],
+      ['Rescue page?', 'Rescue page', 0],
+      ['Rescue page', 'Rescue parse'],
+      ['Rescue parse', 'Save page'],
+      ['Save page', 'Apply choice'],
+      ['Rescue page?', 'Apply choice', 1],
       ['Apply choice', 'Save choice'],
       ['Save choice', 'Answer'],
       ['Answer', 'Decided?'],
       ['Answer', 'From panel?'],
       ['Answer', 'Ban?'],
+      ['Answer', 'Score?'],
+      ['Score?', 'Score now', 0],
       ['Ban?', 'Ban company', 0],
       ['From panel?', 'Panel job', 0],
       ['From panel?', 'Sync job', 1],
       ['Panel job', 'Panel refresh'],
-      ['Decided?', 'Card: decided', 0],
-      ['Decided?', 'Card: choose', 1],
+      ['Decided?', 'New card?', 0],
+      ['New card?', 'Card: new', 0],
+      ['Card: new', 'Save card'],
+      ['Save card', 'Ask?'],
+      ['Save card', 'Letter?'],
+      ['New card?', 'Card: decided', 1],
+      ['Decided?', 'Choose?', 1],
+      ['Choose?', 'Card: choose', 0],
       ['Card: decided', 'Ask?'],
       ['Ask?', 'Ask why', 0],
       ['Ask why', 'Save ask'],
@@ -1339,17 +1569,23 @@ const workflows = {
       ['Sent row', 'Apply sent'],
       ['Apply sent', 'Save sent'],
       ['Save sent', 'Answer sent'],
-      ['Answer sent', 'Sent?'],
+      ['Answer sent', 'Busy sent?'],
+      ['Busy sent?', 'Sent?', 1],
       ['Sent?', 'Letter: sent', 0],
       ['Letter: sent', 'Card: sent'],
-      ['Sent?', 'Letter: restore', 1],
+      ['Sent?', 'Restore robot?', 1],
+      ['Restore robot?', 'Letter: restore robot', 0],
+      ['Restore robot?', 'Letter: restore', 1],
       ['Letter: restore', 'Card: restore'],
+      ['Letter: restore robot', 'Card: restore'],
       ['Card: sent', 'Sync job'],
       ['Card: restore', 'Sync job'],
       ['Sync job', 'Panel sync'],
       ['Letter button?', 'Reply row', 1],
       ['Reply row', 'Reply kind'],
-      ['Reply kind', 'Revise?'],
+      ['Reply kind', 'Busy?'],
+      ['Busy?', 'Busy reply', 0],
+      ['Busy?', 'Revise?', 1],
       ['Revise?', 'Letter job', 0],
       ['Revise?', 'Save reason', 1],
       ['Save reason', 'Confirm'],
@@ -1454,10 +1690,20 @@ const workflows = {
       ),
       code('W5', 'Parse letter', 'n8n/w5-letter/parse-letter.js', [2420, 0]),
       code('W5', 'Format letter', 'n8n/w5-letter/format-letter.js', [2640, 0]),
-      telegram('W5', 'Send letter', [2860, 0], {
+      // Робот включён и вакансия ему подходит (этап 6) — письмо сразу с [🚀 Откликнуться роботом]
+      node('W5', 'Robot letter?', 'if', 2.3, [2750, 0], ifTrue('W5', '={{ $json.robot }}')),
+      telegram('W5', 'Send letter', [2860, 100], {
         markup: {
           replyMarkup: 'inlineKeyboard',
           inlineKeyboard: keyboard(letterButtons('$json')),
+        },
+        fields: { reply_to_message_id: '={{ $json.replyTo }}' },
+        extra: { onError: 'continueRegularOutput' },
+      }),
+      telegram('W5', 'Send letter: robot', [2860, -100], {
+        markup: {
+          replyMarkup: 'inlineKeyboard',
+          inlineKeyboard: keyboard(robotLetterButtons('$json')),
         },
         fields: { reply_to_message_id: '={{ $json.replyTo }}' },
         extra: { onError: 'continueRegularOutput' },
@@ -1518,8 +1764,11 @@ const workflows = {
       ['Claude', 'Parse letter'],
       ['Gemini', 'Parse letter'],
       ['Parse letter', 'Format letter'],
-      ['Format letter', 'Send letter'],
+      ['Format letter', 'Robot letter?'],
+      ['Robot letter?', 'Send letter: robot', 0],
+      ['Robot letter?', 'Send letter', 1],
       ['Send letter', 'Letter sent'],
+      ['Send letter: robot', 'Letter sent'],
       ['Letter sent', 'Save letter'],
       ['Save letter', 'Old letters'],
       ['Old letters', 'Delete old letter'],
@@ -1627,6 +1876,8 @@ const workflows = {
           executeOnce: true,
         },
       ),
+      // Робот-отклик (этап 6): жив ли, вошёл ли в hh, не ждёт ли человека — для сводки, если он включён
+      applierNode('W6', 'Robot health', [1210, 400], { path: '/health', timeout: 5000 }, { executeOnce: true }),
       // Туннель ngrok жив, если снаружи отвечает 403: политика не пускает адреса не из Telegram
       node(
         'W6',
@@ -1740,7 +1991,8 @@ const workflows = {
       ['Plan', 'Settings'],
       ['Settings', 'Runs'],
       ['Runs', 'Executions'],
-      ['Executions', 'Tunnel'],
+      ['Executions', 'Robot health'],
+      ['Robot health', 'Tunnel'],
       ['Tunnel', 'Summary'],
       ['Summary', 'Send summary'],
       ['Plan', 'Cleanup'],
@@ -1806,6 +2058,9 @@ const workflows = {
           onError: 'continueRegularOutput',
         },
       ),
+      // ⚙️ → 🚀 Робот поменяли — W9: выключили → очередь назад в ✅, иначе обработать очередь
+      code('W7', 'Robot kick', 'n8n/w7-menu/robot-kick.js', [1980, -1450]),
+      runWorkflow('W7', 'Run W9', [2200, -1450], IDS.robot),
       code('W7', 'Collect now', 'n8n/w7-menu/collect-now.js', [1540, -1100]),
       runWorkflow('W7', 'Run W1', [1760, -1100], IDS.collector),
       // Чёрный список — для ⚙️ → 🧹 Фильтр; «🗑 Убрать» удаляет строку до «Render»
@@ -1856,6 +2111,10 @@ const workflows = {
         },
         { executeOnce: true, alwaysOutputData: true },
       ),
+      // Состояние робота — только для ⚙️ (корень и 🚀 Робот): остальным панелям лишний запрос не нужен
+      node('W7', 'Robot health?', 'if', 2.3, [1870, 150], ifTrue('W7',
+        "={{ $('Job').first().json.view === 'settings' && ['root', 'apply', undefined, ''].includes($('Job').first().json.section) }}")),
+      applierNode('W7', 'Robot health', [1980, 250], { path: '/health', timeout: 3000 }, { executeOnce: true }),
       code('W7', 'Render', 'n8n/w7-menu/render.js', [1980, 0]),
       // Выход = $json.route (render.js): раскладка × новое сообщение (чётный) / правка панели (нечётный), 10 — приветствие
       node('W7', 'Layout', 'switch', 3.4, [1980, -300], {
@@ -1913,6 +2172,8 @@ const workflows = {
       ['Settings', 'Blacklist'],
       ['Blacklist', 'Setting change'],
       ['Setting change', 'Save setting'],
+      ['Save setting', 'Robot kick'],
+      ['Robot kick', 'Run W9'],
       ['Save setting', 'HC plan'],
       ['HC plan', 'HC sync'],
       ['Blacklist', 'Collect now'],
@@ -1921,7 +2182,10 @@ const workflows = {
       ['Unban', 'Delete ban'],
       ['Blacklist', 'Rows'],
       ['Rows', 'Runs'],
-      ['Runs', 'Render'],
+      ['Runs', 'Robot health?'],
+      ['Robot health?', 'Robot health', 0],
+      ['Robot health', 'Render'],
+      ['Robot health?', 'Render', 1],
       ['Render', 'Layout'],
       ...PANEL_LAYOUTS.flatMap(([layout], i) => [
         ['Layout', `New: ${layout}`, i * 2],
@@ -1963,6 +2227,487 @@ const workflows = {
     // Тики без сбора не храним: 96 запусков в сутки. Static data (dispatchedAt) сохраняется и так
     { timezone: 'Europe/Moscow', errorWorkflow: IDS.errors, saveDataSuccessExecution: 'none' },
   ),
+
+  // Робот-отклик (этап 6, docs/stages/stage-6.md): очередь 🚀 в колонке apply_state, отклик — сервис applier
+  'w9-robot': (() => {
+    const view = letterViewNodes('W9', [2420, -1300]);
+    const GATE = "$('Gate').first().json";
+    const NOTICE = "$('Notice item').first().json.notice";
+    const RESULT = "$('Result').first().json";
+    const JOB = "$('Job').first().json";
+    return workflow(
+      IDS.robot,
+      'W9 Robot',
+      [
+        // Вызов: W3 (🚀 ⛔ ▶️ /go, ответ на капчу), W7 (⚙️ → 🚀 Робот), W10 (6.2), сам W9 (очередь не пуста)
+        node('W9', 'Called', 'executeWorkflowTrigger', 1.1, [0, -200], { inputSource: 'passthrough' }),
+        // Раз в минуту — страховка: после сна Mac, капчи, занятости робота, на следующий «день»
+        node('W9', 'Schedule', 'scheduleTrigger', 1.4, [0, 0], {
+          rule: { interval: [{ field: 'cronExpression', expression: '* * * * *' }] },
+          misfirePolicy: 'coalesce',
+        }),
+        node('W9', 'Manual', 'manualTrigger', 1, [0, 200], {}),
+        code('W9', 'Job', 'n8n/w9-robot/job.js', [220, 0]),
+        settingsNode('W9', [440, 0]),
+        // 0 — 🚀 / ⛔, 1 — очередь, 2 — ▶️ / /go, 3 — ответ на капчу, 4 — робот выключен.
+        // Один раз: «Settings» отдаёт по item на настройку — иначе каждая ветка шла бы столько же раз
+        node(
+          'W9',
+          'Op',
+          'switch',
+          3.4,
+          [660, 0],
+          {
+            mode: 'expression',
+            numberOutputs: 5,
+            output: `={{ ({ enqueue: 0, stop: 0, tick: 1, resume: 2, captcha: 3, dequeue: 4 })[${JOB}.op] ?? 1 }}`,
+            options: {},
+          },
+          { executeOnce: true },
+        ),
+
+        // ---- 🚀 / ⛔: запись с условием (двойное нажатие и гонка с роботом ничего не ломают)
+        node(
+          'W9',
+          'Row',
+          'dataTable',
+          1.1,
+          [880, -1100],
+          { resource: 'row', operation: 'get', dataTableId: VACANCIES, ...byId(`={{ ${JOB}.id }}`), returnAll: false, limit: 1 },
+          { alwaysOutputData: true },
+        ),
+        code('W9', 'Plan', 'n8n/w9-robot/plan.js', [1100, -1100]),
+        node('W9', 'Save?', 'switch', 3.4, [1320, -1100], {
+          mode: 'expression',
+          numberOutputs: 3,
+          output: '={{ ({ enqueue: 0, unqueue: 1 })[$json.save] ?? 2 }}',
+          options: {},
+        }),
+        node(
+          'W9',
+          'Enqueue',
+          'dataTable',
+          1.1,
+          [1540, -1200],
+          {
+            resource: 'row',
+            operation: 'update',
+            dataTableId: VACANCIES,
+            matchType: 'allConditions',
+            filters: {
+              conditions: [
+                { keyName: 'id', keyValue: '={{ $json.id }}' },
+                { keyName: 'status', keyValue: 'approved' },
+                { keyName: 'apply_state', condition: 'isEmpty' },
+              ],
+            },
+            columns: setColumns({
+              apply_state: 'queued',
+              apply_queued_at: '={{ new Date().toISOString() }}',
+              apply_result: '',
+              apply_note: '',
+            }),
+            options: {},
+          },
+          { alwaysOutputData: true },
+        ),
+        node(
+          'W9',
+          'Unqueue',
+          'dataTable',
+          1.1,
+          [1540, -1050],
+          {
+            resource: 'row',
+            operation: 'update',
+            dataTableId: VACANCIES,
+            matchType: 'allConditions',
+            filters: {
+              conditions: [
+                { keyName: 'id', keyValue: '={{ $json.id }}' },
+                { keyName: 'apply_state', keyValue: 'queued' },
+              ],
+            },
+            columns: setColumns({ apply_state: '' }),
+            options: {},
+          },
+          { alwaysOutputData: true },
+        ),
+        code('W9', 'Done', 'n8n/w9-robot/done.js', [1760, -1100]),
+        answerQuery('W9', 'Answer', [1980, -1200], '={{ $json.queryId }}', '={{ $json.toast }}', {
+          onError: 'continueRegularOutput',
+        }),
+        // 🚀 записан — сразу обработать очередь (ветка ниже: сначала ответ на нажатие и вид письма)
+        node('W9', 'Tick?', 'if', 2.3, [1980, -950], ifTrue('W9', '={{ $json.tick }}')),
+
+        // ---- Очередь: починка, ворота, захват, отклик, итог
+        node('W9', 'Queue', 'dataTable', 1.1, [880, 0], {
+          resource: 'row',
+          operation: 'get',
+          dataTableId: VACANCIES,
+          matchType: 'allConditions',
+          filters: { conditions: [{ keyName: 'apply_state', condition: 'isNotEmpty' }] },
+          returnAll: true,
+          orderBy: true,
+          orderByColumn: 'apply_queued_at',
+          orderByDirection: 'ASC',
+        }),
+        // Живые отклики робота за «день» — с 09:00 по Таиланду (02:00 UTC)
+        node(
+          'W9',
+          'Today',
+          'dataTable',
+          1.1,
+          [1100, 0],
+          {
+            resource: 'row',
+            operation: 'get',
+            dataTableId: VACANCIES,
+            matchType: 'allConditions',
+            filters: {
+              conditions: [
+                { keyName: 'apply_by', keyValue: 'robot' },
+                {
+                  keyName: 'applied_at',
+                  condition: 'gte',
+                  keyValue: '={{ new Date(Math.floor((Date.now() - 7200000) / 86400000) * 86400000 + 7200000).toISOString() }}',
+                },
+              ],
+            },
+            returnAll: true,
+          },
+          { executeOnce: true, alwaysOutputData: true },
+        ),
+        applierNode('W9', 'Health', [1320, 0], { path: '/health', timeout: 5000 }, { executeOnce: true }),
+        code('W9', 'Gate', 'n8n/w9-robot/gate.js', [1540, 0]),
+        node('W9', 'Heal?', 'if', 2.3, [1760, -400], ifTrue('W9', '={{ $json.heal.length > 0 }}')),
+        code('W9', 'Heal items', 'n8n/w9-robot/heal-items.js', [1980, -400]),
+        node('W9', 'Heal', 'dataTable', 1.1, [2200, -400], {
+          resource: 'row',
+          operation: 'update',
+          dataTableId: VACANCIES,
+          ...byId('={{ $json.id }}'),
+          columns: setColumns({ apply_state: '={{ $json.to }}' }),
+          options: {},
+        }),
+        // Блок сняли — прошлая тревога: «✅ Робот снова в работе», фото капчи — удалить
+        node('W9', 'Resolved?', 'if', 2.3, [1760, -300], ifTrue('W9', '={{ Boolean($json.resolved) }}')),
+        node('W9', 'Alert sent?', 'if', 2.3, [1980, -350], ifTrue('W9', '={{ Boolean($json.resolved.messageId) }}')),
+        editMessage(
+          'Alert: done',
+          [2200, -350],
+          { chatId: '={{ $env.TG_CHAT_ID }}', messageId: '={{ $json.resolved.messageId }}', text: '={{ $json.resolved.text }}', rows: null },
+          'W9',
+          { onError: 'continueRegularOutput' },
+        ),
+        node('W9', 'Prompt sent?', 'if', 2.3, [1980, -250], ifTrue('W9', '={{ Boolean($json.resolved.promptId) }}')),
+        node(
+          'W9',
+          'Delete prompt',
+          'telegram',
+          1.2,
+          [2200, -250],
+          { resource: 'message', operation: 'deleteMessage', chatId: '={{ $env.TG_CHAT_ID }}', messageId: '={{ $json.resolved.promptId }}' },
+          { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
+        ),
+        // Сообщения: капча — фото с ForceReply; блок — тревога с ▶️; «не отвечает», «лимит» — текстом
+        node('W9', 'Notice?', 'if', 2.3, [1760, -200], ifTrue('W9', '={{ Boolean($json.notice) }}')),
+        code('W9', 'Notice item', 'n8n/w9-robot/notice-item.js', [1870, -700]),
+        // Одна тревога на блок: параллельные запуски W9 (расписание + вызов себя) видят один блок, а «first» робот
+        // отдаёт только одному. Робот не отвечает — отправляем (это и есть тревога «не отвечает»)
+        applierNode('W9', 'Notice ack', [1980, -800], {
+          method: 'POST',
+          path: '/notice',
+          body: `={{ JSON.stringify({ key: ${NOTICE}.key || '' }) }}`,
+          timeout: 5000,
+        }),
+        node('W9', 'First?', 'if', 2.3, [2090, -700], ifTrue('W9', '={{ $json.first !== false }}')),
+        node('W9', 'Notice kind', 'switch', 3.4, [2200, -700], {
+          mode: 'expression',
+          numberOutputs: 3,
+          output: `={{ ({ captcha: 0, alert: 1, info: 2 })[${NOTICE}.kind] ?? 2 }}`,
+          options: {},
+        }),
+        applierNode('W9', 'Get captcha', [2200, -800], { path: `/shots/{{ ${NOTICE}.shot }}`, timeout: 10000, file: true }),
+        sendPhoto('W9', 'Captcha prompt', [2420, -800], {
+          caption: `={{ ${NOTICE}.text }}`,
+          fields: { disable_notification: `={{ ${NOTICE}.silent }}` },
+          markup: { replyMarkup: 'forceReply', forceReply: { force_reply: true } },
+        }),
+        telegram('W9', 'Alert', [2200, -700], {
+          text: `={{ ${NOTICE}.text }}`,
+          fields: { disable_notification: `={{ ${NOTICE}.silent }}` },
+          markup: { replyMarkup: 'inlineKeyboard', inlineKeyboard: keyboard([[['▶️ Продолжить', 'rb:go']]]) },
+          extra: { onError: 'continueRegularOutput' },
+        }),
+        code('W9', 'Remember', 'n8n/w9-robot/remember.js', [2640, -750]),
+        node('W9', 'Alert shot?', 'if', 2.3, [2860, -750], ifTrue('W9',
+          `={{ ${NOTICE}.kind === 'alert' && Boolean(${NOTICE}.shot) }}`)),
+        applierNode('W9', 'Get alert shot', [3080, -750], { path: `/shots/{{ ${NOTICE}.shot }}`, timeout: 10000, file: true }),
+        sendPhoto('W9', 'Alert shot', [3300, -750], {
+          caption: '📸 Экран робота',
+          fields: { disable_notification: true, reply_to_message_id: "={{ $('Remember').first().json.messageId }}" },
+        }),
+        telegram('W9', 'Info', [2200, -600], {
+          text: `={{ ${NOTICE}.text }}`,
+          fields: { disable_notification: `={{ ${NOTICE}.silent }}` },
+          extra: { onError: 'continueRegularOutput' },
+        }),
+        // Нажали 🚀, а робот ждёт — письмо сразу говорит, чего
+        code('W9', 'Gate views', 'n8n/w9-robot/gate-views.js', [1760, -100]),
+        node('W9', 'Next?', 'if', 2.3, [1760, 100], ifTrue('W9', '={{ Boolean($json.next) }}')),
+        // Захват queued → applying: второй запуск W9 ту же вакансию уже не возьмёт (Update отдаёт только обновлённые)
+        node('W9', 'Claim', 'dataTable', 1.1, [1980, 100], {
+          resource: 'row',
+          operation: 'update',
+          dataTableId: VACANCIES,
+          matchType: 'allConditions',
+          filters: {
+            conditions: [
+              { keyName: 'id', keyValue: `={{ ${GATE}.next.id }}` },
+              { keyName: 'apply_state', keyValue: 'queued' },
+              { keyName: 'status', keyValue: 'approved' },
+            ],
+          },
+          columns: setColumns({
+            apply_state: 'applying',
+            apply_tries: `={{ (Number(${GATE}.next.apply_tries) || 0) + 1 }}`,
+          }),
+          options: {},
+        }),
+        applierNode('W9', 'Apply', [2200, 100], {
+          method: 'POST',
+          path: '/apply',
+          body: `={{ JSON.stringify({ vacancyId: ${GATE}.next.external_id, letter: ${GATE}.next.letter, requestId: ${GATE}.next.id + '-' + Date.now() }) }}`,
+          timeout: 240000,
+          full: true,
+        }),
+        code('W9', 'Result', 'n8n/w9-robot/result.js', [2420, 100]),
+        node('W9', 'Save result', 'dataTable', 1.1, [2640, 100], {
+          resource: 'row',
+          operation: 'update',
+          dataTableId: VACANCIES,
+          ...byId('={{ $json.id }}'),
+          columns: setColumns({
+            status: '={{ $json.row.status }}',
+            apply_state: '={{ $json.row.apply_state }}',
+            apply_result: '={{ $json.row.apply_result }}',
+            apply_letter: '={{ $json.row.apply_letter }}',
+            apply_note: '={{ $json.row.apply_note }}',
+            apply_by: '={{ $json.row.apply_by }}',
+            applied_at: '={{ $json.row.applied_at }}',
+            apply_tries: '={{ $json.row.apply_tries }}',
+            has_test: '={{ $json.row.has_test }}',
+            apply_type: '={{ $json.row.apply_type }}',
+          }),
+          options: {},
+        }),
+        node('W9', 'Card?', 'if', 2.3, [2640, 200], ifTrue('W9', '={{ Boolean($json.card) }}')),
+        editMessage(
+          'Card: done',
+          [2860, 200],
+          { chatId: '={{ $json.chatId }}', messageId: '={{ $json.card.messageId }}', text: '={{ $json.card.text }}', rows: null },
+          'W9',
+          { onError: 'continueRegularOutput' },
+        ),
+        node('W9', 'Shot?', 'if', 2.3, [2640, 300], ifTrue('W9', '={{ Boolean($json.shot) }}')),
+        applierNode('W9', 'Get shot', [2860, 300], { path: '/shots/{{ $json.shot }}', timeout: 10000, file: true }),
+        // Робот не смог, а повторить можно — на фото сразу [🚀 Ещё раз]: письмо с 🚀 выше и легко теряется
+        node('W9', 'Retry shot?', 'if', 2.3, [3080, 300], ifTrue('W9', `={{ ${RESULT}.group === 'error' && ${RESULT}.layout === 'robot' }}`)),
+        sendPhoto('W9', 'Send shot: retry', [3300, 250], {
+          caption: `={{ ${RESULT}.caption }}`,
+          fields: { disable_notification: true, reply_to_message_id: `={{ ${RESULT}.messageId }}` },
+          markup: { replyMarkup: 'inlineKeyboard', inlineKeyboard: keyboard([[['🚀 Ещё раз', `=l:{{ ${RESULT}.id }}:robot`]]]) },
+        }),
+        sendPhoto('W9', 'Send shot', [3300, 350], {
+          caption: `={{ ${RESULT}.caption }}`,
+          fields: { disable_notification: true, reply_to_message_id: `={{ ${RESULT}.messageId }}` },
+        }),
+        code('W9', 'Sync job', 'n8n/w9-robot/sync-job.js', [2640, 400]),
+        runWorkflow('W9', 'Panel sync', [2860, 400], IDS.menu),
+        // Очередь не пуста — сразу следующий (новый запуск W9); после ошибки — ждём расписания
+        node('W9', 'More?', 'if', 2.3, [2640, 500], ifTrue('W9', `={{ ${RESULT}.more }}`)),
+        code('W9', 'Next job', 'n8n/w9-robot/next-job.js', [2860, 500]),
+        runWorkflow('W9', 'Next tick', [3080, 500], IDS.robot),
+
+        // ---- ▶️ / /go: робот перепроверяет вход и капчу, потом очередь
+        applierNode('W9', 'Resume', [880, 1000], { method: 'POST', path: '/resume', timeout: 60000, full: true }),
+        code('W9', 'Resume plan', 'n8n/w9-robot/resume-plan.js', [1100, 1000]),
+        node('W9', 'Answer resume?', 'if', 2.3, [1320, 950], ifTrue('W9', `={{ Boolean(${JOB}.queryId) }}`)),
+        answerQuery('W9', 'Answer resume', [1540, 950], `={{ ${JOB}.queryId }}`, "={{ $('Resume plan').first().json.toast }}", {
+          onError: 'continueRegularOutput',
+        }),
+        node('W9', 'Resume reply?', 'if', 2.3, [1320, 1050], ifTrue('W9', '={{ Boolean($json.reply) }}')),
+        telegram('W9', 'Resume reply', [1540, 1050], {
+          text: '={{ $json.reply }}',
+          fields: { disable_notification: true },
+          markup: MENU_KEYBOARD,
+          extra: { onError: 'continueRegularOutput' },
+        }),
+        node('W9', 'Then tick', 'noOp', 1, [1320, 1150], {}),
+
+        // ---- Ответ на фото капчи: робот вводит текст; фото и ответ удаляются
+        applierNode('W9', 'Captcha', [880, 1400], {
+          method: 'POST',
+          path: '/captcha',
+          body: `={{ JSON.stringify({ text: ${JOB}.text }) }}`,
+          timeout: 60000,
+          full: true,
+        }),
+        code('W9', 'Captcha plan', 'n8n/w9-robot/captcha-plan.js', [1100, 1400]),
+        code('W9', 'Delete ids', 'n8n/w9-robot/delete-ids.js', [1320, 1300]),
+        node(
+          'W9',
+          'Delete msg',
+          'telegram',
+          1.2,
+          [1540, 1300],
+          { resource: 'message', operation: 'deleteMessage', chatId: '={{ $env.TG_CHAT_ID }}', messageId: '={{ $json.messageId }}' },
+          { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
+        ),
+        node('W9', 'Solved?', 'if', 2.3, [1320, 1400], ifTrue('W9', '={{ $json.solved }}')),
+        // ForceReply спрятал кнопки меню — простое сообщение их возвращает
+        telegram('W9', 'Captcha ok', [1540, 1400], {
+          text: '={{ $json.text }}',
+          fields: { disable_notification: true },
+          markup: MENU_KEYBOARD,
+          extra: { onError: 'continueRegularOutput' },
+        }),
+        node('W9', 'Then tick 2', 'noOp', 1, [1760, 1400], {}),
+        node('W9', 'New captcha?', 'if', 2.3, [1540, 1500], ifTrue('W9', '={{ Boolean($json.notice) }}')),
+        telegram('W9', 'Captcha fail', [1760, 1550], {
+          text: '={{ $json.text }}',
+          fields: { disable_notification: true },
+          markup: MENU_KEYBOARD,
+          extra: { onError: 'continueRegularOutput' },
+        }),
+
+        // ---- Робот выключен в ⚙️: очередь назад в ✅, письма — без 🚀
+        node('W9', 'Queued', 'dataTable', 1.1, [880, 1700], {
+          resource: 'row',
+          operation: 'get',
+          dataTableId: VACANCIES,
+          matchType: 'allConditions',
+          filters: { conditions: [{ keyName: 'apply_state', keyValue: 'queued' }] },
+          returnAll: true,
+        }),
+        code('W9', 'Dequeue', 'n8n/w9-robot/dequeue.js', [1100, 1700]),
+        node('W9', 'Unqueue all', 'dataTable', 1.1, [1320, 1700], {
+          resource: 'row',
+          operation: 'update',
+          dataTableId: VACANCIES,
+          matchType: 'allConditions',
+          filters: {
+            conditions: [
+              { keyName: 'id', keyValue: '={{ $json.id }}' },
+              { keyName: 'apply_state', keyValue: 'queued' },
+            ],
+          },
+          columns: setColumns({ apply_state: '', apply_result: 'disabled' }),
+          options: {},
+        }),
+
+        // ---- Вид письма — общий для всех веток
+        ...view.nodes,
+      ],
+      [
+        ['Called', 'Job'],
+        ['Schedule', 'Job'],
+        ['Manual', 'Job'],
+        ['Job', 'Settings'],
+        ['Settings', 'Op'],
+        ['Op', 'Row', 0],
+        ['Op', 'Queue', 1],
+        ['Op', 'Resume', 2],
+        ['Op', 'Captcha', 3],
+        ['Op', 'Queued', 4],
+        // 🚀 / ⛔
+        ['Row', 'Plan'],
+        ['Plan', 'Save?'],
+        ['Save?', 'Enqueue', 0],
+        ['Save?', 'Unqueue', 1],
+        ['Save?', 'Done', 2],
+        ['Enqueue', 'Done'],
+        ['Unqueue', 'Done'],
+        ['Done', 'View'],
+        ['Done', 'Answer'],
+        ['Done', 'Tick?'],
+        ['Tick?', 'Queue', 0],
+        // Очередь
+        ['Queue', 'Today'],
+        ['Today', 'Health'],
+        ['Health', 'Gate'],
+        ['Gate', 'Heal?'],
+        ['Heal?', 'Heal items', 0],
+        ['Heal items', 'Heal'],
+        ['Gate', 'Resolved?'],
+        ['Resolved?', 'Alert sent?', 0],
+        ['Alert sent?', 'Alert: done', 0],
+        ['Resolved?', 'Prompt sent?', 0],
+        ['Prompt sent?', 'Delete prompt', 0],
+        ['Gate', 'Notice?'],
+        ['Notice?', 'Notice item', 0],
+        ['Notice item', 'Notice ack'],
+        ['Notice ack', 'First?'],
+        ['First?', 'Notice kind', 0],
+        ['Notice kind', 'Get captcha', 0],
+        ['Get captcha', 'Captcha prompt'],
+        ['Captcha prompt', 'Remember'],
+        ['Notice kind', 'Alert', 1],
+        ['Alert', 'Remember'],
+        ['Remember', 'Alert shot?'],
+        ['Alert shot?', 'Get alert shot', 0],
+        ['Get alert shot', 'Alert shot'],
+        ['Notice kind', 'Info', 2],
+        ['Gate', 'Gate views'],
+        ['Gate views', 'View'],
+        ['Gate', 'Next?'],
+        ['Next?', 'Claim', 0],
+        ['Claim', 'Apply'],
+        ['Apply', 'Result'],
+        ['Result', 'View'],
+        ['Result', 'Save result'],
+        ['Result', 'Card?'],
+        ['Card?', 'Card: done', 0],
+        ['Result', 'Shot?'],
+        ['Shot?', 'Get shot', 0],
+        ['Get shot', 'Retry shot?'],
+        ['Retry shot?', 'Send shot: retry', 0],
+        ['Retry shot?', 'Send shot', 1],
+        ['Result', 'Sync job'],
+        ['Sync job', 'Panel sync'],
+        ['Result', 'More?'],
+        ['More?', 'Next job', 0],
+        ['Next job', 'Next tick'],
+        // ▶️ / /go
+        ['Resume', 'Resume plan'],
+        ['Resume plan', 'Answer resume?'],
+        ['Answer resume?', 'Answer resume', 0],
+        ['Resume plan', 'Resume reply?'],
+        ['Resume reply?', 'Resume reply', 0],
+        ['Resume plan', 'Then tick'],
+        ['Then tick', 'Queue'],
+        // Капча
+        ['Captcha', 'Captcha plan'],
+        ['Captcha plan', 'Delete ids'],
+        ['Delete ids', 'Delete msg'],
+        ['Captcha plan', 'Solved?'],
+        ['Solved?', 'Captcha ok', 0],
+        ['Captcha ok', 'Then tick 2'],
+        ['Then tick 2', 'Queue'],
+        ['Solved?', 'New captcha?', 1],
+        ['New captcha?', 'Notice?', 0],
+        ['New captcha?', 'Captcha fail', 1],
+        // Робот выключен
+        ['Queued', 'Dequeue'],
+        ['Dequeue', 'Unqueue all'],
+        ['Dequeue', 'View'],
+        ...view.links,
+      ],
+      // Тики без очереди не храним: 1440 запусков в сутки. Static data (тревоги) сохраняется и так
+      { timezone: 'Europe/Moscow', errorWorkflow: IDS.errors, saveDataSuccessExecution: 'none' },
+    );
+  })(),
 
   'w4-errors': workflow(
     IDS.errors,

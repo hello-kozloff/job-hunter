@@ -3,10 +3,13 @@
 // Выход: один item или [] (не наше — игнорируем):
 //   { action: 'choice', id, choice, queryId, chatId, messageId, panel } — нажата кнопка решения.
 //      callback_data = v:<id строки>:<apply|maybe|skip|earlier|edit> — на карточке; messageId — id карточки, panel = null;
-//      callback_data = pv:<id>:<choice>:<tab>:<page> — в карточке на панели меню (W7):
+//      callback_data = pv:<id>:<choice>:<tab>:<page> — в карточке на панели меню (W7; score — «🤖 На оценку» у отсеянной):
 //      panel = { messageId, tab, page } — панель перерисуется после решения.
 //   { action: 'letter', id, op, queryId, chatId, messageId } — кнопка под письмом (W5):
 //      callback_data = l:<id строки>:<redo|sent|unsent>; messageId — сообщение с письмом.
+//   { action: 'robot', op, id, queryId, chatId, messageId, text, promptId, userMessageId } — робот-отклик (этап 6) →
+//      W9 Robot: l:<id>:robot — 🚀 (op enqueue), l:<id>:stop — ⛔ (op stop), rb:go и команда /go — ▶️ после блока
+//      (op resume), ответ на фото капчи (подпись начинается с ROBOT_PROMPTS.captcha) — op captcha, text — ответ.
 //   { action: 'reply', replyTo, messageId, chatId, text } — ответ (reply) на вопрос «почему?», карточку или письмо.
 //   { action: 'panel', view, tab, page, id, chatId, queryId, messageId, userMessageId } — меню бота → W7 Bot menu:
 //      кнопки под полем ввода («📋 Вакансии», «📊 Статистика», «⚙️ Настройки»), команды /start, /menu, /vacancies,
@@ -60,11 +63,18 @@ if (cb) {
   const unban = data.match(/^bld:(\d+)$/);
   if (unban) return panel({ ...pressed, view: 'settings', section: 'blacklist', unban: Number(unban[1]) });
 
+  // Робот-отклик (этап 6): 🚀 под письмом, ⛔ из очереди, ▶️ после блока → W9 Robot
+  const robot = data.match(/^l:(\d+):(robot|stop)$/);
+  if (robot) {
+    return [{ json: { action: 'robot', op: robot[2] === 'robot' ? 'enqueue' : 'stop', id: Number(robot[1]), ...pressed } }];
+  }
+  if (data === 'rb:go') return [{ json: { action: 'robot', op: 'resume', id: 0, ...pressed } }];
+
   const letter = data.match(/^l:(\d+):(redo|sent|unsent)$/);
   if (letter) {
     return [{ json: { action: 'letter', id: Number(letter[1]), op: letter[2], ...pressed } }];
   }
-  const fromPanel = data.match(/^pv:(\d+):(apply|maybe|skip|earlier|ban|edit):([a-z]+):(\d+)$/);
+  const fromPanel = data.match(/^pv:(\d+):(apply|maybe|skip|earlier|ban|edit|score):([a-z]+):(\d+)$/);
   if (fromPanel) {
     const tab = TABS[fromPanel[3]] ? fromPanel[3] : 'all';
     return [
@@ -99,6 +109,15 @@ if (name === 'start' || name === 'menu') return panel({ ...typed, view: 'start' 
 if (name === 'v' && command[2]) return panel({ ...typed, view: 'open', id: Number(command[2]) });
 // /bl12 — убрать компанию из чёрного списка (панель спросит подтверждение)
 if (name === 'bl' && command[2]) return panel({ ...typed, view: 'settings', section: 'unban', id: Number(command[2]) });
+// /go — робот, продолжай (после капчи или входа через «Общий экран»)
+const robotJob = (fields) => [{ json: { action: 'robot', id: 0, queryId: '', messageId: 0, ...typed, ...fields } }];
+if (name === 'go') return robotJob({ op: 'resume' });
+
+// Ответ на фото капчи (W9): у фото нет text — подпись в caption
+const replied = msg.reply_to_message;
+if (replied && text && String(replied.caption ?? replied.text ?? '').startsWith(ROBOT_PROMPTS.captcha)) {
+  return robotJob({ op: 'captcha', text: text.slice(0, 40), promptId: replied.message_id });
+}
 
 // Ответ на вопрос ⚙️ со списком — новый список (вопрос узнаём по началу его текста)
 const prompt = Object.keys(SETTING_PROMPTS).find((key) =>

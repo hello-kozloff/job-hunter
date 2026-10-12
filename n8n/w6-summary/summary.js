@@ -2,7 +2,7 @@
 // Нода: Code, режим «Run Once for All Items». Выполняется последней (ветки выше — устаревшие и закрытые).
 // Вход: «All rows» (таблица до правок этого запуска), «Plan», «Expire rows» / «Archive status» (если были),
 //       «Runs» — журнал сборов W1, «Executions» — запуски n8n из публичного API (ошибки),
-//       $input — «Tunnel» (проверка туннеля ngrok).
+//       «Robot health» — GET /health робота-отклика (этап 6), $input — «Tunnel» (проверка туннеля ngrok).
 // Выход: одно сообщение { text, silent }. Без звука, если сбоев нет (решение пользователя 07.10.2026).
 
 // @include n8n/shared/settings.js
@@ -70,6 +70,9 @@ const NAMES = {
   jobHunterW5Lettr: 'W5 письма',
   jobHunterW6Summ1: 'W6 сводка',
   jobHunterW7Menu1: 'W7 меню',
+  jobHunterW8Clock: 'W8 часы',
+  jobHunterW9Robot: 'W9 робот',
+  jobHunterW10Inbx: 'W10 входящие',
 };
 const executionsBody = $('Executions').first().json;
 const executions = (executionsBody.data ?? []).filter((e) => at(e.startedAt) >= since);
@@ -115,12 +118,31 @@ if (errors.length)
 if (!tunnelOk) problems.push(`туннель не отвечает (${tunnelCode ?? 'нет ответа'}) — кнопки не работают`);
 if (pendingScore) problems.push(`ждут оценки нейросетью: ${pendingScore}`);
 
+// Робот-отклик (этап 6): отклики за сутки и его здоровье — если он включён в ⚙️
+const settings = loadSettings($('Settings').all());
+const robotOn = settings['apply.enabled'];
+const robotRows = rows.filter((r) => r.apply_by === 'robot' && at(r.applied_at) >= since);
+const robotManual = count(rows, (r) => ['test', 'external', 'hidden'].includes(r.apply_result) && at(r.updatedAt) >= since);
+const robotErrors = count(rows, (r) => r.apply_result === 'error' && r.status === 'approved' && at(r.updatedAt) >= since);
+const robotQueue = count(rows, (r) => r.apply_state);
+const robotLineText =
+  robotOn || robotRows.length || robotQueue
+    ? `🚀 Робот: ${robotRows.length}${robotRows.length ? ` (✉️ ${count(robotRows, (r) => r.apply_letter === 'attached')} · 💬 ${count(robotRows, (r) => r.apply_letter === 'chat')})` : ''}${robotManual ? ` · 🧩 вручную ${robotManual}` : ''}${robotErrors ? ` · ⚠️ ${robotErrors}` : ''}${robotQueue ? ` · в очереди ${robotQueue}` : ''}${settings['apply.paused'] ? ' · ⏸ пауза' : ''}`
+    : '';
+if (robotOn) {
+  const h = $('Robot health').first()?.json ?? {};
+  if (!h.ok || h.error) problems.push('робот-отклик не отвечает');
+  else if (h.blocked) problems.push(`робот ждёт (${h.blocked.kind}) с ${new Date(at(h.blocked.since) + 7 * 3600 * 1000).toISOString().slice(11, 16)}`);
+  else if (!h.loggedIn) problems.push('робот не вошёл в hh');
+}
+
 const date = new Date(now + 7 * 3600 * 1000).toISOString().slice(0, 10).split('-').reverse().slice(0, 2).join('.');
 const lines = [
   `☀️ <b>Сводка за сутки</b> · ${date}`,
   `🔎 Новых вакансий: ${fresh.length} → фильтр отсеял ${rejected.length}${topReasons ? ` (${topReasons})` : ''}`,
   `🤖 Оценено: ${scored.length}${scored.length ? ` — 🟢 ${count(scored, (r) => r.decision === 'apply')} · 🟡 ${count(scored, (r) => r.decision === 'maybe')} · 🔴 ${count(scored, (r) => r.decision === 'skip')}` : ''}${count(scored, (r) => r.decision === 'error') ? ` · ⚠️ ${count(scored, (r) => r.decision === 'error')}` : ''}`,
   `👤 Твои решения: ✅ ${count(mine, (r) => r.my_decision === 'apply')} · 🤔 ${count(mine, (r) => r.my_decision === 'maybe')} · ❌ ${count(mine, (r) => r.my_decision === 'skip')} · 📨 отправлено ${sent}${count(mine, (r) => r.my_decision === 'earlier') ? ` · 📨 раньше ${count(mine, (r) => r.my_decision === 'earlier')}` : ''}`,
+  robotLineText,
   `⏳ Хвосты: без решения ${tailsWaiting} · ✅ без отклика ${tailsApproved}`,
   expired.size || archived.size ? `⌛ Устарели: ${expired.size} · 🔒 закрылись на hh: ${archived.size}` : '',
   shadow.length >= 50

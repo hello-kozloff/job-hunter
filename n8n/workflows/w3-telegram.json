@@ -40,7 +40,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// W3 · Route — разбор обновления от Telegram Trigger (callback_query и message).\n// Нода: Code, режим «Run Once for All Items».\n// Выход: один item или [] (не наше — игнорируем):\n//   { action: 'choice', id, choice, queryId, chatId, messageId, panel } — нажата кнопка решения.\n//      callback_data = v:<id строки>:<apply|maybe|skip|earlier|edit> — на карточке; messageId — id карточки, panel = null;\n//      callback_data = pv:<id>:<choice>:<tab>:<page> — в карточке на панели меню (W7):\n//      panel = { messageId, tab, page } — панель перерисуется после решения.\n//   { action: 'letter', id, op, queryId, chatId, messageId } — кнопка под письмом (W5):\n//      callback_data = l:<id строки>:<redo|sent|unsent>; messageId — сообщение с письмом.\n//   { action: 'reply', replyTo, messageId, chatId, text } — ответ (reply) на вопрос «почему?», карточку или письмо.\n//   { action: 'panel', view, tab, page, id, chatId, queryId, messageId, userMessageId } — меню бота → W7 Bot menu:\n//      кнопки под полем ввода («📋 Вакансии», «📊 Статистика», «⚙️ Настройки»), команды /start, /menu, /vacancies,\n//      /stats, /settings, /v<id> и кнопки панели (callback_data p:…, s:…, sc:…, sn).\n//      view = list | stats | start | open | noop | sync | settings;\n//      settings: section — раздел, change = { name, toggle? } — следующее значение настройки или правило фильтра,\n//      collectNow — собрать сейчас, ask — вопрос со списком, input = { name, text } — ответ на него (promptId — вопрос),\n//      unban — убрать компанию из чёрного списка, id — компания для подтверждения (/bl<id>);\n//      resume = true — список там, где был (p:n — «📋 К вакансиям» под письмом: новая панель, не правка письма);\n//      messageId — панель, где нажали кнопку (правим её); userMessageId — сообщение пользователя (удалить).\n// Чужие чаты отсекает сам Telegram Trigger (Restrict to Chat IDs = TG_CHAT_ID); здесь — вторая проверка.\n\n// Меню бота: кнопки под полем ввода и вкладки списка вакансий (решения пользователя 07.10.2026).\n// Общий код W3 «Route» и W7 «Render»: строка «// @include n8n/shared/menu.js».\n//\n// callback_data кнопок панели (Telegram — не длиннее 64 байт):\n//   p:l:<tab>:<page>  — список: вкладка и страница;   p:s — статистика;   p:x — неактивная кнопка\n//   p:n — новая панель со списком там, где был (кнопка «📋 К вакансиям» под отправленным письмом)\n//   pv:<id>:<apply|maybe|skip|earlier|edit>:<tab>:<page> — решение в карточке на панели: W3 правит исходную карточку\n//   в ленте, потом W7 перерисовывает панель. <tab>:<page> — куда вернёт «⬅️ К списку».\n//   Настройки (⚙️, 07.10.2026): s:<раздел> — открыть раздел (root | collect | search | filter | rules | blacklist | llm);\n//   sc:<имя настройки> — следующее значение по кругу (n8n/shared/settings.js); sn — «🔄 Собрать сейчас»;\n//   st:<правило> — включить или выключить правило фильтра; sw:<имя> — вопрос со списком (ответ — сообщением);\n//   bld:<id> — убрать компанию из чёрного списка (после /bl<id> и подтверждения).\n//   Карточка: v:<id>:ban и pv:<id>:ban:<tab>:<page> — «🚫 В ЧС»: компания в чёрный список, вакансия — ❌.\n\n// Кнопки под полем ввода: Telegram присылает их текст обычным сообщением\nconst MENU = { list: '📋 Вакансии', stats: '📊 Статистика', settings: '⚙️ Настройки' };\n\n// Вопросы ⚙️ со списком (ForceReply): ответ W3 «Route» узнаёт по началу текста вопроса\nconst SETTING_PROMPTS = {\n  'search.anywhere': '✏️ Поиск — слова везде в тексте',\n  'search.in_name': '✏️ Поиск — слова в названии',\n  'filter.stop_words': '✏️ Фильтр — стоп-слова в названии',\n  'llm.cases': '✏️ Нейросеть — спорные случаи',\n};\n\n// Вкладки списка: статусы строк (statuses = null — всё, кроме бэкфилла seen), порядок кнопок — порядок ключей\nconst TABS = {\n  wait: { icon: '⏳', name: 'Ждут решения', statuses: ['waiting'] },\n  todo: { icon: '✅', name: 'Откликнусь и 🤔', statuses: ['approved', 'maybe'] },\n  sent: { icon: '📨', name: 'Отправлено', statuses: ['applied'] },\n  skip: { icon: '❌', name: 'Мимо и устаревшие', statuses: ['skipped', 'expired', 'archived'] },\n  rej: { icon: '🚫', name: 'Отсеяно фильтром', statuses: ['rejected'] },\n  all: { icon: '📋', name: 'Все', statuses: null },\n};\n\n// Значки строки списка: решение нейросети + статус\nconst VERDICT_ICON = { apply: '🟢', maybe: '🟡', skip: '🔴', error: '⚠️' };\nconst STATUS_ICON = {\n  new: '⚙️',\n  detailed: '⚙️',\n  scoring: '⚙️',\n  waiting: '⏳',\n  approved: '✅',\n  maybe: '🤔',\n  skipped: '❌',\n  applied: '📨',\n  expired: '⌛',\n  archived: '🔒',\n  rejected: '🚫',\n};\n\nconst update = $input.first().json;\nconst allowed = String($env.TG_CHAT_ID ?? '');\nconst ours = (chatId) => !allowed || String(chatId) === allowed;\nconst panel = (fields) => [\n  { json: { action: 'panel', tab: '', page: 1, id: 0, queryId: '', messageId: 0, userMessageId: 0, ...fields } },\n];\n\nconst cb = update.callback_query;\nif (cb) {\n  if (!ours(cb.message?.chat?.id)) return [];\n  const data = String(cb.data ?? '');\n  const chatId = String(cb.message.chat.id);\n  const pressed = { chatId, queryId: cb.id, messageId: cb.message.message_id };\n\n  const list = data.match(/^p:l:([a-z]+):(\\d+)$/);\n  if (list && TABS[list[1]]) return panel({ ...pressed, view: 'list', tab: list[1], page: Number(list[2]) });\n  if (data === 'p:s') return panel({ ...pressed, view: 'stats' });\n  if (data === 'p:n') return panel({ chatId, queryId: cb.id, view: 'list', resume: true });\n  if (data === 'p:x') return panel({ ...pressed, view: 'noop' });\n\n  // ⚙️ Настройки (W7): раздел, следующее значение настройки, «🔄 Собрать сейчас»\n  const section = data.match(/^s:([a-z]+)$/);\n  if (section) return panel({ ...pressed, view: 'settings', section: section[1] });\n  const change = data.match(/^sc:([a-z_.]+)$/);\n  if (change) {\n    return panel({ ...pressed, view: 'settings', section: change[1].split('.')[0], change: { name: change[1] } });\n  }\n  if (data === 'sn') return panel({ ...pressed, view: 'settings', section: 'collect', collectNow: true });\n  const toggle = data.match(/^st:([a-z_]+)$/);\n  if (toggle) {\n    return panel({ ...pressed, view: 'settings', section: 'rules', change: { name: 'filter.rules_off', toggle: toggle[1] } });\n  }\n  const ask = data.match(/^sw:([a-z_.]+)$/);\n  if (ask && SETTING_PROMPTS[ask[1]]) {\n    return panel({ ...pressed, view: 'settings', section: ask[1].split('.')[0], ask: ask[1] });\n  }\n  const unban = data.match(/^bld:(\\d+)$/);\n  if (unban) return panel({ ...pressed, view: 'settings', section: 'blacklist', unban: Number(unban[1]) });\n\n  const letter = data.match(/^l:(\\d+):(redo|sent|unsent)$/);\n  if (letter) {\n    return [{ json: { action: 'letter', id: Number(letter[1]), op: letter[2], ...pressed } }];\n  }\n  const fromPanel = data.match(/^pv:(\\d+):(apply|maybe|skip|earlier|ban|edit):([a-z]+):(\\d+)$/);\n  if (fromPanel) {\n    const tab = TABS[fromPanel[3]] ? fromPanel[3] : 'all';\n    return [\n      {\n        json: {\n          action: 'choice',\n          id: Number(fromPanel[1]),\n          choice: fromPanel[2],\n          ...pressed,\n          panel: { messageId: cb.message.message_id, tab, page: Number(fromPanel[4]) },\n        },\n      },\n    ];\n  }\n  const match = data.match(/^v:(\\d+):(apply|maybe|skip|earlier|ban|edit)$/);\n  if (!match) return [];\n  return [{ json: { action: 'choice', id: Number(match[1]), choice: match[2], ...pressed, panel: null } }];\n}\n\nconst msg = update.message;\nif (!msg || !ours(msg.chat?.id)) return [];\nconst text = String(msg.text ?? '').trim();\nconst typed = { chatId: String(msg.chat.id), userMessageId: msg.message_id };\n\n// Кнопки под полем ввода и команды: /v169 → [v, 169], /stats@bot → [stats, '']\nconst command = text.match(/^\\/([a-z]+)(\\d*)(?:@\\w+)?(?:\\s|$)/i);\nconst name = command?.[1].toLowerCase();\nif (text === MENU.list || name === 'vacancies') return panel({ ...typed, view: 'list' });\nif (text === MENU.stats || name === 'stats') return panel({ ...typed, view: 'stats' });\nif (text === MENU.settings || name === 'settings') return panel({ ...typed, view: 'settings', section: 'root' });\nif (name === 'start' || name === 'menu') return panel({ ...typed, view: 'start' });\nif (name === 'v' && command[2]) return panel({ ...typed, view: 'open', id: Number(command[2]) });\n// /bl12 — убрать компанию из чёрного списка (панель спросит подтверждение)\nif (name === 'bl' && command[2]) return panel({ ...typed, view: 'settings', section: 'unban', id: Number(command[2]) });\n\n// Ответ на вопрос ⚙️ со списком — новый список (вопрос узнаём по началу его текста)\nconst prompt = Object.keys(SETTING_PROMPTS).find((key) =>\n  String(msg.reply_to_message?.text ?? '').startsWith(SETTING_PROMPTS[key]),\n);\nif (prompt && text) {\n  return panel({\n    ...typed,\n    view: 'settings',\n    section: prompt.split('.')[0],\n    input: { name: prompt, text: text.slice(0, 1000) },\n    promptId: msg.reply_to_message.message_id,\n  });\n}\n\n// Остальные команды и сообщения без reply не обрабатываем\nif (msg.reply_to_message && text && !text.startsWith('/')) {\n  return [\n    {\n      json: {\n        action: 'reply',\n        replyTo: msg.reply_to_message.message_id,\n        messageId: msg.message_id,\n        chatId: typed.chatId,\n        text: text.slice(0, 500),\n      },\n    },\n  ];\n}\nreturn [];\n"
+        "jsCode": "// W3 · Route — разбор обновления от Telegram Trigger (callback_query и message).\n// Нода: Code, режим «Run Once for All Items».\n// Выход: один item или [] (не наше — игнорируем):\n//   { action: 'choice', id, choice, queryId, chatId, messageId, panel } — нажата кнопка решения.\n//      callback_data = v:<id строки>:<apply|maybe|skip|earlier|edit> — на карточке; messageId — id карточки, panel = null;\n//      callback_data = pv:<id>:<choice>:<tab>:<page> — в карточке на панели меню (W7; score — «🤖 На оценку» у отсеянной):\n//      panel = { messageId, tab, page } — панель перерисуется после решения.\n//   { action: 'letter', id, op, queryId, chatId, messageId } — кнопка под письмом (W5):\n//      callback_data = l:<id строки>:<redo|sent|unsent>; messageId — сообщение с письмом.\n//   { action: 'robot', op, id, queryId, chatId, messageId, text, promptId, userMessageId } — робот-отклик (этап 6) →\n//      W9 Robot: l:<id>:robot — 🚀 (op enqueue), l:<id>:stop — ⛔ (op stop), rb:go и команда /go — ▶️ после блока\n//      (op resume), ответ на фото капчи (подпись начинается с ROBOT_PROMPTS.captcha) — op captcha, text — ответ.\n//   { action: 'reply', replyTo, messageId, chatId, text } — ответ (reply) на вопрос «почему?», карточку или письмо.\n//   { action: 'panel', view, tab, page, id, chatId, queryId, messageId, userMessageId } — меню бота → W7 Bot menu:\n//      кнопки под полем ввода («📋 Вакансии», «📊 Статистика», «⚙️ Настройки»), команды /start, /menu, /vacancies,\n//      /stats, /settings, /v<id> и кнопки панели (callback_data p:…, s:…, sc:…, sn).\n//      view = list | stats | start | open | noop | sync | settings;\n//      settings: section — раздел, change = { name, toggle? } — следующее значение настройки или правило фильтра,\n//      collectNow — собрать сейчас, ask — вопрос со списком, input = { name, text } — ответ на него (promptId — вопрос),\n//      unban — убрать компанию из чёрного списка, id — компания для подтверждения (/bl<id>);\n//      resume = true — список там, где был (p:n — «📋 К вакансиям» под письмом: новая панель, не правка письма);\n//      messageId — панель, где нажали кнопку (правим её); userMessageId — сообщение пользователя (удалить).\n// Чужие чаты отсекает сам Telegram Trigger (Restrict to Chat IDs = TG_CHAT_ID); здесь — вторая проверка.\n\n// Меню бота: кнопки под полем ввода и вкладки списка вакансий (решения пользователя 07.10.2026).\n// Общий код W3 «Route» и W7 «Render»: строка «// @include n8n/shared/menu.js».\n//\n// callback_data кнопок панели (Telegram — не длиннее 64 байт):\n//   p:l:<tab>:<page>  — список: вкладка и страница;   p:s — статистика;   p:x — неактивная кнопка\n//   p:n — новая панель со списком там, где был (кнопка «📋 К вакансиям» под отправленным письмом)\n//   pv:<id>:<apply|maybe|skip|earlier|edit>:<tab>:<page> — решение в карточке на панели: W3 правит исходную карточку\n//   в ленте, потом W7 перерисовывает панель. <tab>:<page> — куда вернёт «⬅️ К списку».\n//   Настройки (⚙️, 07.10.2026): s:<раздел> — открыть раздел (root | collect | search | filter | rules | blacklist | llm);\n//   sc:<имя настройки> — следующее значение по кругу (n8n/shared/settings.js); sn — «🔄 Собрать сейчас»;\n//   st:<правило> — включить или выключить правило фильтра; sw:<имя> — вопрос со списком (ответ — сообщением);\n//   bld:<id> — убрать компанию из чёрного списка (после /bl<id> и подтверждения).\n//   Карточка: v:<id>:ban и pv:<id>:ban:<tab>:<page> — «🚫 В ЧС»: компания в чёрный список, вакансия — ❌.\n//   Робот (этап 6): l:<id>:robot — 🚀 под письмом, l:<id>:stop — ⛔ из очереди, rb:go и /go — ▶️ продолжить после\n//   блока; ответ на фото капчи (подпись начинается с ROBOT_PROMPTS.captcha) — текст капчи → W9.\n\n// Кнопки под полем ввода: Telegram присылает их текст обычным сообщением\nconst MENU = { list: '📋 Вакансии', stats: '📊 Статистика', settings: '⚙️ Настройки' };\n\n// Вопросы ⚙️ со списком (ForceReply): ответ W3 «Route» узнаёт по началу текста вопроса\nconst SETTING_PROMPTS = {\n  'search.anywhere': '✏️ Поиск — слова везде в тексте',\n  'search.in_name': '✏️ Поиск — слова в названии',\n  'filter.stop_words': '✏️ Фильтр — стоп-слова в названии',\n  'llm.cases': '✏️ Нейросеть — спорные случаи',\n};\n\n// Вопросы робота (этап 6, W9): фото капчи с ForceReply — ответ W3 «Route» узнаёт по началу подписи\nconst ROBOT_PROMPTS = { captcha: '🧩 Капча hh' };\n\n// Вкладки списка: статусы строк (statuses = null — всё, кроме бэкфилла seen), порядок кнопок — порядок ключей\nconst TABS = {\n  wait: { icon: '⏳', name: 'Ждут решения', statuses: ['waiting'] },\n  todo: { icon: '✅', name: 'Откликнусь и 🤔', statuses: ['approved', 'maybe'] },\n  sent: { icon: '📨', name: 'Отправлено', statuses: ['applied'] },\n  skip: { icon: '❌', name: 'Мимо и устаревшие', statuses: ['skipped', 'expired', 'archived'] },\n  rej: { icon: '🚫', name: 'Отсеяно фильтром', statuses: ['rejected'] },\n  all: { icon: '📋', name: 'Все', statuses: null },\n};\n\n// Значки строки списка: решение нейросети + статус\nconst VERDICT_ICON = { apply: '🟢', maybe: '🟡', skip: '🔴', error: '⚠️' };\nconst STATUS_ICON = {\n  new: '⚙️',\n  detailed: '⚙️',\n  scoring: '⚙️',\n  waiting: '⏳',\n  approved: '✅',\n  maybe: '🤔',\n  skipped: '❌',\n  applied: '📨',\n  expired: '⌛',\n  archived: '🔒',\n  rejected: '🚫',\n};\n// Значок строки с учётом робота: в очереди 🕒, отправляется 🤖, отправлен роботом 🚀\nconst statusIcon = (r) =>\n  r.apply_state === 'queued'\n    ? '🕒'\n    : r.apply_state === 'applying'\n      ? '🤖'\n      : r.status === 'applied' && r.apply_by === 'robot'\n        ? '🚀'\n        : (STATUS_ICON[r.status] ?? '');\n\nconst update = $input.first().json;\nconst allowed = String($env.TG_CHAT_ID ?? '');\nconst ours = (chatId) => !allowed || String(chatId) === allowed;\nconst panel = (fields) => [\n  { json: { action: 'panel', tab: '', page: 1, id: 0, queryId: '', messageId: 0, userMessageId: 0, ...fields } },\n];\n\nconst cb = update.callback_query;\nif (cb) {\n  if (!ours(cb.message?.chat?.id)) return [];\n  const data = String(cb.data ?? '');\n  const chatId = String(cb.message.chat.id);\n  const pressed = { chatId, queryId: cb.id, messageId: cb.message.message_id };\n\n  const list = data.match(/^p:l:([a-z]+):(\\d+)$/);\n  if (list && TABS[list[1]]) return panel({ ...pressed, view: 'list', tab: list[1], page: Number(list[2]) });\n  if (data === 'p:s') return panel({ ...pressed, view: 'stats' });\n  if (data === 'p:n') return panel({ chatId, queryId: cb.id, view: 'list', resume: true });\n  if (data === 'p:x') return panel({ ...pressed, view: 'noop' });\n\n  // ⚙️ Настройки (W7): раздел, следующее значение настройки, «🔄 Собрать сейчас»\n  const section = data.match(/^s:([a-z]+)$/);\n  if (section) return panel({ ...pressed, view: 'settings', section: section[1] });\n  const change = data.match(/^sc:([a-z_.]+)$/);\n  if (change) {\n    return panel({ ...pressed, view: 'settings', section: change[1].split('.')[0], change: { name: change[1] } });\n  }\n  if (data === 'sn') return panel({ ...pressed, view: 'settings', section: 'collect', collectNow: true });\n  const toggle = data.match(/^st:([a-z_]+)$/);\n  if (toggle) {\n    return panel({ ...pressed, view: 'settings', section: 'rules', change: { name: 'filter.rules_off', toggle: toggle[1] } });\n  }\n  const ask = data.match(/^sw:([a-z_.]+)$/);\n  if (ask && SETTING_PROMPTS[ask[1]]) {\n    return panel({ ...pressed, view: 'settings', section: ask[1].split('.')[0], ask: ask[1] });\n  }\n  const unban = data.match(/^bld:(\\d+)$/);\n  if (unban) return panel({ ...pressed, view: 'settings', section: 'blacklist', unban: Number(unban[1]) });\n\n  // Робот-отклик (этап 6): 🚀 под письмом, ⛔ из очереди, ▶️ после блока → W9 Robot\n  const robot = data.match(/^l:(\\d+):(robot|stop)$/);\n  if (robot) {\n    return [{ json: { action: 'robot', op: robot[2] === 'robot' ? 'enqueue' : 'stop', id: Number(robot[1]), ...pressed } }];\n  }\n  if (data === 'rb:go') return [{ json: { action: 'robot', op: 'resume', id: 0, ...pressed } }];\n\n  const letter = data.match(/^l:(\\d+):(redo|sent|unsent)$/);\n  if (letter) {\n    return [{ json: { action: 'letter', id: Number(letter[1]), op: letter[2], ...pressed } }];\n  }\n  const fromPanel = data.match(/^pv:(\\d+):(apply|maybe|skip|earlier|ban|edit|score):([a-z]+):(\\d+)$/);\n  if (fromPanel) {\n    const tab = TABS[fromPanel[3]] ? fromPanel[3] : 'all';\n    return [\n      {\n        json: {\n          action: 'choice',\n          id: Number(fromPanel[1]),\n          choice: fromPanel[2],\n          ...pressed,\n          panel: { messageId: cb.message.message_id, tab, page: Number(fromPanel[4]) },\n        },\n      },\n    ];\n  }\n  const match = data.match(/^v:(\\d+):(apply|maybe|skip|earlier|ban|edit)$/);\n  if (!match) return [];\n  return [{ json: { action: 'choice', id: Number(match[1]), choice: match[2], ...pressed, panel: null } }];\n}\n\nconst msg = update.message;\nif (!msg || !ours(msg.chat?.id)) return [];\nconst text = String(msg.text ?? '').trim();\nconst typed = { chatId: String(msg.chat.id), userMessageId: msg.message_id };\n\n// Кнопки под полем ввода и команды: /v169 → [v, 169], /stats@bot → [stats, '']\nconst command = text.match(/^\\/([a-z]+)(\\d*)(?:@\\w+)?(?:\\s|$)/i);\nconst name = command?.[1].toLowerCase();\nif (text === MENU.list || name === 'vacancies') return panel({ ...typed, view: 'list' });\nif (text === MENU.stats || name === 'stats') return panel({ ...typed, view: 'stats' });\nif (text === MENU.settings || name === 'settings') return panel({ ...typed, view: 'settings', section: 'root' });\nif (name === 'start' || name === 'menu') return panel({ ...typed, view: 'start' });\nif (name === 'v' && command[2]) return panel({ ...typed, view: 'open', id: Number(command[2]) });\n// /bl12 — убрать компанию из чёрного списка (панель спросит подтверждение)\nif (name === 'bl' && command[2]) return panel({ ...typed, view: 'settings', section: 'unban', id: Number(command[2]) });\n// /go — робот, продолжай (после капчи или входа через «Общий экран»)\nconst robotJob = (fields) => [{ json: { action: 'robot', id: 0, queryId: '', messageId: 0, ...typed, ...fields } }];\nif (name === 'go') return robotJob({ op: 'resume' });\n\n// Ответ на фото капчи (W9): у фото нет text — подпись в caption\nconst replied = msg.reply_to_message;\nif (replied && text && String(replied.caption ?? replied.text ?? '').startsWith(ROBOT_PROMPTS.captcha)) {\n  return robotJob({ op: 'captcha', text: text.slice(0, 40), promptId: replied.message_id });\n}\n\n// Ответ на вопрос ⚙️ со списком — новый список (вопрос узнаём по началу его текста)\nconst prompt = Object.keys(SETTING_PROMPTS).find((key) =>\n  String(msg.reply_to_message?.text ?? '').startsWith(SETTING_PROMPTS[key]),\n);\nif (prompt && text) {\n  return panel({\n    ...typed,\n    view: 'settings',\n    section: prompt.split('.')[0],\n    input: { name: prompt, text: text.slice(0, 1000) },\n    promptId: msg.reply_to_message.message_id,\n  });\n}\n\n// Остальные команды и сообщения без reply не обрабатываем\nif (msg.reply_to_message && text && !text.startsWith('/')) {\n  return [\n    {\n      json: {\n        action: 'reply',\n        replyTo: msg.reply_to_message.message_id,\n        messageId: msg.message_id,\n        chatId: typed.chatId,\n        text: text.slice(0, 500),\n      },\n    },\n  ];\n}\nreturn [];\n"
       }
     },
     {
@@ -93,6 +93,63 @@
           "__rl": true,
           "mode": "id",
           "value": "jobHunterW7Menu1"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      }
+    },
+    {
+      "id": "aa2bbaed-175d-8edd-8d98-2bab472f9b18",
+      "name": "Robot?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        440,
+        -250
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e8ea64e0-12ee-b963-48c7-67cd44a0f3d6",
+              "leftValue": "={{ $json.action === 'robot' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "a8ebb8ac-b1d0-01c9-88ce-e79eef90b15f",
+      "name": "Robot",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        -300
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "jobHunterW9Robot"
         },
         "mode": "once",
         "options": {
@@ -166,6 +223,202 @@
       }
     },
     {
+      "id": "30dd4177-ba20-2e31-a5a1-26909eeb25a1",
+      "name": "Rescue page?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        770,
+        -300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "fa80693e-b942-9a7e-888f-8be713a91be7",
+              "leftValue": "={{ $json.status === 'rejected' && !$json.description && ['apply', 'maybe', 'score'].includes($('Route').first().json.choice) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "d5186faa-1d33-368e-42d5-f9f38318cd6a",
+      "name": "Rescue page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        880,
+        -450
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Accept",
+              "value": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "ru-RU,ru;q=0.9,en;q=0.8"
+            },
+            {
+              "name": "Referer",
+              "value": "https://hh.ru/search/vacancy"
+            }
+          ]
+        },
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 30000
+        }
+      }
+    },
+    {
+      "id": "74460d11-5d08-6aab-dd0b-9f5d28c912f0",
+      "name": "Rescue parse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        -450
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// W3 · Rescue parse — страница вакансии, отсеянной фильтром, перед решением с панели (08.10.2026).\n// Нода: Code, режим «Run Once for All Items».\n// Отсеянные по выдаче страницу не открывали — описания нет, а оно нужно письму (✅) и нейросети (🤖 На оценку).\n// Вход: ответ HTTP Request «Rescue page»; строка — из «Vacancy».\n// Выход: { id, description, key_skills, has_test, contract, error, closed } → «Save page» (запись по id) → «Apply choice».\n//   Страница не открылась — решение всё равно принимаем: письмо и оценка пойдут по фрагменту, ошибка видна в карточке.\n//   closed — вакансия в архиве или закрыта для откликов: «Apply choice» поставит «🔒 закрыта».\n//   Правила фильтра по странице не применяем: пользователь сам решил вернуть вакансию.\n\n// Общий код разбора страницы вакансии hh: W1 «Parse vacancy», W3 «Rescue parse» и W6 «Archive status».\n// В Code-ноду попадает строкой «// @include n8n/shared/hh.js».\n\n// HTML-сущности раскодируем за один проход: иначе &amp;quot; станет кавычкой и сломает JSON\nconst NAMED = { quot: '\"', amp: '&', lt: '<', gt: '>', apos: \"'\", nbsp: '\\u00a0' };\nfunction decodeEntities(s) {\n  return s.replace(/&(#x[0-9a-f]+|#\\d+|[a-z]+);/gi, (m, e) => {\n    if (e[0] === '#') {\n      const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);\n      return Number.isFinite(code) && code <= 0x10ffff ? String.fromCodePoint(code) : m;\n    }\n    return NAMED[e.toLowerCase()] ?? m;\n  });\n}\n\n// Ответ HTTP Request «Vacancy page» → { v: vacancyFull.vacancy, test } или { error, statusCode }\nfunction parsePage(res) {\n  const html = String(res.data ?? res.body ?? '');\n  if (res.statusCode !== 200) return { error: `страница: HTTP ${res.statusCode}`, statusCode: res.statusCode };\n  const tpl = html.match(/<template[^>]*id=\"HH-Lux-InitialState\"[^>]*>([\\s\\S]*?)<\\/template>/);\n  if (!tpl) return { error: 'страница: нет HH-Lux-InitialState' };\n  try {\n    const state = JSON.parse(decodeEntities(tpl[1]));\n    const v = state?.vacancyView?.vacancyFull?.vacancy;\n    if (!v?.description) return { error: 'страница: нет описания' };\n    return { v, test: state?.applicantVacancyResponseStatuses?.[String(v.vacancyId)]?.test };\n  } catch (e) {\n    return { error: `страница: ${e.message}` };\n  }\n}\n\n// Описание вакансии: HTML → текст с переносами строк\nconst htmlToText = (html) =>\n  decodeEntities(\n    String(html ?? '')\n      .replace(/<\\s*(br|\\/p|\\/li|\\/h\\d|\\/div)[^>]*>/gi, '\\n')\n      .replace(/<li[^>]*>/gi, '• ')\n      .replace(/<[^>]+>/g, ''),\n  )\n    .replace(/[ \\t\\u00a0]+/g, ' ')\n    .replace(/\\n\\s*\\n+/g, '\\n')\n    .trim();\n\n// Форма оформления: tk,self_employed,individual_entrepreneur,individual_person (колонка contract)\nconst contractOf = (v) =>\n  [\n    ...(v.acceptLaborContract ? ['tk'] : []),\n    ...(v.civilLawContracts ?? []).flatMap((c) => c?.civilLawContractsElement ?? (typeof c === 'string' ? [c] : [])).map((c) => String(c).toLowerCase()),\n  ].join(',');\n\nconst row = $('Vacancy').first().json;\nlet page = parsePage($input.first().json);\nif (!page.error && String(page.v.vacancyId) !== String(row.external_id)) {\n  page = { error: `страница: пришла вакансия ${page.v.vacancyId}` };\n}\n\nif (page.error) {\n  return [\n    {\n      json: {\n        id: row.id,\n        description: row.description ?? '',\n        key_skills: row.key_skills ?? '',\n        has_test: Boolean(row.has_test),\n        contract: row.contract ?? '',\n        error: page.error,\n        closed: false,\n      },\n    },\n  ];\n}\n\nconst { v, test } = page;\nconst skills = (v.keySkills ?? []).join(', ');\nreturn [\n  {\n    json: {\n      id: row.id,\n      description: htmlToText(v.description).slice(0, 8000),\n      key_skills: skills || row.key_skills || '',\n      has_test: Boolean(test?.hasTests ?? row.has_test),\n      contract: contractOf(v),\n      error: '',\n      closed: Boolean(v.status?.archived || v.closedForApplicants),\n    },\n  },\n];\n"
+      }
+    },
+    {
+      "id": "a2743b3f-4bd4-096e-4756-42cd529e6531",
+      "name": "Save page",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        -450
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "vacancies"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "description": "={{ $json.description }}",
+            "key_skills": "={{ $json.key_skills }}",
+            "has_test": "={{ $json.has_test }}",
+            "contract": "={{ $json.contract }}",
+            "error": "={{ $json.error }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "description",
+              "displayName": "description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "key_skills",
+              "displayName": "key_skills",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "has_test",
+              "displayName": "has_test",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "contract",
+              "displayName": "contract",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "error",
+              "displayName": "error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
       "id": "cee50003-b248-0e40-90f7-10d844bda675",
       "name": "Apply choice",
       "type": "n8n-nodes-base.code",
@@ -177,7 +430,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// W3 · Apply choice — нажатие кнопки на карточке → новое состояние строки и карточки.\n// Нода: Code, режим «Run Once for All Items».\n// Вход: строка вакансии из «Vacancy»; что нажато — из «Route».\n// Выход: { id, my_decision, status, text, keyboard, ask, toast, need_letter, chatId, messageId, queryId, panel }\n//   messageId — исходная карточка в ленте: её перерисовывают «Card: …», на неё отвечает «Почему?».\n//   Решение из карточки на панели меню (panel, callback_data pv:…) — тоже правит исходную карточку\n//   (row.tg_message_id), а панель потом перерисует W7 («From panel?» → «Panel job»).\n//   ✅ / 🤔 / ❌ — записать решение, кнопки сменить на «↩️ Изменить» (keyboard = decided).\n//     Решение расходится с нейросетью и причины ещё нет → ask: вопрос «почему?» ответом на карточку.\n//     ✅ и письма ещё нет → need_letter: W5 напишет письмо (этап 4).\n//   📨 Уже откликался (choice = earlier) — status = applied без письма; «почему?» не спрашиваем:\n//     отклик был до бота, в теневой режим не идёт.\n//   🚫 В ЧС (choice = ban, 07.10.2026) — ❌ с причиной «чёрный список» без «почему?»; ban = компания → «Ban company».\n//   ↩️ Изменить (choice = edit) — вернуть кнопки выбора (keyboard = choose), решение не меняется.\n\n// Общий код карточки вакансии в Telegram: W2 «Format card» и W3 «Apply choice».\n// В Code-ноду попадает при сборке: строка «// @include n8n/shared/card.js» заменяется этим файлом\n// (scripts/build-workflows.mjs, scripts/run-code-node.mjs).\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst EXPERIENCE = { noExperience: 'без опыта', between1And3: '1–3 г.', between3And6: '3–6 л.', moreThan6: '6+ л.' };\nconst CURRENCY = { RUR: '₽', USD: '$', EUR: '€', KZT: '₸', BYR: 'Br', UZS: 'сум' };\n\n// Решение нейросети (колонка decision)\nconst VERDICT = { apply: '🟢 apply', maybe: '🟡 maybe', skip: '🔴 skip', error: '⚠️ не оценено' };\n// Кнопки пользователя: callback_data = v:<id строки>:<choice>, решение — в колонку my_decision.\n// earlier — «📨 Уже откликался» (до бота, 07.10.2026): status = applied без письма и без applied_at,\n// без «Почему?» и вне теневого режима (сравниваются только apply / maybe / skip)\nconst CHOICE = { apply: '✅ Откликнусь', maybe: '🤔 Возможно', skip: '❌ Мимо', earlier: '📨 Откликался раньше' };\n// «🚫 В ЧС» на карточке (07.10.2026): компания уходит в чёрный список, вакансия — ❌ с этой причиной\nconst BAN_REASON = 'чёрный список';\nconst STATUS_BY_CHOICE = { apply: 'approved', maybe: 'maybe', skip: 'skipped', earlier: 'applied' };\n\nconst short = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));\n\nfunction salary(r) {\n  if (!r.salary_from && !r.salary_to) return '';\n  const range =\n    r.salary_from && r.salary_to\n      ? `${short(r.salary_from)}–${short(r.salary_to)}`\n      : r.salary_from\n        ? `от ${short(r.salary_from)}`\n        : `до ${short(r.salary_to)}`;\n  return `💰 ${range} ${CURRENCY[r.currency] ?? r.currency ?? ''}${r.salary_gross ? ' до налогов' : ''}`;\n}\n\n// «Москва, Сербия, Грузия, Армения» → «Москва, Сербия +2»\nfunction areas(s) {\n  const list = String(s ?? '').split(', ').filter(Boolean);\n  return list.length > 2 ? `${list.slice(0, 2).join(', ')} +${list.length - 2}` : list.join(', ');\n}\n\n// '2026-10-06T13:22:00+0300' → '06.10'\nfunction published(s) {\n  const m = String(s ?? '').match(/^\\d{4}-(\\d{2})-(\\d{2})/);\n  return m ? `${m[2]}.${m[1]}` : '';\n}\n\n// Момент в UTC (applied_at) → дата по Таиланду (UTC+7): '2026-10-06T21:17:55Z' → '07.10'\nconst thaiDate = (iso) => (Date.parse(iso) ? published(new Date(Date.parse(iso) + 7 * 3600 * 1000).toISOString()) : '');\n\n// Итоговые состояния без кнопок: W3 «📨 Отправил», W6 «⌛ устарела» и «🔒 закрыта на hh»\nconst FINAL = { expired: '⌛ Устарела: 3 дня без решения', archived: '🔒 Вакансия закрыта на hh' };\n\n// Текст карточки (Parse Mode = HTML). Строка «👤 …» появляется после нажатия кнопки,\n// «📨 …» — после «Отправил» под письмом (W3, status = applied), FINAL — после W6\nfunction cardText(r) {\n  const date = published(r.published_at);\n  const meta = [esc(r.company), salary(r), EXPERIENCE[r.experience] ?? '', esc(areas(r.areas)), date && `📅 ${date}`]\n    .filter(Boolean)\n    .join(' · ');\n  const flags = [\n    r.has_test && '📝 тест',\n    r.letter_required && '✉️ письмо обязательно',\n    r.responses != null && `👥 ${r.responses}`,\n    r.error && `⚠️ ${esc(r.error)}`,\n  ]\n    .filter(Boolean)\n    .join(' · ');\n  const verdict = `🤖 ${VERDICT[r.decision] ?? esc(r.decision)}${r.llm_reason ? ` — ${esc(r.llm_reason)}` : ''}`;\n  const mine = CHOICE[r.my_decision]\n    ? `👤 ${CHOICE[r.my_decision]}${r.my_reason === BAN_REASON ? ' · 🚫 компания в чёрном списке' : ''}`\n    : '';\n  // «📨 Откликался раньше» уже в строке «👤 …» — второй раз не пишем\n  const sent =\n    r.status === 'applied' && r.my_decision !== 'earlier'\n      ? `📨 Отклик отправлен${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}`\n      : '';\n  return [`<a href=\"${r.url}\"><b>${esc(r.title)}</b></a>`, meta, flags, verdict, mine, sent, FINAL[r.status] ?? '']\n    .filter(Boolean)\n    .join('\\n');\n}\n\nconst action = $('Route').first().json;\nconst row = $input.first().json;\n\nconst out = {\n  id: row.id,\n  my_decision: row.my_decision ?? '',\n  // Причину не затираем: «Save choice» пишет её всегда\n  my_reason: row.my_reason ?? '',\n  status: row.status,\n  keyboard: 'choose',\n  ask: '',\n  toast: '',\n  need_letter: false,\n  chatId: action.chatId,\n  messageId: action.panel ? row.tg_message_id : action.messageId,\n  queryId: action.queryId,\n  panel: action.panel ?? null,\n  ban: null,\n};\n\nif (action.choice === 'ban') {\n  out.my_decision = 'skip';\n  out.my_reason = BAN_REASON;\n  out.status = STATUS_BY_CHOICE.skip;\n  out.keyboard = 'decided';\n  out.toast = `🚫 ${row.company || 'Компания'} — в чёрном списке`;\n  out.ban = { company: row.company ?? '', company_id: row.company_id ?? '', title: row.title ?? '' };\n} else if (action.choice !== 'edit') {\n  out.my_decision = action.choice;\n  out.status = STATUS_BY_CHOICE[action.choice];\n  out.keyboard = 'decided';\n  out.toast = `Записал: ${CHOICE[action.choice]}`;\n  out.need_letter = action.choice === 'apply' && !row.letter;\n  const known = ['apply', 'maybe', 'skip'].includes(row.decision);\n  if (action.choice !== 'earlier' && known && row.decision !== action.choice && !row.my_reason) {\n    out.ask =\n      `🤖 ${VERDICT[row.decision]} · 👤 ${CHOICE[action.choice]}\\n` +\n      'Почему? Ответь на это сообщение одной фразой — по ответам поправлю правила.';\n  }\n}\nout.text = cardText({ ...row, my_decision: out.my_decision, my_reason: out.my_reason });\n\nreturn [{ json: out }];\n"
+        "jsCode": "// W3 · Apply choice — нажатие кнопки на карточке → новое состояние строки и карточки.\n// Нода: Code, режим «Run Once for All Items».\n// Вход: строка вакансии из «Vacancy»; что нажато — из «Route».\n// Выход: { id, my_decision, status, text, keyboard, ask, toast, need_letter, chatId, messageId, queryId, panel }\n//   messageId — исходная карточка в ленте: её перерисовывают «Card: …», на неё отвечает «Почему?».\n//   Решение из карточки на панели меню (panel, callback_data pv:…) — тоже правит исходную карточку\n//   (row.tg_message_id), а панель потом перерисует W7 («From panel?» → «Panel job»).\n//   ✅ / 🤔 / ❌ — записать решение, кнопки сменить на «↩️ Изменить» (keyboard = decided).\n//     Решение расходится с нейросетью и причины ещё нет → ask: вопрос «почему?» ответом на карточку.\n//     ✅ и письма ещё нет → need_letter: W5 напишет письмо (этап 4).\n//   📨 Уже откликался (choice = earlier) — status = applied без письма; «почему?» не спрашиваем:\n//     отклик был до бота, в теневой режим не идёт.\n//   🚫 В ЧС (choice = ban, 07.10.2026) — ❌ с причиной «чёрный список» без «почему?»; ban = компания → «Ban company».\n//   ↩️ Изменить (choice = edit) — вернуть кнопки выбора (keyboard = choose), решение не меняется.\n//   Отсеянная фильтром (status = rejected, 08.10.2026) — решение с панели меню, карточки в ленте у неё нет:\n//     ✅ / 🤔 / 📨 — new_card: W3 отправит карточку в ленту (на неё ответит «Почему?» и письмо), «Почему?» —\n//     с причинами фильтра (по ответам правим фильтр); 🤖 На оценку (choice = score) — status = detailed,\n//     score: W3 сразу запустит W2, карточку пришлёт он. Страница с hh («Rescue parse») закрыта — «🔒 закрыта».\n//   keyboard: decided | choose | none (карточки нет или перерисовывать нечего).\n//   Вакансия в очереди робота (apply_state ≠ '', этап 6) — решение не меняется, тост «сначала ⛔ под письмом».\n\n// Общий код карточки вакансии в Telegram: W2 «Format card» и W3 «Apply choice».\n// В Code-ноду попадает при сборке: строка «// @include n8n/shared/card.js» заменяется этим файлом\n// (scripts/build-workflows.mjs, scripts/run-code-node.mjs).\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst EXPERIENCE = { noExperience: 'без опыта', between1And3: '1–3 г.', between3And6: '3–6 л.', moreThan6: '6+ л.' };\nconst CURRENCY = { RUR: '₽', USD: '$', EUR: '€', KZT: '₸', BYR: 'Br', UZS: 'сум' };\n\n// Решение нейросети (колонка decision)\nconst VERDICT = { apply: '🟢 apply', maybe: '🟡 maybe', skip: '🔴 skip', error: '⚠️ не оценено' };\n// Кнопки пользователя: callback_data = v:<id строки>:<choice>, решение — в колонку my_decision.\n// earlier — «📨 Уже откликался» (до бота, 07.10.2026): status = applied без письма и без applied_at,\n// без «Почему?» и вне теневого режима (сравниваются только apply / maybe / skip)\nconst CHOICE = { apply: '✅ Откликнусь', maybe: '🤔 Возможно', skip: '❌ Мимо', earlier: '📨 Откликался раньше' };\n// «🚫 В ЧС» на карточке (07.10.2026): компания уходит в чёрный список, вакансия — ❌ с этой причиной\nconst BAN_REASON = 'чёрный список';\nconst STATUS_BY_CHOICE = { apply: 'approved', maybe: 'maybe', skip: 'skipped', earlier: 'applied' };\n\nconst short = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));\n\nfunction salary(r) {\n  if (!r.salary_from && !r.salary_to) return '';\n  const range =\n    r.salary_from && r.salary_to\n      ? `${short(r.salary_from)}–${short(r.salary_to)}`\n      : r.salary_from\n        ? `от ${short(r.salary_from)}`\n        : `до ${short(r.salary_to)}`;\n  return `💰 ${range} ${CURRENCY[r.currency] ?? r.currency ?? ''}${r.salary_gross ? ' до налогов' : ''}`;\n}\n\n// «Москва, Сербия, Грузия, Армения» → «Москва, Сербия +2»\nfunction areas(s) {\n  const list = String(s ?? '').split(', ').filter(Boolean);\n  return list.length > 2 ? `${list.slice(0, 2).join(', ')} +${list.length - 2}` : list.join(', ');\n}\n\n// '2026-10-06T13:22:00+0300' → '06.10'\nfunction published(s) {\n  const m = String(s ?? '').match(/^\\d{4}-(\\d{2})-(\\d{2})/);\n  return m ? `${m[2]}.${m[1]}` : '';\n}\n\n// Момент в UTC (applied_at) → дата по Таиланду (UTC+7): '2026-10-06T21:17:55Z' → '07.10'\nconst thaiDate = (iso) => (Date.parse(iso) ? published(new Date(Date.parse(iso) + 7 * 3600 * 1000).toISOString()) : '');\n\n// Итоговые состояния без кнопок: W3 «📨 Отправил», W6 «⌛ устарела» и «🔒 закрыта на hh»\nconst FINAL = { expired: '⌛ Устарела: 3 дня без решения', archived: '🔒 Вакансия закрыта на hh' };\n\n// Текст карточки (Parse Mode = HTML). Строка «👤 …» появляется после нажатия кнопки,\n// «📨 …» — после «Отправил» под письмом (W3, status = applied), FINAL — после W6\nfunction cardText(r) {\n  const date = published(r.published_at);\n  const meta = [esc(r.company), salary(r), EXPERIENCE[r.experience] ?? '', esc(areas(r.areas)), date && `📅 ${date}`]\n    .filter(Boolean)\n    .join(' · ');\n  const flags = [\n    r.has_test && '📝 тест',\n    r.letter_required && '✉️ письмо обязательно',\n    r.responses != null && `👥 ${r.responses}`,\n    r.error && `⚠️ ${esc(r.error)}`,\n  ]\n    .filter(Boolean)\n    .join(' · ');\n  // Нейросеть не оценивала, а фильтр отсеял (в том числе вакансия, возвращённая с панели меню, 08.10.2026) — причины фильтра\n  const verdict =\n    !r.decision && r.reasons\n      ? `🧹 Отсеяна фильтром: ${esc(r.reasons)}`\n      : `🤖 ${VERDICT[r.decision] ?? esc(r.decision)}${r.llm_reason ? ` — ${esc(r.llm_reason)}` : ''}`;\n  const mine = CHOICE[r.my_decision]\n    ? `👤 ${CHOICE[r.my_decision]}${r.my_reason === BAN_REASON ? ' · 🚫 компания в чёрном списке' : ''}`\n    : '';\n  // «📨 Откликался раньше» уже в строке «👤 …» — второй раз не пишем\n  // Робот (этап 6): «🚀 … роботом»; нашёлся на hh без «📨 Отправил» (6.2) — «📨 … на hh»\n  const who = r.apply_by === 'robot' ? '🚀 Отклик отправлен роботом' : r.apply_by === 'hh' ? '📨 Отклик есть на hh' : '📨 Отклик отправлен';\n  const sent =\n    r.status === 'applied' && r.my_decision !== 'earlier' ? `${who}${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}` : '';\n  return [`<a href=\"${r.url}\"><b>${esc(r.title)}</b></a>`, meta, flags, verdict, mine, sent, FINAL[r.status] ?? '']\n    .filter(Boolean)\n    .join('\\n');\n}\n\nconst action = $('Route').first().json;\nconst row = $input.first().json;\n\nconst out = {\n  id: row.id,\n  my_decision: row.my_decision ?? '',\n  // Причину не затираем: «Save choice» пишет её всегда\n  my_reason: row.my_reason ?? '',\n  status: row.status,\n  keyboard: 'choose',\n  ask: '',\n  toast: '',\n  need_letter: false,\n  chatId: action.chatId,\n  messageId: action.panel ? row.tg_message_id : action.messageId,\n  queryId: action.queryId,\n  panel: action.panel ?? null,\n  ban: null,\n  new_card: false,\n  score: false,\n};\n// Страница, загруженная перед решением (только у отсеянных без описания)\nlet page = null;\ntry {\n  page = $('Rescue parse').first().json;\n} catch {\n  // не загружали\n}\nconst rescue = row.status === 'rejected' && action.choice !== 'edit';\n\n// Робот (этап 6) уже взял вакансию в очередь или отправляет отклик — решение не меняем\nif (row.apply_state) {\n  out.keyboard = 'none';\n  out.toast = '🚀 Робот в работе — сначала ⛔ под письмом';\n  out.text = cardText(row);\n  return [{ json: out }];\n}\n\nif (rescue && page?.closed) {\n  out.status = 'archived';\n  out.keyboard = 'none';\n  out.toast = '🔒 Вакансия уже закрыта на hh';\n} else if (rescue && action.choice === 'score') {\n  out.status = 'detailed';\n  out.keyboard = 'none';\n  out.score = true;\n  out.toast = '🤖 Отправил нейросети — карточка придёт в ленту';\n} else if (action.choice === 'score') {\n  out.keyboard = 'none'; // «На оценку» — только для отсеянных\n} else if (rescue) {\n  out.my_decision = action.choice;\n  out.status = STATUS_BY_CHOICE[action.choice];\n  out.keyboard = 'decided';\n  out.toast = `Записал: ${CHOICE[action.choice]}`;\n  out.need_letter = action.choice === 'apply' && !row.letter;\n  out.new_card = !row.tg_message_id;\n  if (action.choice !== 'earlier' && !row.my_reason) {\n    out.ask =\n      `🧹 Фильтр: ${esc(row.reasons || 'отсеял')} · 👤 ${CHOICE[action.choice]}\\n` +\n      'Почему? Ответь на это сообщение одной фразой — по ответам поправлю фильтр.';\n  }\n} else if (action.choice === 'ban') {\n  out.my_decision = 'skip';\n  out.my_reason = BAN_REASON;\n  out.status = STATUS_BY_CHOICE.skip;\n  out.keyboard = 'decided';\n  out.toast = `🚫 ${row.company || 'Компания'} — в чёрном списке`;\n  out.ban = { company: row.company ?? '', company_id: row.company_id ?? '', title: row.title ?? '' };\n} else if (action.choice !== 'edit') {\n  out.my_decision = action.choice;\n  out.status = STATUS_BY_CHOICE[action.choice];\n  out.keyboard = 'decided';\n  out.toast = `Записал: ${CHOICE[action.choice]}`;\n  out.need_letter = action.choice === 'apply' && !row.letter;\n  const known = ['apply', 'maybe', 'skip'].includes(row.decision);\n  if (action.choice !== 'earlier' && known && row.decision !== action.choice && !row.my_reason) {\n    out.ask =\n      `🤖 ${VERDICT[row.decision]} · 👤 ${CHOICE[action.choice]}\\n` +\n      'Почему? Ответь на это сообщение одной фразой — по ответам поправлю правила.';\n  }\n}\nout.text = cardText({ ...row, ...(page ?? {}), my_decision: out.my_decision, my_reason: out.my_reason, status: out.status });\n\nreturn [{ json: out }];\n"
       }
     },
     {
@@ -312,6 +565,147 @@
       }
     },
     {
+      "id": "502d1482-71a9-4103-9c9d-82a558408159",
+      "name": "New card?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1650,
+        -300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "b0a9a5a4-8feb-c8de-b594-b67755dd119a",
+              "leftValue": "={{ $('Apply choice').first().json.new_card }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "b7b63148-5fc3-01f6-628c-bcc2dbe4921e",
+      "name": "Card: new",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1760,
+        -400
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $env.TG_CHAT_ID }}",
+        "text": "={{ $('Apply choice').first().json.text }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "↩️ Изменить",
+                    "additionalFields": {
+                      "callback_data": "=v:{{ $('Apply choice').first().json.id }}:edit"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true,
+          "disable_notification": true
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterTgBot01",
+          "name": "Telegram bot"
+        }
+      }
+    },
+    {
+      "id": "52be31d4-fb60-4552-817e-3f905bc29e47",
+      "name": "Save card",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1870,
+        -400
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "vacancies"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "keyValue": "={{ $('Apply choice').first().json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "tg_message_id": "={{ $json.result.message_id }}",
+            "card_at": "={{ new Date().toISOString() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "tg_message_id",
+              "displayName": "tg_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "card_at",
+              "displayName": "card_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
       "id": "eb446559-7645-21b8-a73a-2dee1f78c108",
       "name": "Card: decided",
       "type": "n8n-nodes-base.telegram",
@@ -354,6 +748,42 @@
           "id": "jobHunterTgBot01",
           "name": "Telegram bot"
         }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "1bfd95c6-14b5-dcd0-79cc-8bcc1a45f2ef",
+      "name": "Choose?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1650,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1f05f5d7-ee4f-e47c-98b5-27f49bf3138c",
+              "leftValue": "={{ $('Apply choice').first().json.keyboard === 'choose' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": false,
+        "options": {}
       }
     },
     {
@@ -429,7 +859,8 @@
           "id": "jobHunterTgBot01",
           "name": "Telegram bot"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "id": "623faad5-7476-e070-57a1-a5feb6bf1735",
@@ -488,7 +919,7 @@
           "appendAttribution": false,
           "parse_mode": "HTML",
           "disable_web_page_preview": true,
-          "reply_to_message_id": "={{ $('Apply choice').first().json.messageId }}"
+          "reply_to_message_id": "={{ $('Apply choice').first().json.messageId || ($('Card: new').isExecuted ? $('Card: new').first().json.result.message_id : '') }}"
         }
       },
       "credentials": {
@@ -719,7 +1150,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// W3 · Apply sent — кнопки под письмом «📨 Отправил» и «↩️ Отменить».\n// Нода: Code, режим «Run Once for All Items».\n// Вход: строка вакансии из «Sent row», кнопка — из «Route» (op = sent | unsent; messageId — сообщение с письмом).\n// Выход: { id, sent, status, applied_at, letterText, cardText, chatId, letterMessageId, cardId, queryId, toast, apply_url, url }\n//   sent   — status = applied; у письма остаётся только «↩️ Отменить», у карточки кнопки убираются;\n//   unsent — status = approved; письму возвращаются все кнопки, карточке — «↩️ Изменить».\n\n// Общий код карточки вакансии в Telegram: W2 «Format card» и W3 «Apply choice».\n// В Code-ноду попадает при сборке: строка «// @include n8n/shared/card.js» заменяется этим файлом\n// (scripts/build-workflows.mjs, scripts/run-code-node.mjs).\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst EXPERIENCE = { noExperience: 'без опыта', between1And3: '1–3 г.', between3And6: '3–6 л.', moreThan6: '6+ л.' };\nconst CURRENCY = { RUR: '₽', USD: '$', EUR: '€', KZT: '₸', BYR: 'Br', UZS: 'сум' };\n\n// Решение нейросети (колонка decision)\nconst VERDICT = { apply: '🟢 apply', maybe: '🟡 maybe', skip: '🔴 skip', error: '⚠️ не оценено' };\n// Кнопки пользователя: callback_data = v:<id строки>:<choice>, решение — в колонку my_decision.\n// earlier — «📨 Уже откликался» (до бота, 07.10.2026): status = applied без письма и без applied_at,\n// без «Почему?» и вне теневого режима (сравниваются только apply / maybe / skip)\nconst CHOICE = { apply: '✅ Откликнусь', maybe: '🤔 Возможно', skip: '❌ Мимо', earlier: '📨 Откликался раньше' };\n// «🚫 В ЧС» на карточке (07.10.2026): компания уходит в чёрный список, вакансия — ❌ с этой причиной\nconst BAN_REASON = 'чёрный список';\nconst STATUS_BY_CHOICE = { apply: 'approved', maybe: 'maybe', skip: 'skipped', earlier: 'applied' };\n\nconst short = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));\n\nfunction salary(r) {\n  if (!r.salary_from && !r.salary_to) return '';\n  const range =\n    r.salary_from && r.salary_to\n      ? `${short(r.salary_from)}–${short(r.salary_to)}`\n      : r.salary_from\n        ? `от ${short(r.salary_from)}`\n        : `до ${short(r.salary_to)}`;\n  return `💰 ${range} ${CURRENCY[r.currency] ?? r.currency ?? ''}${r.salary_gross ? ' до налогов' : ''}`;\n}\n\n// «Москва, Сербия, Грузия, Армения» → «Москва, Сербия +2»\nfunction areas(s) {\n  const list = String(s ?? '').split(', ').filter(Boolean);\n  return list.length > 2 ? `${list.slice(0, 2).join(', ')} +${list.length - 2}` : list.join(', ');\n}\n\n// '2026-10-06T13:22:00+0300' → '06.10'\nfunction published(s) {\n  const m = String(s ?? '').match(/^\\d{4}-(\\d{2})-(\\d{2})/);\n  return m ? `${m[2]}.${m[1]}` : '';\n}\n\n// Момент в UTC (applied_at) → дата по Таиланду (UTC+7): '2026-10-06T21:17:55Z' → '07.10'\nconst thaiDate = (iso) => (Date.parse(iso) ? published(new Date(Date.parse(iso) + 7 * 3600 * 1000).toISOString()) : '');\n\n// Итоговые состояния без кнопок: W3 «📨 Отправил», W6 «⌛ устарела» и «🔒 закрыта на hh»\nconst FINAL = { expired: '⌛ Устарела: 3 дня без решения', archived: '🔒 Вакансия закрыта на hh' };\n\n// Текст карточки (Parse Mode = HTML). Строка «👤 …» появляется после нажатия кнопки,\n// «📨 …» — после «Отправил» под письмом (W3, status = applied), FINAL — после W6\nfunction cardText(r) {\n  const date = published(r.published_at);\n  const meta = [esc(r.company), salary(r), EXPERIENCE[r.experience] ?? '', esc(areas(r.areas)), date && `📅 ${date}`]\n    .filter(Boolean)\n    .join(' · ');\n  const flags = [\n    r.has_test && '📝 тест',\n    r.letter_required && '✉️ письмо обязательно',\n    r.responses != null && `👥 ${r.responses}`,\n    r.error && `⚠️ ${esc(r.error)}`,\n  ]\n    .filter(Boolean)\n    .join(' · ');\n  const verdict = `🤖 ${VERDICT[r.decision] ?? esc(r.decision)}${r.llm_reason ? ` — ${esc(r.llm_reason)}` : ''}`;\n  const mine = CHOICE[r.my_decision]\n    ? `👤 ${CHOICE[r.my_decision]}${r.my_reason === BAN_REASON ? ' · 🚫 компания в чёрном списке' : ''}`\n    : '';\n  // «📨 Откликался раньше» уже в строке «👤 …» — второй раз не пишем\n  const sent =\n    r.status === 'applied' && r.my_decision !== 'earlier'\n      ? `📨 Отклик отправлен${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}`\n      : '';\n  return [`<a href=\"${r.url}\"><b>${esc(r.title)}</b></a>`, meta, flags, verdict, mine, sent, FINAL[r.status] ?? '']\n    .filter(Boolean)\n    .join('\\n');\n}\n// Общий код сообщения с письмом в Telegram: W5 «Format letter» и W3 «Apply sent».\n// Подключается после n8n/shared/card.js (нужны esc и thaiDate):\n//   // @include n8n/shared/card.js\n//   // @include n8n/shared/letter.js\n\nconst LETTER_HEAD = { new: '✉️ Письмо', redo: '🔄 Новый вариант письма', revise: '✏️ Письмо с правкой' };\n\n// r: строка вакансии + { ok, letter, problem, mode, instruction }. Письмо — в <pre>: копируется одним нажатием.\n// После «📨 Отправил» (status = applied) подсказки заменяет строка «📨 Отклик отправлен …»\nfunction letterText(r) {\n  const head = `${LETTER_HEAD[r.mode] ?? LETTER_HEAD.new} · <a href=\"${r.url}\">${esc(r.title)}</a> · ${esc(r.company)}`;\n  if (!r.ok) {\n    return [head, `⚠️ Письмо не получилось: ${esc(r.problem)}`, 'Нажми «🔄 Переписать», чтобы попробовать ещё раз.'].join('\\n');\n  }\n  const sent = r.status === 'applied';\n  const closed = r.status === 'archived';\n  return [\n    head,\n    r.mode === 'revise' && r.instruction ? `<i>Пожелание: «${esc(r.instruction)}»</i>` : '',\n    `<pre>${esc(r.letter)}</pre>`,\n    !sent && !closed && r.has_test ? '📝 У вакансии тест — ответы в форме отклика на hh.' : '',\n    sent\n      ? `📨 Отклик отправлен${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}`\n      : closed\n        ? '🔒 Вакансия закрыта на hh — отклик уже не отправить'\n        : '<i>Нажми на письмо — скопируется. Поправить — ответь на это сообщение.</i>',\n  ]\n    .filter(Boolean)\n    .join('\\n');\n}\n\nconst action = $('Route').first().json;\nconst row = $input.first().json;\nconst sent = action.op === 'sent';\nconst updated = {\n  ...row,\n  status: sent ? 'applied' : 'approved',\n  applied_at: sent ? row.applied_at || new Date().toISOString() : '',\n};\n\nreturn [\n  {\n    json: {\n      id: row.id,\n      sent,\n      status: updated.status,\n      applied_at: updated.applied_at,\n      letterText: letterText({ ...updated, ok: Boolean(row.letter), problem: 'письма нет', mode: 'new' }),\n      cardText: cardText(updated),\n      chatId: action.chatId,\n      letterMessageId: action.messageId,\n      cardId: row.tg_message_id,\n      queryId: action.queryId,\n      toast: sent ? '📨 Записал: отклик отправлен' : '↩️ Отменил: отклик не отправлен',\n      apply_url: row.apply_url,\n      url: row.url,\n    },\n  },\n];\n"
+        "jsCode": "// W3 · Apply sent — кнопки под письмом «📨 Отправил» и «↩️ Отменить».\n// Нода: Code, режим «Run Once for All Items».\n// Вход: строка вакансии из «Sent row», кнопка — из «Route» (op = sent | unsent; messageId — сообщение с письмом).\n// Выход: { id, sent, busy, status, applied_at, apply_by, robot, letterText, cardText, chatId, letterMessageId, cardId,\n//          queryId, toast, apply_url, url }\n//   sent   — status = applied; у письма остаётся только «↩️ Отменить», у карточки кнопки убираются;\n//   unsent — status = approved; письму возвращаются все кнопки (с 🚀, если подходит роботу), карточке — «↩️ Изменить».\n//   busy — вакансия в очереди робота (этап 6): ничего не меняем, только тост. «📨 Отправил» пишет apply_by = me.\n\n// Общий код карточки вакансии в Telegram: W2 «Format card» и W3 «Apply choice».\n// В Code-ноду попадает при сборке: строка «// @include n8n/shared/card.js» заменяется этим файлом\n// (scripts/build-workflows.mjs, scripts/run-code-node.mjs).\n\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst EXPERIENCE = { noExperience: 'без опыта', between1And3: '1–3 г.', between3And6: '3–6 л.', moreThan6: '6+ л.' };\nconst CURRENCY = { RUR: '₽', USD: '$', EUR: '€', KZT: '₸', BYR: 'Br', UZS: 'сум' };\n\n// Решение нейросети (колонка decision)\nconst VERDICT = { apply: '🟢 apply', maybe: '🟡 maybe', skip: '🔴 skip', error: '⚠️ не оценено' };\n// Кнопки пользователя: callback_data = v:<id строки>:<choice>, решение — в колонку my_decision.\n// earlier — «📨 Уже откликался» (до бота, 07.10.2026): status = applied без письма и без applied_at,\n// без «Почему?» и вне теневого режима (сравниваются только apply / maybe / skip)\nconst CHOICE = { apply: '✅ Откликнусь', maybe: '🤔 Возможно', skip: '❌ Мимо', earlier: '📨 Откликался раньше' };\n// «🚫 В ЧС» на карточке (07.10.2026): компания уходит в чёрный список, вакансия — ❌ с этой причиной\nconst BAN_REASON = 'чёрный список';\nconst STATUS_BY_CHOICE = { apply: 'approved', maybe: 'maybe', skip: 'skipped', earlier: 'applied' };\n\nconst short = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));\n\nfunction salary(r) {\n  if (!r.salary_from && !r.salary_to) return '';\n  const range =\n    r.salary_from && r.salary_to\n      ? `${short(r.salary_from)}–${short(r.salary_to)}`\n      : r.salary_from\n        ? `от ${short(r.salary_from)}`\n        : `до ${short(r.salary_to)}`;\n  return `💰 ${range} ${CURRENCY[r.currency] ?? r.currency ?? ''}${r.salary_gross ? ' до налогов' : ''}`;\n}\n\n// «Москва, Сербия, Грузия, Армения» → «Москва, Сербия +2»\nfunction areas(s) {\n  const list = String(s ?? '').split(', ').filter(Boolean);\n  return list.length > 2 ? `${list.slice(0, 2).join(', ')} +${list.length - 2}` : list.join(', ');\n}\n\n// '2026-10-06T13:22:00+0300' → '06.10'\nfunction published(s) {\n  const m = String(s ?? '').match(/^\\d{4}-(\\d{2})-(\\d{2})/);\n  return m ? `${m[2]}.${m[1]}` : '';\n}\n\n// Момент в UTC (applied_at) → дата по Таиланду (UTC+7): '2026-10-06T21:17:55Z' → '07.10'\nconst thaiDate = (iso) => (Date.parse(iso) ? published(new Date(Date.parse(iso) + 7 * 3600 * 1000).toISOString()) : '');\n\n// Итоговые состояния без кнопок: W3 «📨 Отправил», W6 «⌛ устарела» и «🔒 закрыта на hh»\nconst FINAL = { expired: '⌛ Устарела: 3 дня без решения', archived: '🔒 Вакансия закрыта на hh' };\n\n// Текст карточки (Parse Mode = HTML). Строка «👤 …» появляется после нажатия кнопки,\n// «📨 …» — после «Отправил» под письмом (W3, status = applied), FINAL — после W6\nfunction cardText(r) {\n  const date = published(r.published_at);\n  const meta = [esc(r.company), salary(r), EXPERIENCE[r.experience] ?? '', esc(areas(r.areas)), date && `📅 ${date}`]\n    .filter(Boolean)\n    .join(' · ');\n  const flags = [\n    r.has_test && '📝 тест',\n    r.letter_required && '✉️ письмо обязательно',\n    r.responses != null && `👥 ${r.responses}`,\n    r.error && `⚠️ ${esc(r.error)}`,\n  ]\n    .filter(Boolean)\n    .join(' · ');\n  // Нейросеть не оценивала, а фильтр отсеял (в том числе вакансия, возвращённая с панели меню, 08.10.2026) — причины фильтра\n  const verdict =\n    !r.decision && r.reasons\n      ? `🧹 Отсеяна фильтром: ${esc(r.reasons)}`\n      : `🤖 ${VERDICT[r.decision] ?? esc(r.decision)}${r.llm_reason ? ` — ${esc(r.llm_reason)}` : ''}`;\n  const mine = CHOICE[r.my_decision]\n    ? `👤 ${CHOICE[r.my_decision]}${r.my_reason === BAN_REASON ? ' · 🚫 компания в чёрном списке' : ''}`\n    : '';\n  // «📨 Откликался раньше» уже в строке «👤 …» — второй раз не пишем\n  // Робот (этап 6): «🚀 … роботом»; нашёлся на hh без «📨 Отправил» (6.2) — «📨 … на hh»\n  const who = r.apply_by === 'robot' ? '🚀 Отклик отправлен роботом' : r.apply_by === 'hh' ? '📨 Отклик есть на hh' : '📨 Отклик отправлен';\n  const sent =\n    r.status === 'applied' && r.my_decision !== 'earlier' ? `${who}${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}` : '';\n  return [`<a href=\"${r.url}\"><b>${esc(r.title)}</b></a>`, meta, flags, verdict, mine, sent, FINAL[r.status] ?? '']\n    .filter(Boolean)\n    .join('\\n');\n}\n// Общий код робота-отклика (этап 6, docs/stages/stage-6.md): W3, W5, W6, W7, W9.\n// Подключается строкой «// @include n8n/shared/robot.js» после n8n/shared/card.js (нужны esc и thaiDate).\n\nconst VNC_URL = 'vnc://localhost:5901';\nconst DAY_MS = 24 * 3600 * 1000;\n\n// Можно ли откликнуться роботом: ✅ с письмом, без теста работодателя и не на сайте работодателя, не в очереди.\n// enabled — настройка apply.enabled (W3 её не читает: выключенного робота поймает W9 при нажатии)\nconst robotEligible = (r, enabled = true) =>\n  Boolean(enabled && r?.status === 'approved' && r.letter && !r.has_test && r.apply_type !== 'external' && !r.apply_state);\n\n// «День» робота для лимита — с 09:00 по Таиланду (02:00 UTC), решение пользователя 10.10.2026\nfunction robotDayStart(now = Date.now()) {\n  const d = new Date(now);\n  const start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 2);\n  return start > now ? start - DAY_MS : start;\n}\n// Живые отклики робота за текущий «день»\nconst robotToday = (rows, now = Date.now()) =>\n  rows.filter((r) => r.apply_by === 'robot' && Date.parse(r.applied_at) >= robotDayStart(now)).length;\n\n// Тихие часы 23:00–09:00 по Таиланду (UTC+7)\nfunction quietHours(now = Date.now()) {\n  const h = new Date(now + 7 * 3600 * 1000).getUTCHours();\n  return h >= 23 || h < 9;\n}\n\n// Время по Таиланду: '2026-10-11T07:32:00Z' → '14:32'\nconst thaiTime = (iso) =>\n  Date.parse(iso) ? new Date(Date.parse(iso) + 7 * 3600 * 1000).toISOString().slice(11, 16) : '';\n\n// Как ушло письмо — в строку «🚀 Отправлено»\nconst LETTER_HOW = { attached: ' · ✉️ письмо приложено', chat: ' · 💬 письмо — в чате отклика', none: ' · ⚠️ без письма' };\n\n// Строка робота в сообщении с письмом: очередь, итог, пометка. r — строка вакансии\n// (+ robot_wait — чего ждёт робот: «капчу hh», «вход в hh»…)\nfunction robotLine(r) {\n  if (r.apply_state === 'queued' || r.apply_state === 'applying') {\n    return r.robot_wait ? `⏸ Робот ждёт: ${esc(r.robot_wait)}` : '⏳ Робот откликается…';\n  }\n  if (r.status === 'applied' && r.apply_by === 'robot') {\n    return `🚀 Отправлено ${thaiDate(r.applied_at)} ${thaiTime(r.applied_at)}${LETTER_HOW[r.apply_letter] ?? ''}${\n      r.apply_note ? `\\n⚠️ hh: ${esc(r.apply_note)}` : ''\n    }`;\n  }\n  if (r.status === 'applied' && r.apply_by === 'hh') return '📨 Отклик уже был на hh — отметил';\n  if (r.status !== 'approved') return '';\n  const note = r.apply_note ? `: ${esc(r.apply_note)}` : '';\n  const lines = {\n    test: '🧩 У вакансии вопросы работодателя — откликнитесь сами',\n    external: '🌐 Отклик на сайте работодателя — откликнитесь сами',\n    hidden: '🙈 hh просит открыть резюме этому работодателю — откликнитесь сами',\n    error: `⚠️ Робот не смог${note}${(r.apply_tries ?? 0) >= 3 ? ' — третий раз, откликнитесь сами' : ''}`,\n    dry_run: `🧪 Сухой прогон (APPLY_LIVE=0), отклик не отправлен${note}`,\n    disabled: '⏸ Робот выключен (⚙️ → 🚀 Робот) — откликнитесь сами',\n  };\n  return lines[r.apply_result] ?? '';\n}\n// Общий код сообщения с письмом в Telegram: W5 «Format letter», W3 «Apply sent», W9 Robot.\n// Подключается после n8n/shared/card.js (нужны esc и thaiDate) и n8n/shared/robot.js (строка робота):\n//   // @include n8n/shared/card.js\n//   // @include n8n/shared/robot.js\n//   // @include n8n/shared/letter.js\n\nconst LETTER_HEAD = { new: '✉️ Письмо', redo: '🔄 Новый вариант письма', revise: '✏️ Письмо с правкой' };\n\n// r: строка вакансии + { ok, letter, problem, mode, instruction }. Письмо — в <pre>: копируется одним нажатием.\n// После «📨 Отправил» (status = applied) подсказки заменяет строка «📨 Отклик отправлен …».\n// Робот (этап 6): строку очереди и итога даёт robotLine из n8n/shared/robot.js (подключается перед этим файлом)\nfunction letterText(r) {\n  const head = `${LETTER_HEAD[r.mode] ?? LETTER_HEAD.new} · <a href=\"${r.url}\">${esc(r.title)}</a> · ${esc(r.company)}`;\n  if (!r.ok) {\n    return [head, `⚠️ Письмо не получилось: ${esc(r.problem)}`, 'Нажми «🔄 Переписать», чтобы попробовать ещё раз.'].join('\\n');\n  }\n  const sent = r.status === 'applied';\n  const closed = r.status === 'archived';\n  const robot = typeof robotLine === 'function' ? robotLine(r) : '';\n  return [\n    head,\n    r.mode === 'revise' && r.instruction ? `<i>Пожелание: «${esc(r.instruction)}»</i>` : '',\n    `<pre>${esc(r.letter)}</pre>`,\n    // Робот включён, но вакансия ему не подходит (W5 «Format letter») — почему нет 🚀\n    !sent && !closed && r.robot_hint ? `🤖 Робот не откликается: ${esc(r.robot_hint)}` : '',\n    !sent && !closed && r.has_test && r.apply_result !== 'test' && !r.robot_hint ? '📝 У вакансии тест — ответы в форме отклика на hh.' : '',\n    sent\n      ? robot || `📨 Отклик отправлен${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}`\n      : closed\n        ? '🔒 Вакансия закрыта на hh — отклик уже не отправить'\n        : robot || '<i>Нажми на письмо — скопируется. Поправить — ответь на это сообщение.</i>',\n  ]\n    .filter(Boolean)\n    .join('\\n');\n}\n\nconst action = $('Route').first().json;\n// Строка — из «Sent row» по имени: вход этой ноды может смениться при правках workflow\nconst row = $('Sent row').first().json;\n// Робот (этап 6) отправляет отклик с этим письмом — кнопки письма не трогаем\nconst busy = Boolean(row.apply_state);\nconst sent = !busy && action.op === 'sent';\nconst updated = busy\n  ? row\n  : {\n      ...row,\n      status: sent ? 'applied' : 'approved',\n      applied_at: sent ? row.applied_at || new Date().toISOString() : '',\n      apply_by: sent ? 'me' : '',\n    };\n\nreturn [\n  {\n    json: {\n      id: row.id,\n      sent,\n      busy,\n      status: updated.status,\n      applied_at: updated.applied_at ?? '',\n      apply_by: updated.apply_by ?? '',\n      // «↩️ Отменить»: письму возвращаются кнопки — с 🚀, если вакансия подходит роботу\n      robot: robotEligible({ ...updated, apply_state: '' }),\n      letterText: letterText({ ...updated, ok: Boolean(row.letter), problem: 'письма нет', mode: 'new' }),\n      cardText: cardText(updated),\n      chatId: action.chatId,\n      letterMessageId: action.messageId,\n      cardId: row.tg_message_id,\n      queryId: action.queryId,\n      toast: busy\n        ? '🚀 Робот в работе — сначала ⛔ под письмом'\n        : sent\n          ? '📨 Записал: отклик отправлен'\n          : '↩️ Отменил: отклик не отправлен',\n      apply_url: row.apply_url,\n      url: row.url,\n    },\n  },\n];\n"
       }
     },
     {
@@ -752,7 +1183,8 @@
           "mappingMode": "defineBelow",
           "value": {
             "status": "={{ $json.status }}",
-            "applied_at": "={{ $json.applied_at }}"
+            "applied_at": "={{ $json.applied_at }}",
+            "apply_by": "={{ $json.apply_by }}"
           },
           "matchingColumns": [],
           "schema": [
@@ -769,6 +1201,16 @@
             {
               "id": "applied_at",
               "displayName": "applied_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "apply_by",
+              "displayName": "apply_by",
               "required": false,
               "defaultMatch": false,
               "display": true,
@@ -805,6 +1247,41 @@
           "id": "jobHunterTgBot01",
           "name": "Telegram bot"
         }
+      }
+    },
+    {
+      "id": "e3d48c36-59db-26ed-4b4a-e267b9157867",
+      "name": "Busy sent?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1870,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "96c74cd5-f926-23c0-2b96-b2090572dcf3",
+              "leftValue": "={{ $('Apply sent').first().json.busy }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": false,
+        "options": {}
       }
     },
     {
@@ -897,7 +1374,8 @@
           "id": "jobHunterTgBot01",
           "name": "Telegram bot"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "id": "1cf50071-ca41-5190-64aa-fb57f09eec98",
@@ -926,7 +1404,8 @@
           "id": "jobHunterTgBot01",
           "name": "Telegram bot"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "id": "02259af1-b9ea-862d-05d0-0cf4c8ef4403",
@@ -995,7 +1474,125 @@
           "id": "jobHunterTgBot01",
           "name": "Telegram bot"
         }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "a4a995bc-b56e-3ce3-d566-6d737993ec75",
+      "name": "Restore robot?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2090,
+        450
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "69c28a62-b199-f2a2-d5ca-a39ddc005bbc",
+              "leftValue": "={{ $('Apply sent').first().json.robot }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": false,
+        "options": {}
       }
+    },
+    {
+      "id": "e7a1045e-80c5-6e66-bdd6-bb628158fb51",
+      "name": "Letter: restore robot",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2200,
+        550
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "editMessageText",
+        "messageType": "message",
+        "chatId": "={{ $('Apply sent').first().json.chatId }}",
+        "messageId": "={{ $('Apply sent').first().json.letterMessageId }}",
+        "text": "={{ $('Apply sent').first().json.letterText }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "🚀 Откликнуться роботом",
+                    "additionalFields": {
+                      "callback_data": "=l:{{ $('Apply sent').first().json.id }}:robot"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "📝 Отклик на hh",
+                    "additionalFields": {
+                      "url": "={{ $('Apply sent').first().json.apply_url }}"
+                    }
+                  },
+                  {
+                    "text": "🔗 Вакансия",
+                    "additionalFields": {
+                      "url": "={{ $('Apply sent').first().json.url }}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "🔄 Переписать",
+                    "additionalFields": {
+                      "callback_data": "=l:{{ $('Apply sent').first().json.id }}:redo"
+                    }
+                  },
+                  {
+                    "text": "📨 Отправил",
+                    "additionalFields": {
+                      "callback_data": "=l:{{ $('Apply sent').first().json.id }}:sent"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterTgBot01",
+          "name": "Telegram bot"
+        }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "id": "47a978e8-61f1-bf99-9cbd-2e823e92c908",
@@ -1040,7 +1637,8 @@
           "id": "jobHunterTgBot01",
           "name": "Telegram bot"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "id": "9045b6c2-9072-4bc8-843e-efb5696356ef",
@@ -1129,7 +1727,100 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// W3 · Reply kind — на что ответил пользователь: на письмо (правка) или на карточку / «почему?» (причина).\n// Нода: Code, режим «Run Once for All Items».\n// Вход: строка вакансии из «Reply row» (найдена по tg_letter_id, tg_ask_id или tg_message_id = replyTo),\n//       сам ответ — из «Route».\n// Выход: { id, kind: revise | reason, text }\n\nconst reply = $('Route').first().json;\nconst row = $input.first().json;\nreturn [\n  {\n    json: {\n      id: row.id,\n      kind: row.tg_letter_id === reply.replyTo ? 'revise' : 'reason',\n      text: reply.text,\n    },\n  },\n];\n"
+        "jsCode": "// W3 · Reply kind — на что ответил пользователь: на письмо (правка) или на карточку / «почему?» (причина).\n// Нода: Code, режим «Run Once for All Items».\n// Вход: строка вакансии из «Reply row» (найдена по tg_letter_id, tg_ask_id или tg_message_id = replyTo),\n//       сам ответ — из «Route».\n// Выход: { id, kind: revise | busy | reason, text }\n\nconst reply = $('Route').first().json;\nconst row = $input.first().json;\nreturn [\n  {\n    json: {\n      id: row.id,\n      // Правка письма, пока робот отправляет его (этап 6), не применяется — busy\n      kind: row.tg_letter_id === reply.replyTo ? (row.apply_state ? 'busy' : 'revise') : 'reason',\n      text: reply.text,\n    },\n  },\n];\n"
+      }
+    },
+    {
+      "id": "00878902-52b8-5d2e-3f7c-a6ecaa8b66a1",
+      "name": "Busy?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1210,
+        450
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "8bf0dcd7-ee62-a20a-89f3-543becd8f6f0",
+              "leftValue": "={{ $json.kind === 'busy' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "12a3a3c3-7b30-d2eb-df00-179404a5fbd6",
+      "name": "Busy reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1320,
+        350
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $env.TG_CHAT_ID }}",
+        "text": "🚀 Робот уже откликается с этим письмом — правку не применяю. Сначала ⛔ под письмом",
+        "replyMarkup": "replyKeyboard",
+        "replyKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "📋 Вакансии"
+                  },
+                  {
+                    "text": "📊 Статистика"
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "⚙️ Настройки"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "replyKeyboardOptions": {
+          "resize_keyboard": true
+        },
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true,
+          "reply_to_message_id": "={{ $('Route').first().json.messageId }}",
+          "disable_notification": true
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "jobHunterTgBot01",
+          "name": "Telegram bot"
+        }
       }
     },
     {
@@ -1399,6 +2090,63 @@
       "onError": "continueRegularOutput"
     },
     {
+      "id": "ee45f3b5-0a03-4f30-ea1d-56f20eeee5db",
+      "name": "Score?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1540,
+        950
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "d4a824a6-50d7-5ea9-8419-df5e2f36fef6",
+              "leftValue": "={{ $('Apply choice').first().json.score }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "7a3f62ed-7d0c-be95-b25b-0e172ec30c55",
+      "name": "Score now",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1760,
+        950
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "jobHunterW2Score"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      }
+    },
+    {
       "id": "45e0e070-a00b-e17b-1adb-6eff0f065fec",
       "name": "Panel job",
       "type": "n8n-nodes-base.code",
@@ -1632,6 +2380,24 @@
         ],
         [
           {
+            "node": "Robot?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Robot?": {
+      "main": [
+        [
+          {
+            "node": "Robot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Button?",
             "type": "main",
             "index": 0
@@ -1658,6 +2424,57 @@
       ]
     },
     "Vacancy": {
+      "main": [
+        [
+          {
+            "node": "Rescue page?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rescue page?": {
+      "main": [
+        [
+          {
+            "node": "Rescue page",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Apply choice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rescue page": {
+      "main": [
+        [
+          {
+            "node": "Rescue parse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rescue parse": {
+      "main": [
+        [
+          {
+            "node": "Save page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save page": {
       "main": [
         [
           {
@@ -1705,6 +2522,22 @@
           },
           {
             "node": "Ban?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Score?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score?": {
+      "main": [
+        [
+          {
+            "node": "Score now",
             "type": "main",
             "index": 0
           }
@@ -1755,11 +2588,67 @@
       "main": [
         [
           {
-            "node": "Card: decided",
+            "node": "New card?",
             "type": "main",
             "index": 0
           }
         ],
+        [
+          {
+            "node": "Choose?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New card?": {
+      "main": [
+        [
+          {
+            "node": "Card: new",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Card: decided",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Card: new": {
+      "main": [
+        [
+          {
+            "node": "Save card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save card": {
+      "main": [
+        [
+          {
+            "node": "Ask?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Letter?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Choose?": {
+      "main": [
         [
           {
             "node": "Card: choose",
@@ -1902,6 +2791,18 @@
       "main": [
         [
           {
+            "node": "Busy sent?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Busy sent?": {
+      "main": [
+        [],
+        [
+          {
             "node": "Sent?",
             "type": "main",
             "index": 0
@@ -1920,7 +2821,7 @@
         ],
         [
           {
-            "node": "Letter: restore",
+            "node": "Restore robot?",
             "type": "main",
             "index": 0
           }
@@ -1938,7 +2839,36 @@
         ]
       ]
     },
+    "Restore robot?": {
+      "main": [
+        [
+          {
+            "node": "Letter: restore robot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Letter: restore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Letter: restore": {
+      "main": [
+        [
+          {
+            "node": "Card: restore",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Letter: restore robot": {
       "main": [
         [
           {
@@ -1995,6 +2925,24 @@
     },
     "Reply kind": {
       "main": [
+        [
+          {
+            "node": "Busy?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Busy?": {
+      "main": [
+        [
+          {
+            "node": "Busy reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
         [
           {
             "node": "Revise?",

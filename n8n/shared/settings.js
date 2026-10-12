@@ -2,7 +2,7 @@
 // В таблице settings (name, value_json) лежат только изменения пользователя: пустая таблица — значения по умолчанию,
 // то есть поведение до появления настроек. Значение, которое не проходит проверку схемы, заменяется значением
 // по умолчанию — битая строка в таблице не ломает сбор.
-// Общий код W1, W6, W7, W8: строка «// @include n8n/shared/settings.js» (перед n8n/shared/schedule.js).
+// Общий код W1, W2, W5, W6, W7, W8, W9: строка «// @include n8n/shared/settings.js» (перед n8n/shared/schedule.js).
 
 // Правила фильтра W1, которые можно выключить (filter.rules_off): id → подпись. «В архиве» не выключается
 const FILTER_RULES = {
@@ -55,6 +55,11 @@ const SETTINGS = {
     ],
     cases: true,
   },
+  // Робот-отклик (этап 6, docs/stages/stage-6.md): кнопка 🚀 под новыми письмами, пауза очереди,
+  // лимит живых откликов в «день» робота (с 09:00 по Таиланду). Предохранитель APPLY_LIVE — в .env, не здесь
+  'apply.enabled': { default: false, options: [false, true] },
+  'apply.paused': { default: false, options: [false, true] },
+  'apply.daily_limit': { default: 25, options: [10, 15, 25, 40] },
 };
 
 // Встроенные спорные случаи промпта W2: как узнать их в списке пользователя, решение по умолчанию
