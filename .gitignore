@@ -11,7 +11,6 @@ fixtures/*
 .n8n-session
 docs/letter-example.md
 docs/letter-example-original.md
-v2/backups/
 applier/node_modules/
 
 # Выгрузки резюме из hh (PDF) — личные данные
