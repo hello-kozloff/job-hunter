@@ -21,6 +21,20 @@ const TELEGRAM = 'jobHunterW3Teleg';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Свежий контейнер n8n первые секунды держит базу SQLite (миграции, VACUUM при старте): CLI-команды в нём падают
+// с SQLITE_BUSY (13.10.2026). Импорт и публикация повторяемы — пробуем ещё раз
+async function retry(label, fn, tries = 6) {
+  for (let i = 1; ; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (i >= tries) throw e;
+      console.log(`⏳ ${label}: n8n ещё занят (${String(e.message).split('\n')[0].slice(0, 80)}) — повтор через 10 с`);
+      await sleep(10000);
+    }
+  }
+}
+
 // Команда с выводом в консоль; ошибка — исключение с кодом выхода
 function sh(cmd, args, { quiet = false, input } = {}) {
   return execFileSync(cmd, args, { cwd: ROOT, stdio: [input === undefined ? 'inherit' : 'pipe', quiet ? 'pipe' : 'inherit', 'inherit'], input, encoding: 'utf8' });
@@ -77,6 +91,7 @@ export async function deploy({ paused = false, applier = false } = {}) {
   const tunnel = Boolean(env.NGROK_DOMAIN);
 
   sh('docker', ['compose', 'up', '-d', '--wait', 'n8n', ...(tunnel ? ['ngrok'] : [])]);
+  await waitHealthz(n8nPort, 120);
 
   if (applier) {
     if (!env.APPLIER_TOKEN) throw new Error('Для робота нужен APPLIER_TOKEN в .env (openssl rand -hex 24) — см. .env.example');
@@ -85,18 +100,21 @@ export async function deploy({ paused = false, applier = false } = {}) {
     sh('docker', ['compose', 'up', '-d', '--wait', 'applier']);
   }
 
-  await pipe(
-    [process.execPath, [join(ROOT, 'scripts/credentials.mjs')]],
-    ['docker', ['exec', '-i', n8nContainer, 'sh', '-c', 'cat > /tmp/cred.json && n8n import:credentials --input=/tmp/cred.json; rm -f /tmp/cred.json']],
+  await retry('credentials', () =>
+    pipe(
+      [process.execPath, [join(ROOT, 'scripts/credentials.mjs')]],
+      // set -e: ошибка импорта — ненулевой код выхода, иначе повтор не сработал бы
+      ['docker', ['exec', '-i', n8nContainer, 'sh', '-c', 'cat > /tmp/cred.json && n8n import:credentials --input=/tmp/cred.json; code=$?; rm -f /tmp/cred.json; exit $code']],
+    ),
   );
 
   // docker cp кладёт файлы от root — удалять тоже от root
   sh('docker', ['exec', '-u', 'root', n8nContainer, 'rm', '-rf', '/tmp/workflows']);
   sh('docker', ['cp', join(ROOT, 'n8n/workflows'), `${n8nContainer}:/tmp/workflows`]);
-  sh('docker', ['exec', n8nContainer, 'n8n', 'import:workflow', '--separate', '--input=/tmp/workflows']);
+  await retry('импорт workflow', () => sh('docker', ['exec', n8nContainer, 'n8n', 'import:workflow', '--separate', '--input=/tmp/workflows']));
 
   const publish = [...ALWAYS, ...(paused ? [] : SCHEDULED), ...(tunnel ? [TELEGRAM] : [])];
-  for (const id of publish) sh('docker', ['exec', n8nContainer, 'n8n', 'publish:workflow', `--id=${id}`]);
+  for (const id of publish) await retry(`публикация ${id}`, () => sh('docker', ['exec', n8nContainer, 'n8n', 'publish:workflow', `--id=${id}`]));
 
   sh('docker', ['compose', 'restart', 'n8n']);
   await waitHealthz(n8nPort);
