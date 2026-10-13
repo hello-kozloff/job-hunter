@@ -50,56 +50,57 @@ W8 Clock ──► W1 Collector ──► W2 Score ──► карточка в
 
 Данные лежат в n8n Data Tables: `vacancies`, `blacklist`, `runs`, `settings`, `alerts`. Схема — [n8n/schema.mjs](n8n/schema.mjs). Статусы вакансии и колонки описаны в [CLAUDE.md §6](CLAUDE.md).
 
-## Установка с нуля
+## Установка
+
+Одна установка — один человек: свой бот, свой ключ нейросети, свой компьютер. Профессия любая — поиск и правила отбора бот соберёт по резюме.
 
 **Нужно:**
-- Mac с Docker Desktop (окно робота открывается через «Общий экран» macOS);
-- Node.js 22+, git, [GitHub CLI](https://cli.github.com) (для git flow);
-- аккаунты: Telegram, [ngrok](https://dashboard.ngrok.com) (бесплатный), [Google AI Studio](https://aistudio.google.com/apikey), по желанию healthchecks.io и [Anthropic](https://console.anthropic.com).
+- компьютер, который почти всегда включён: Mac, Linux или Windows 10/11. Проверено на Mac; на Linux и Windows — по инструкции, без проверки;
+- [Docker Desktop](https://www.docker.com/products/docker-desktop) (на Windows — с WSL 2), [Node.js](https://nodejs.org) 22+, git;
+- Telegram и свой бот: [@BotFather](https://t.me/BotFather) → `/newbot`, это пара минут;
+- ключ нейросети: [Gemini](https://aistudio.google.com/apikey) (бесплатно) или [Claude](https://console.anthropic.com) (платно).
+  ⚠️ Из России Gemini не работает (Google блокирует), а Claude запрещён правилами Anthropic. В ЕС, Великобритании и Швейцарии бесплатного Gemini нет;
+- бесплатный аккаунт [ngrok](https://dashboard.ngrok.com) — туннель, через который приходят нажатия кнопок в Telegram. Нужны Authtoken и бесплатный домен.
 
-1. **Окружение:**
-   ```bash
-   cp .env.example .env && chmod 600 .env
-   openssl rand -hex 32   # → .env: N8N_ENCRYPTION_KEY=… (сохрани и в менеджер паролей)
-   ```
-2. **n8n:**
-   ```bash
-   docker compose up -d                              # http://localhost:5678
-   node scripts/n8n-api.mjs setup-owner you@mail.com # владелец n8n, пароль запишется в .env
-   node scripts/n8n-api.mjs migrate                  # таблицы и колонки по n8n/schema.mjs
-   node scripts/n8n-api.mjs blacklist-seed           # по желанию: стартовый чёрный список
-   ```
-3. **Telegram.** Создай бота у [@BotFather](https://t.me/BotFather) → `TG_BOT_TOKEN`. Напиши боту `/start` и узнай chat_id через `https://api.telegram.org/bot<токен>/getUpdates` → `TG_CHAT_ID` (подробно — [docs/stages/stage-1.md](docs/stages/stage-1.md)).
-4. **Нейросеть и туннель для кнопок.** В `.env`:
-   - `GEMINI_API_KEY`;
-   - `NGROK_AUTHTOKEN`, `NGROK_DOMAIN`;
-   - по желанию `ANTHROPIC_API_KEY`.
+```bash
+git clone -b production <адрес репозитория> job-hunter
+cd job-hunter
+node scripts/install.mjs
+```
 
-   Подробно — [docs/stages/stage-3.md](docs/stages/stage-3.md).
-5. **Профиль:** резюме, подпись, контакт, образцы писем. Это строки таблицы `settings`, подробно — [docs/onboarding.md](docs/onboarding.md). Пока онбординга в боте нет, профиль загружается из JSON (в git не попадает):
-   ```bash
-   node scripts/n8n-api.mjs profile-import docs/profile.json   # бэкап: profile-export docs/profile.json
-   ```
-6. **Деплой:**
-   ```bash
-   scripts/deploy.sh   # сборка workflow, credentials из .env, импорт, публикация, перезапуск n8n
-   ```
-7. **Ключ API n8n для сводки W6:**
-   ```bash
-   node scripts/n8n-api.mjs api-key | docker exec -i job-hunter-n8n sh -c \
-     'cat > /tmp/c.json && n8n import:credentials --input=/tmp/c.json; rm -f /tmp/c.json'
-   ```
-8. **Страж (по желанию).** На healthchecks.io создай check с расписанием сбора. В `.env` впиши `HC_PING_URL` и `HC_API_KEY` (тогда смена расписания в боте обновит стража сама), потом `scripts/deploy.sh`. Подробно — [docs/stages/stage-5.md](docs/stages/stage-5.md).
-9. **Робот-отклик (по желанию):**
-   ```bash
-   # .env: APPLIER_TOKEN=$(openssl rand -hex 24), VNC_PASSWORD (≤ 8 символов), APPLY_LIVE=0
-   scripts/deploy.sh --applier        # сборка и запуск контейнера робота
-   node scripts/applier.mjs login     # вход в hh в окне робота: «Общий экран» → vnc://localhost:5901
-   node scripts/applier.mjs status    # браузер работает, вход выполнен, блока нет
-   ```
-   Живые отклики — `APPLY_LIVE=1` и снова `scripts/deploy.sh --applier`. Включить робота в боте: ⚙️ → 🚀 Робот. Подробно — [docs/stages/stage-6.md](docs/stages/stage-6.md).
+**Мастер спросит:**
+- токен бота — и попросит нажать «Запустить» по ссылке, так он узнает твой чат;
+- ключ нейросети — и проверит его пробным запросом;
+- токен и домен ngrok;
+- почту для входа в интерфейс n8n (можно пропустить).
 
-Чтобы сбор шёл ночью, Mac должен не спать: на зарядке и с запретом сна при погашенном экране. Docker Desktop должен стартовать при входе в систему.
+**Остальное сделает сам:** ключ шифрования, часовой пояс компьютера, n8n в Docker, таблицы, workflow. В конце бот пришлёт приветствие → отправь ему **резюме в PDF**: с hh — «Мои резюме» → резюме → «Скачать» → PDF. Бот покажет, что понял, спросит подпись, контакт для HR и часовой пояс — и начнёт искать. Подробно — [docs/onboarding.md](docs/onboarding.md).
+
+- **Обновление:** `git pull && node scripts/install.mjs` — заполненное он не спрашивает.
+- **Вторая установка рядом** (например, проверить): `node scripts/install.mjs --project jh-test --port 5690` в другой папке. Нужны второй бот и второй аккаунт ngrok — бесплатный ngrok держит один туннель.
+- **Компьютер не должен спать**, иначе сборы пропускаются (после пробуждения — один догоняющий). На Mac: на зарядке и с запретом сна при погашенном экране. Docker Desktop — автозапуск при входе в систему.
+- **Интерфейс n8n** — `http://localhost:5678`, логин и пароль — в `.env` (`N8N_OWNER_EMAIL`, `N8N_OWNER_PASSWORD`).
+- **Секреты** — только в `.env`. Сохрани `N8N_ENCRYPTION_KEY` в менеджер паролей: без него ключи в n8n не расшифровать.
+
+### По желанию
+
+- **Страж** [healthchecks.io](https://healthchecks.io) — пишет в Telegram, если сборы прекратились. Создай check с расписанием сбора, впиши в `.env` `HC_PING_URL` и `HC_API_KEY` (тогда смена расписания в боте обновит стража сама), затем `node scripts/deploy.mjs`. Подробно — [docs/stages/stage-5.md](docs/stages/stage-5.md).
+- **Робот-отклик** — откликается сам по кнопке 🚀 под письмом:
+  ```bash
+  # .env: APPLIER_TOKEN=<случайная строка>, VNC_PASSWORD (≤ 8 символов), APPLY_LIVE=0
+  node scripts/deploy.mjs --applier     # сборка и запуск контейнера робота
+  node scripts/applier.mjs login        # вход в hh в окне робота
+  node scripts/applier.mjs status       # браузер работает, вход выполнен, блока нет
+  ```
+  Окно робота — VNC `localhost:5901`: на Mac — «Общий экран» (`vnc://localhost:5901`), на Windows и Linux — любой VNC-клиент. Живые отклики — `APPLY_LIVE=1` и снова `--applier`. Включить робота в боте: ⚙️ → 🚀 Робот. Автоматизация откликов — против правил hh, риск ограничений аккаунта на тебе. Подробно — [docs/stages/stage-6.md](docs/stages/stage-6.md).
+
+### Для разработчика
+
+Деплой по git flow — `scripts/deploy.sh`: проверяет ветку (`develop` / `production`) и вызывает `scripts/deploy.mjs`. Перенос профиля между установками и бэкап:
+```bash
+node scripts/n8n-api.mjs profile-export docs/profile.json   # в git не попадает
+node scripts/n8n-api.mjs profile-import docs/profile.json
+```
 
 ## Работа с ботом
 
@@ -128,7 +129,9 @@ W8 Clock ──► W1 Collector ──► W2 Score ──► карточка в
 
 | Команда | Что делает |
 |---|---|
-| `scripts/deploy.sh` | Сборка и деплой. Только с `develop` или `production`. Флаги: `--paused` (без сбора и сводки), `--applier` (пересобрать робота, дождавшись конца отклика), `--any-branch` |
+| `node scripts/install.mjs` | Мастер установки и обновления: ключи, бот, n8n, деплой, приветствие. `--project <имя> --port <n>` — вторая установка рядом |
+| `node scripts/deploy.mjs` | Сборка и деплой без git flow. Флаги: `--paused` (без сбора и сводки), `--applier` (пересобрать робота, дождавшись конца отклика) |
+| `scripts/deploy.sh` | То же для владельца репозитория: только с `develop` или `production` (`--any-branch` — осознанно в обход) |
 | `node scripts/build-workflows.mjs` | Код Code-нод `n8n/**/*.js` → JSON workflow в `n8n/workflows/`. JSON руками не править |
 | `node scripts/n8n-api.mjs run <id>` | Запуск workflow со сводкой по нодам |
 | `node scripts/n8n-api.mjs rows <таблица> [N]` | Последние строки таблицы |
@@ -182,6 +185,7 @@ fixtures/                          страницы hh для тестов (не
 
 - Секреты лежат только в `.env` (права 600, вне git). В n8n они попадают как credentials, зашифрованные `N8N_ENCRYPTION_KEY`.
 - Интерфейс n8n, API и окно робота доступны только с этого компьютера (`127.0.0.1`). Наружу через ngrok открыт лишь `/webhook/*` и только для адресов Telegram.
+- Резюме уходит в выбранную нейросеть (Gemini или Claude) — для разбора, оценки вакансий и писем. Бесплатный Gemini может использовать данные для обучения; об этом бот предупреждает при первом запуске.
 - Резюме, образцы писем, страницы hh и данные робота (профиль браузера, сессия hh) в git не попадают.
 - Робот автоматизирует действия в аккаунте hh. Это против правил hh, и риск ограничений аккаунта принят. Поэтому робот:
   - откликается только по кнопке;

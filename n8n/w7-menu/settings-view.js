@@ -273,7 +273,7 @@ function settingsApplyView() {
     `Состояние: ${robotState().long}`,
     `Сегодня: ${robotToday(rows, now)} из ${limit} (день — с 09:00 по местному) · в очереди: ${count(rows, (r) => r.apply_state)}`,
     '',
-    `Окно робота — «Общий экран»: ${VNC_URL} (режим «Управление»). Капча и вход в hh — там; потом ▶️ или /go.`,
+    `Окно робота — VNC ${VNC_URL} (на Mac — «Общий экран», режим «Управление»; на Windows и Linux — любой VNC-клиент). Капча и вход в hh — там; потом ▶️ или /go.`,
   ];
   const notes = changeNotes();
   if (notes.length) lines.push('', ...notes);
