@@ -681,6 +681,9 @@
           "disable_notification": true
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
@@ -880,6 +883,9 @@
           "disable_notification": true
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
@@ -1037,6 +1043,9 @@
           "disable_notification": true
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
@@ -1152,6 +1161,9 @@
           "disable_notification": true
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
@@ -1255,6 +1267,9 @@
           "disable_notification": true
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
@@ -1388,6 +1403,9 @@
           "disable_notification": true
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
@@ -1563,6 +1581,9 @@
           "disable_notification": true
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
@@ -1738,6 +1759,9 @@
           "disable_notification": true
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
@@ -1901,6 +1925,9 @@
           "disable_notification": true
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
@@ -2118,6 +2145,9 @@
           "disable_notification": true
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
@@ -2299,6 +2329,9 @@
           "disable_notification": true
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
@@ -2396,6 +2429,9 @@
           "disable_notification": true
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
@@ -2523,6 +2559,9 @@
           "disable_notification": true
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
@@ -2686,6 +2725,9 @@
           "disable_notification": true
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
@@ -2855,6 +2897,9 @@
           "disable_notification": true
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
@@ -2994,6 +3039,9 @@
           "disable_notification": true
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
@@ -3026,6 +3074,9 @@
           "disable_notification": true
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",

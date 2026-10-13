@@ -522,6 +522,9 @@
           "text": "={{ $('Apply choice').first().json.toast }}"
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
@@ -637,6 +640,9 @@
           "disable_notification": true
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
@@ -922,6 +928,9 @@
           "reply_to_message_id": "={{ $('Apply choice').first().json.messageId || ($('Card: new').isExecuted ? $('Card: new').first().json.result.message_id : '') }}"
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
@@ -1101,6 +1110,9 @@
           "text": "✍️ Пишу новый вариант…"
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
@@ -1242,6 +1254,9 @@
           "text": "={{ $('Apply sent').first().json.toast }}"
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
@@ -1816,6 +1831,9 @@
           "disable_notification": true
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
@@ -1959,6 +1977,9 @@
           "disable_notification": true
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
