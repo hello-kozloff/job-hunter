@@ -14,6 +14,29 @@
       "parameters": {}
     },
     {
+      "id": "0d87254c-3319-fc05-a172-851b5de54d31",
+      "name": "Settings",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        110,
+        150
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "settings"
+        },
+        "returnAll": true
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
       "id": "1b38fade-18e0-0bda-6d63-a06dda7611f5",
       "name": "Format error",
       "type": "n8n-nodes-base.code",
@@ -25,7 +48,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// W4 · Format error — текст тревоги для Telegram (Parse Mode = HTML) и ключ проблемы.\n// Нода: Code, режим «Run Once for All Items». Вход: Error Trigger.\n// Без явного parse mode нода Telegram шлёт Markdown, и «_» в тексте ошибки (dup_key) ломает отправку,\n// поэтому шлём HTML и экранируем всё, что пришло из ошибки.\n// key — workflow + нода + текст ошибки без чисел и ссылок: повтор той же проблемы (hh отвечает 403 на каждом\n// сборе) не шлёт новую тревогу, а правит открытую (07.10.2026, «Alert plan»).\n\nconst e = $input.first().json;\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\n// Ошибка самого триггера приходит в поле trigger, а не execution\nconst error = e.execution?.error ?? e.trigger?.error ?? {};\nconst message = String(error.message ?? 'без текста').slice(0, 1500);\nconst workflow = String(e.workflow?.name ?? 'workflow');\nconst node = String(e.execution?.lastNodeExecuted ?? '');\n\n// n8n строит ссылку от WEBHOOK_URL (домен ngrok), а туннель пускает снаружи только /webhook/* —\n// открываем запуск в n8n на Mac\nconst url = e.execution?.url ? String(e.execution.url).replace(/^https?:\\/\\/[^/]+/, 'http://localhost:5678') : '';\n\nconst lines = [\n  `❗️ <b>${esc(workflow)}</b>: ошибка`,\n  node ? `Нода: ${esc(node)}` : null,\n  esc(message),\n  url ? esc(url) : null,\n].filter(Boolean);\n\nconst norm = message\n  .toLowerCase()\n  .replace(/https?:\\/\\/\\S+/g, '')\n  .replace(/\\d+/g, '#')\n  .replace(/\\s+/g, ' ')\n  .trim()\n  .slice(0, 160);\n\nreturn [{ json: { text: lines.join('\\n'), key: `${workflow}|${node}|${norm}`, workflow, message: message.slice(0, 300) } }];\n"
+        "jsCode": "// W4 · Format error — текст тревоги для Telegram (Parse Mode = HTML) и ключ проблемы.\n// Нода: Code, режим «Run Once for All Items». Вход: Error Trigger.\n// Без явного parse mode нода Telegram шлёт Markdown, и «_» в тексте ошибки (dup_key) ломает отправку,\n// поэтому шлём HTML и экранируем всё, что пришло из ошибки.\n// key — workflow + нода + текст ошибки без чисел и ссылок: повтор той же проблемы (hh отвечает 403 на каждом\n// сборе) не шлёт новую тревогу, а правит открытую (07.10.2026, «Alert plan»).\n\n// Ошибка — из триггера: между ним и этой нодой стоит «Settings» (часовой пояс)\nconst e = $('Error Trigger').first().json;\nconst esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\n// Ошибка самого триггера приходит в поле trigger, а не execution\nconst error = e.execution?.error ?? e.trigger?.error ?? {};\nconst message = String(error.message ?? 'без текста').slice(0, 1500);\nconst workflow = String(e.workflow?.name ?? 'workflow');\nconst node = String(e.execution?.lastNodeExecuted ?? '');\n\n// n8n строит ссылку от WEBHOOK_URL (домен ngrok), а туннель пускает снаружи только /webhook/* —\n// открываем запуск в n8n на Mac\nconst url = e.execution?.url ? String(e.execution.url).replace(/^https?:\\/\\/[^/]+/, 'http://localhost:5678') : '';\n\nconst lines = [\n  `❗️ <b>${esc(workflow)}</b>: ошибка`,\n  node ? `Нода: ${esc(node)}` : null,\n  esc(message),\n  url ? esc(url) : null,\n].filter(Boolean);\n\nconst norm = message\n  .toLowerCase()\n  .replace(/https?:\\/\\/\\S+/g, '')\n  .replace(/\\d+/g, '#')\n  .replace(/\\s+/g, ' ')\n  .trim()\n  .slice(0, 160);\n\nreturn [{ json: { text: lines.join('\\n'), key: `${workflow}|${node}|${norm}`, workflow, message: message.slice(0, 300) } }];\n"
       }
     },
     {
@@ -79,7 +102,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// W4 · Alert plan — новая тревога или повтор открытой (07.10.2026: при блоке hh тревога приходила на каждом сборе).\n// Нода: Code, режим «Run Once for All Items».\n// Вход: «Format error» { text, key, workflow, message }; $input — «Find alert»: открытая тревога с тем же ключом\n//       (Always Output Data: пустой item, если её нет или таблица не ответила).\n// Выход: { repeat: false, … } — новая тревога: «Send alert» со звуком → «Save alert»;\n//        { repeat: true, id, tg_message_id, hits, text } — повтор: «Edit alert» правит ту же тревогу (без звука)\n//        → «Save repeat». Открытой считается тревога, которая повторялась последние 6 ч; закрывает её и\n//        успешный запуск того же workflow (W1, W2: «✅ снова работает»).\n\nconst HOLD = 6 * 3600 * 1000;\nconst f = $('Format error').first().json;\nconst nowMs = Date.now();\nconst now = new Date(nowMs).toISOString();\nconst open = $input\n  .all()\n  .map((i) => i.json)\n  .find((r) => r.id && r.is_open && r.tg_message_id && nowMs - (Date.parse(r.last_at) || 0) < HOLD);\n\nif (!open) return [{ json: { repeat: false, text: f.text, key: f.key, workflow: f.workflow, message: f.message, now } }];\n\nconst thai = (iso) => new Date(Date.parse(iso) + 7 * 3600 * 1000).toISOString().slice(11, 16);\nconst hits = (open.hits || 1) + 1;\nreturn [\n  {\n    json: {\n      repeat: true,\n      id: open.id,\n      tg_message_id: open.tg_message_id,\n      hits,\n      now,\n      text: `${f.text}\\n\\n🔁 Повторяется: ×${hits}, с ${thai(open.first_at)} до ${thai(now)} по Таиланду`,\n    },\n  },\n];\n"
+        "jsCode": "// W4 · Alert plan — новая тревога или повтор открытой (07.10.2026: при блоке hh тревога приходила на каждом сборе).\n// Нода: Code, режим «Run Once for All Items».\n// Вход: «Format error» { text, key, workflow, message }; $input — «Find alert»: открытая тревога с тем же ключом\n//       (Always Output Data: пустой item, если её нет или таблица не ответила).\n// Выход: { repeat: false, … } — новая тревога: «Send alert» со звуком → «Save alert»;\n//        { repeat: true, id, tg_message_id, hits, text } — повтор: «Edit alert» правит ту же тревогу (без звука)\n//        → «Save repeat». Открытой считается тревога, которая повторялась последние 6 ч; закрывает её и\n//        успешный запуск того же workflow (W1, W2: «✅ снова работает»).\n\n// Время человека (13.10.2026, docs/onboarding.md): часовой пояс — настройка profile.tz (IANA, например Asia/Bangkok),\n// иначе пояс компьютера (USER_TZ из .env — его пишет мастер установки), иначе Москва. Расписание сбора по-прежнему\n// считается по Москве (n8n/shared/schedule.js): hh публикует вакансии по МСК.\n// Общий код: строка «// @include n8n/shared/time.js» — раньше n8n/shared/card.js и n8n/shared/robot.js (им нужен TZ).\n// Пояс берётся из ноды «Settings», если она есть в workflow и уже выполнилась; без неё — USER_TZ.\n\nconst MSK_TZ = 'Europe/Moscow';\nconst validTz = (tz) => {\n  try {\n    return Boolean(tz) && Boolean(new Intl.DateTimeFormat('en-GB', { timeZone: tz }));\n  } catch {\n    return false;\n  }\n};\n\n// Пояс этого запуска\nfunction currentTz() {\n  let tz = '';\n  try {\n    const row = $('Settings')\n      .all()\n      .map((i) => i.json)\n      .find((r) => r?.name === 'profile.tz');\n    tz = row ? JSON.parse(row.value_json) : '';\n  } catch {\n    // в workflow нет ноды «Settings» или строка битая — пояс компьютера\n  }\n  const env = typeof $env === 'undefined' ? '' : $env.USER_TZ;\n  return [tz, env, MSK_TZ].find(validTz);\n}\nconst TZ = currentTz();\n\n// Части даты в поясе tz числами: { y, mo, d, h, mi }\nfunction zonedParts(ms, tz = TZ) {\n  const parts = new Intl.DateTimeFormat('en-GB', {\n    timeZone: tz,\n    hourCycle: 'h23',\n    year: 'numeric',\n    month: '2-digit',\n    day: '2-digit',\n    hour: '2-digit',\n    minute: '2-digit',\n  }).formatToParts(new Date(ms));\n  const get = (type) => Number(parts.find((p) => p.type === type).value);\n  return { y: get('year'), mo: get('month'), d: get('day'), h: get('hour'), mi: get('minute') };\n}\nconst pad2 = (n) => String(n).padStart(2, '0');\n\n// 1760340720000 → '14:32'\nconst localHM = (ms, tz = TZ) => {\n  const p = zonedParts(ms, tz);\n  return `${pad2(p.h)}:${pad2(p.mi)}`;\n};\n// → '07.10'\nconst localDM = (ms, tz = TZ) => {\n  const p = zonedParts(ms, tz);\n  return `${pad2(p.d)}.${pad2(p.mo)}`;\n};\n// → '2026-10-07' — ключ дня\nconst localDay = (ms, tz = TZ) => {\n  const p = zonedParts(ms, tz);\n  return `${p.y}-${pad2(p.mo)}-${pad2(p.d)}`;\n};\nconst localHour = (ms, tz = TZ) => zonedParts(ms, tz).h;\n\n// Смещение пояса от UTC в минутах в момент ms (Бангкок: +420)\nfunction tzOffsetMin(ms, tz = TZ) {\n  const p = zonedParts(ms, tz);\n  return Math.round((Date.UTC(p.y, p.mo - 1, p.d, p.h, p.mi) - Math.floor(ms / 60000) * 60000) / 60000);\n}\n\n// 'UTC+7', 'UTC+5:30', 'UTC−4'\nfunction tzLabel(tz = TZ, ms = Date.now()) {\n  const off = tzOffsetMin(ms, tz);\n  const abs = Math.abs(off);\n  return `UTC${off < 0 ? '−' : '+'}${Math.floor(abs / 60)}${abs % 60 ? `:${pad2(abs % 60)}` : ''}`;\n}\n\n// Начало «дня», который начинается в hour:00 по местному: последний такой момент не позже ms\nfunction localDayStart(ms, tz = TZ, hour = 0) {\n  const p = zonedParts(ms, tz);\n  let start = Date.UTC(p.y, p.mo - 1, p.d, hour) - tzOffsetMin(ms, tz) * 60000;\n  if (start > ms) start -= 24 * 3600 * 1000;\n  return start;\n}\n\n// Тихие часы 23:00–09:00 по местному: карточки и сводка — без звука, тревоги — со звуком\nconst quietHours = (ms = Date.now(), tz = TZ) => {\n  const h = localHour(ms, tz);\n  return h >= 23 || h < 9;\n};\n\n// Время по местному и в скобках по Москве: '14:32 (10:32 МСК)'; пояс совпадает с Москвой — '10:32 МСК'\nconst localMsk = (ms, tz = TZ) =>\n  tzOffsetMin(ms, tz) === tzOffsetMin(ms, MSK_TZ) ? `${localHM(ms, MSK_TZ)} МСК` : `${localHM(ms, tz)} (${localHM(ms, MSK_TZ)} МСК)`;\n\n// Момент ISO (applied_at) → дата и время по местному: '2026-10-06T21:17:55Z' → '07.10', '04:17'\nconst localDate = (iso) => (Date.parse(iso) ? localDM(Date.parse(iso)) : '');\nconst localTime = (iso) => (Date.parse(iso) ? localHM(Date.parse(iso)) : '');\n\nconst HOLD = 6 * 3600 * 1000;\nconst f = $('Format error').first().json;\nconst nowMs = Date.now();\nconst now = new Date(nowMs).toISOString();\nconst open = $input\n  .all()\n  .map((i) => i.json)\n  .find((r) => r.id && r.is_open && r.tg_message_id && nowMs - (Date.parse(r.last_at) || 0) < HOLD);\n\nif (!open) return [{ json: { repeat: false, text: f.text, key: f.key, workflow: f.workflow, message: f.message, now } }];\n\nconst hits = (open.hits || 1) + 1;\nreturn [\n  {\n    json: {\n      repeat: true,\n      id: open.id,\n      tg_message_id: open.tg_message_id,\n      hits,\n      now,\n      text: `${f.text}\\n\\n🔁 Повторяется: ×${hits}, с ${localTime(open.first_at)} до ${localTime(now)} по местному`,\n    },\n  },\n];\n"
       }
     },
     {
@@ -361,6 +384,17 @@
   ],
   "connections": {
     "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
       "main": [
         [
           {

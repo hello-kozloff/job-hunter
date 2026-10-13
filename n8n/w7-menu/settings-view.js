@@ -1,5 +1,5 @@
 // W7 · Render — раздел «⚙️ Настройки» панели меню (07.10.2026). Подключается в render.js строкой
-// «// @include n8n/w7-menu/settings-view.js», после помощников времени (thaiMsk, hhmm).
+// «// @include n8n/w7-menu/settings-view.js», после помощников времени (localMsk, n8n/shared/time.js).
 // Значения — из таблицы settings плюс изменение этого нажатия: «Setting change» выполнилась раньше (ветка выше).
 // Раскладки: settings (корень), set_collect, set_search, set_filter, set_rules, set_blacklist, set_confirm, set_llm,
 // set_apply (🚀 Робот, этап 6: состояние робота — «Robot health», GET /health робота).
@@ -25,7 +25,13 @@ const unbanned = Number(job.unban) || 0;
 const blacklist = ranNode('Blacklist').filter((r) => r.id && r.id !== unbanned);
 
 const everyText = (m) => (m % 60 ? `${m} мин` : `${m / 60} ч`);
-const pad2 = (n) => String(n).padStart(2, '0');
+// Час по МСК → «ЧЧ:ММ» по местному: пояс человека может отличаться от Москвы и на нецелое число часов (pad2, TZ —
+// из n8n/shared/time.js)
+const mskDiff = tzOffsetMin(Date.now(), TZ) - tzOffsetMin(Date.now(), MSK_TZ);
+const mskHourLocal = (h) => {
+  const m = (((h * 60 + mskDiff) % 1440) + 1440) % 1440;
+  return `${pad2(Math.floor(m / 60))}:${pad2(m % 60)}`;
+};
 const periodText = (days) => SEARCH_LABELS.search_period[days] ?? `за ${days} дн.`;
 const responsesText = (n) => (n ? `больше ${n}` : 'не отсекать');
 const VERDICT_TEXT = { apply: '🟢 apply', maybe: '🟡 maybe', skip: '🔴 skip' };
@@ -80,11 +86,11 @@ function settingsCollectView() {
   const lines = [
     '🕐 <b>Сбор</b>',
     '',
-    `Днём — ${pad2(sch.dayFrom)}:00–${pad2(sch.dayTo)}:00 МСК (${pad2((sch.dayFrom + 4) % 24)}:00–${pad2((sch.dayTo + 4) % 24)}:00 у тебя): каждые ${everyText(sch.dayEvery)}`,
+    `Днём — ${pad2(sch.dayFrom)}:00–${pad2(sch.dayTo)}:00 МСК${mskDiff ? ` (${mskHourLocal(sch.dayFrom)}–${mskHourLocal(sch.dayTo)} у тебя)` : ''}: каждые ${everyText(sch.dayEvery)}`,
     `Ночью: ${sch.nightEvery ? `каждые ${everyText(sch.nightEvery)}` : 'не собирать'}`,
     sch.paused
       ? '⏸ <b>На паузе</b>: сборов нет. «▶️ Возобновить» — и сбор пойдёт по расписанию'
-      : `Сборов в сутки: ${collectsPerDay(sch)} · следующий: ${next ? thaiMsk(next) : '—'}`,
+      : `Сборов в сутки: ${collectsPerDay(sch)} · следующий: ${next ? localMsk(next) : '—'}`,
   ];
 
   const notes = changeNotes();
@@ -259,7 +265,7 @@ function settingsApplyView() {
       ? `Включён: под новыми письмами — [🚀 Откликнуться роботом]${paused ? '\n⏸ <b>Очередь на паузе</b>: нажатия копятся, робот ждёт' : ''}`
       : 'Выключен: кнопки 🚀 под письмами нет, откликаешься сам',
     `Состояние: ${robotState().long}`,
-    `Сегодня: ${robotToday(rows, now)} из ${limit} (день — с 09:00 по Таиланду) · в очереди: ${count(rows, (r) => r.apply_state)}`,
+    `Сегодня: ${robotToday(rows, now)} из ${limit} (день — с 09:00 по местному) · в очереди: ${count(rows, (r) => r.apply_state)}`,
     '',
     `Окно робота — «Общий экран»: ${VNC_URL} (режим «Управление»). Капча и вход в hh — там; потом ▶️ или /go.`,
   ];

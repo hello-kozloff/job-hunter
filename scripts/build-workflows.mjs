@@ -213,8 +213,9 @@ const BLACKLIST = { __rl: true, mode: 'name', value: 'blacklist' };
 const RUNS = { __rl: true, mode: 'name', value: 'runs' };
 const ALERTS = { __rl: true, mode: 'name', value: 'alerts' };
 const SETTINGS_TABLE = { __rl: true, mode: 'name', value: 'settings' };
-// Настройки бота (⚙️): все строки таблицы settings, один раз на запуск; пустая — значения по умолчанию
-const settingsNode = (wf, position) =>
+// Настройки бота (⚙️) и профиль: все строки таблицы settings, один раз на запуск; пустая — значения по умолчанию.
+// Часовой пояс человека (n8n/shared/time.js) тоже берётся отсюда
+const settingsNode = (wf, position, extra = {}) =>
   node(
     wf,
     'Settings',
@@ -222,7 +223,7 @@ const settingsNode = (wf, position) =>
     1.1,
     position,
     { resource: 'row', operation: 'get', dataTableId: SETTINGS_TABLE, returnAll: true },
-    { executeOnce: true, alwaysOutputData: true },
+    { executeOnce: true, alwaysOutputData: true, ...extra },
   );
 
 // Insert/Update пишут все поля item в одноимённые колонки
@@ -1209,6 +1210,8 @@ const workflows = {
         { updates: ['callback_query', 'message'], additionalFields: { chatIds: '={{ $env.TG_CHAT_ID }}' } },
         { webhookId: uuid('W3/telegram-trigger'), credentials: TELEGRAM_CREDENTIAL },
       ),
+      // Часовой пояс человека для дат в карточках (n8n/shared/time.js); таблица не ответила — кнопки всё равно работают
+      settingsNode('W3', [110, 150], { onError: 'continueRegularOutput' }),
       code('W3', 'Route', 'n8n/w3-telegram/route.js', [220, 0]),
       // Меню бота (кнопки под полем ввода, команды, кнопки панели) — в W7 Bot menu
       node('W3', 'Panel?', 'if', 2.3, [440, -400], ifTrue('W3', "={{ $json.action === 'panel' }}")),
@@ -1513,7 +1516,8 @@ const workflows = {
       runWorkflow('W3', 'Write letter', [3080, 100], IDS.letter),
     ],
     [
-      ['Telegram Trigger', 'Route'],
+      ['Telegram Trigger', 'Settings'],
+      ['Settings', 'Route'],
       ['Route', 'Panel?'],
       ['Panel?', 'Menu', 0],
       ['Panel?', 'Robot?', 1],
@@ -1735,11 +1739,8 @@ const workflows = {
     IDS.summary,
     'W6 Summary',
     [
-      node('W6', 'Schedule', 'scheduleTrigger', 1.4, [0, -100], {
-        // 06:00 МСК = 10:00 по Таиланду: итог прошедших суток
-        rule: { interval: [{ field: 'cronExpression', expression: '0 6 * * *' }] },
-        misfirePolicy: 'coalesce',
-      }),
+      // Запускают «часы» W8 в 10:00 по местному (13.10.2026): часовой пояс человека и сводка после сна Mac
+      node('W6', 'Called by W8', 'executeWorkflowTrigger', 1.1, [0, -100], { inputSource: 'passthrough' }),
       node('W6', 'Manual', 'manualTrigger', 1, [0, 100], {}),
       node('W6', 'All rows', 'dataTable', 1.1, [220, 0], {
         resource: 'row',
@@ -1928,7 +1929,7 @@ const workflows = {
       ),
     ],
     [
-      ['Schedule', 'All rows'],
+      ['Called by W8', 'All rows'],
       ['Manual', 'All rows'],
       ['All rows', 'Plan'],
       ['Plan', 'Expire rows'],
@@ -2172,12 +2173,17 @@ const workflows = {
       settingsNode('W8', [220, 0]),
       code('W8', 'Due', 'n8n/w8-clock/due.js', [440, 0]),
       runWorkflow('W8', 'Collect', [660, 0], IDS.collector),
+      // Утренняя сводка W6 — в 10:00 по местному, раз в день (13.10.2026)
+      code('W8', 'Summary due', 'n8n/w8-clock/summary-due.js', [440, 200]),
+      runWorkflow('W8', 'Summary', [660, 200], IDS.summary),
     ],
     [
       ['Schedule', 'Settings'],
       ['Manual', 'Settings'],
       ['Settings', 'Due'],
       ['Due', 'Collect'],
+      ['Settings', 'Summary due'],
+      ['Summary due', 'Summary'],
     ],
     // Тики без сбора не храним: 96 запусков в сутки. Static data (dispatchedAt) сохраняется и так
     { timezone: 'Europe/Moscow', errorWorkflow: IDS.errors, saveDataSuccessExecution: 'none' },
@@ -2307,7 +2313,7 @@ const workflows = {
           orderByColumn: 'apply_queued_at',
           orderByDirection: 'ASC',
         }),
-        // Живые отклики робота за «день» — с 09:00 по Таиланду (02:00 UTC)
+        // Живые отклики робота за двое суток: «день» робота (с 09:00 по местному) отсчитывает «Gate» (robotToday)
         node(
           'W9',
           'Today',
@@ -2325,7 +2331,7 @@ const workflows = {
                 {
                   keyName: 'applied_at',
                   condition: 'gte',
-                  keyValue: '={{ new Date(Math.floor((Date.now() - 7200000) / 86400000) * 86400000 + 7200000).toISOString() }}',
+                  keyValue: '={{ new Date(Date.now() - 2 * 86400000).toISOString() }}',
                 },
               ],
             },
@@ -2669,6 +2675,8 @@ const workflows = {
     'W4 Errors',
     [
       node('W4', 'Error Trigger', 'errorTrigger', 1, [0, 0], {}),
+      // Часовой пояс человека для времени в тревогах; таблица не ответила — тревога всё равно уходит
+      settingsNode('W4', [110, 150], { onError: 'continueRegularOutput' }),
       code('W4', 'Format error', 'n8n/w4-errors/format-error.js', [220, 0]),
       // Открытая тревога с тем же ключом — повтор той же проблемы (07.10.2026). Таблица не ответила —
       // тревога уходит как новая: лучше лишняя тревога, чем потерянная
@@ -2747,7 +2755,8 @@ const workflows = {
       ),
     ],
     [
-      ['Error Trigger', 'Format error'],
+      ['Error Trigger', 'Settings'],
+      ['Settings', 'Format error'],
       ['Format error', 'Find alert'],
       ['Find alert', 'Alert plan'],
       ['Alert plan', 'Repeat?'],

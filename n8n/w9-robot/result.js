@@ -8,6 +8,8 @@
 //   409 (робот занят), 5xx, нет связи → retry — назад в очередь без счёта попыток; 423 (блок), 429 (потолок дня
 //   робота) → block. Таймаут — тоже retry: если робот успел откликнуться, при повторе он увидит «уже откликались».
 
+// @include n8n/shared/time.js
+
 // @include n8n/shared/card.js
 // @include n8n/shared/robot.js
 // @include n8n/shared/letter.js

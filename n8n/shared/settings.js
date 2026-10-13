@@ -56,7 +56,7 @@ const SETTINGS = {
     cases: true,
   },
   // Робот-отклик (этап 6, docs/stages/stage-6.md): кнопка 🚀 под новыми письмами, пауза очереди,
-  // лимит живых откликов в «день» робота (с 09:00 по Таиланду). Предохранитель APPLY_LIVE — в .env, не здесь
+  // лимит живых откликов в «день» робота (с 09:00 по местному). Предохранитель APPLY_LIVE — в .env, не здесь
   'apply.enabled': { default: false, options: [false, true] },
   'apply.paused': { default: false, options: [false, true] },
   'apply.daily_limit': { default: 25, options: [10, 15, 25, 40] },
@@ -71,6 +71,9 @@ const SETTINGS = {
   'profile.facts': { default: {}, object: true },
   // Строки «О кандидате» промпта W2
   'profile.about': { default: [], lines: 400 },
+  // Часовой пояс человека (IANA): время в боте, тихие часы, «день» робота, сводка в 10:00 (n8n/shared/time.js).
+  // Пусто — пояс компьютера (USER_TZ из .env), иначе Москва
+  'profile.tz': { default: '', tz: true },
   'profile.signature': { default: '', text: 60 },
   'profile.contact': { default: '', text: 160 },
   // Правила оценки пресета generic — из резюме (W11): { skip, maybe, apply, ignore, notes } — списки строк
@@ -150,6 +153,13 @@ function validSetting(spec, value) {
     );
   }
   if (spec.text) return typeof value === 'string' && value.length <= spec.text;
+  if (spec.tz) {
+    try {
+      return typeof value === 'string' && Boolean(value) && Boolean(new Intl.DateTimeFormat('en-GB', { timeZone: value }));
+    } catch {
+      return false;
+    }
+  }
   if (spec.lines) return validLines(value, spec.lines);
   if (spec.object) return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
   if (spec.rules) {

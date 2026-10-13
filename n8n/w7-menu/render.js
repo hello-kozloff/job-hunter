@@ -11,6 +11,8 @@
 //                       id — открытая вакансия) и вкладка, куда вернут «⬅️ К списку» и «📋 К вакансиям»;
 //                       greetingId — приветствие (при новом /start старое удаляется).
 
+// @include n8n/shared/time.js
+
 // @include n8n/shared/card.js
 // @include n8n/shared/menu.js
 // @include n8n/shared/settings.js
@@ -70,9 +72,7 @@ const at = (s) => Date.parse(s) || 0;
 const count = (list, f) => list.filter(f).length;
 const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
 
-// Время: по Таиланду (UTC+7), в скобках — по Москве (UTC+3)
-const hhmm = (t, offset) => new Date(t + offset * 3600 * 1000).toISOString().slice(11, 16);
-const thaiMsk = (t) => `${hhmm(t, 7)} (${hhmm(t, 3)} МСК)`;
+// Время: по местному, в скобках — по Москве (localMsk, n8n/shared/time.js)
 function span(ms) {
   const m = Math.max(0, Math.round(ms / 60000));
   if (m < 1) return 'меньше минуты';
@@ -97,12 +97,12 @@ function itemLines(r, n) {
     esc(r.company),
     r.status === 'rejected' ? `🚫 ${esc(String(r.reasons ?? '').split(', ')[0].replace(/:.*$/, ''))}` : salary(r),
     r.status === 'applied' && r.applied_at
-      ? `${r.apply_by === 'robot' ? '🚀' : '📨'} ${thaiDate(r.applied_at)}`
+      ? `${r.apply_by === 'robot' ? '🚀' : '📨'} ${localDate(r.applied_at)}`
       : r.my_decision === 'earlier'
         ? '📨 раньше'
       : age < DAY
         ? `${span(age)} назад`
-        : thaiDate(r.createdAt),
+        : localDate(r.createdAt),
     `/v${r.id}`,
   ]
     .filter(Boolean)
@@ -227,7 +227,7 @@ function statsView() {
           : stale
             ? '⚠️ не завершился'
             : '⏳ идёт';
-    lastLine = `• последний: ${thaiMsk(started)}, ${span(now - started)} назад — ${result}`;
+    lastLine = `• последний: ${localMsk(started)}, ${span(now - started)} назад — ${result}`;
   }
 
   const found = rows.filter((r) => r.status !== 'seen');
@@ -245,11 +245,11 @@ function statsView() {
   const errors = count(scored, (r) => r.decision === 'error');
 
   const lines = [
-    `📊 <b>Статистика</b> · ${hhmm(now, 7)} по Таиланду`,
+    `📊 <b>Статистика</b> · ${localMsk(now)}`,
     '',
     `🔎 <b>Сбор</b> · ${describeSchedule(collectSchedule)}`,
     lastLine,
-    next ? `• следующий: ${thaiMsk(next)}, через ${span(next - now)}` : '• ⏸ сбор на паузе (⚙️ Настройки → 🕐 Сбор)',
+    next ? `• следующий: ${localMsk(next)}, через ${span(next - now)}` : '• ⏸ сбор на паузе (⚙️ Настройки → 🕐 Сбор)',
     `• за сутки: ${collected} из ${expected} по расписанию`,
     '',
     `📥 <b>Вакансии</b>: найдено ${found.length}, за сутки +${count(found, (r) => at(r.createdAt) >= now - DAY)}`,
@@ -263,7 +263,7 @@ function statsView() {
     '',
     `🧪 Теневой режим: ${shadow.length}/50${shadow.length ? `, совпало ${agree} (${pct(agree, shadow.length)}%)` : ''}`,
   ];
-  // Робот-отклик (этап 6): сегодня — с 09:00 по Таиланду
+  // Робот-отклик (этап 6): сегодня — с 09:00 по местному
   const robotSent = rows.filter((r) => r.status === 'applied' && r.apply_by === 'robot');
   if (robotSent.length || rows.some((r) => r.apply_state)) {
     lines.push(

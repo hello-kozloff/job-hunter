@@ -13,7 +13,7 @@ export const config = {
   // Название резюме на hh для сверки в окне отклика (по желанию: у пользователя одно резюме)
   resumeTitle: String(process.env.HH_RESUME_TITLE ?? '').trim(),
   dataDir: process.env.DATA_DIR ?? '/data',
-  // Браузер «живёт» там же, где пользователь и его IP
-  timezone: 'Asia/Bangkok',
+  // Браузер «живёт» там же, где пользователь и его IP: пояс компьютера (USER_TZ пишет мастер установки)
+  timezone: process.env.USER_TZ || 'Europe/Moscow',
   locale: 'ru-RU',
 };

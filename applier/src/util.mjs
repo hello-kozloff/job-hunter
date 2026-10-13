@@ -10,11 +10,23 @@ export const pause = (min, max) => sleep(rand(min, max));
 // 2026-10-11T07:05:09.123Z → 20261011-070509 (имена папок разведки и скриншотов)
 export const stamp = (d = new Date()) => d.toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
 
-// «День» робота для лимита откликов — с 09:00 по Таиланду (02:00 UTC), решение пользователя 10.10.2026:
-// отложенные на завтра отклики уходят, когда тихие часы (23–09) закончились
-export function robotDayStart(now = new Date()) {
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 2));
-  if (start > now) start.setUTCDate(start.getUTCDate() - 1);
+// Смещение пояса tz от UTC в минутах в момент d (Бангкок: +420)
+function tzOffsetMin(d, tz) {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat('en-GB', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+      .formatToParts(d)
+      .map((x) => [x.type, x.value]),
+  );
+  return Math.round((Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute) - Math.floor(d.getTime() / 60000) * 60000) / 60000);
+}
+
+// «День» робота для лимита откликов — с 09:00 по местному (решение пользователя 10.10.2026): отложенные на завтра
+// отклики уходят, когда тихие часы (23–09) закончились. Пояс — компьютера (USER_TZ), как у браузера робота
+export function robotDayStart(now = new Date(), tz = process.env.USER_TZ || 'Europe/Moscow') {
+  const offset = tzOffsetMin(now, tz) * 60000;
+  const local = new Date(now.getTime() + offset);
+  const start = new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), 9) - offset);
+  if (start > now) start.setTime(start.getTime() - 24 * 3600 * 1000);
   return start;
 }
 

@@ -38,6 +38,8 @@ services:
       # Сводка W6: проверка туннеля снаружи; страж healthchecks.io — сигнал из W1 после каждого сбора
       NGROK_DOMAIN: ${NGROK_DOMAIN:-}
       HC_PING_URL: ${HC_PING_URL:-}
+      # Часовой пояс компьютера — по умолчанию для настройки profile.tz (время в боте, тихие часы, сводка в 10:00)
+      USER_TZ: ${USER_TZ:-}
     volumes:
       - n8n_data:/home/node/.n8n
       # Файловые ноды n8n 2.x видят только ~/.n8n-files.
@@ -95,6 +97,9 @@ services:
       APPLIER_DAILY_CAP: ${APPLIER_DAILY_CAP:-40}
       HH_RESUME_TITLE: ${HH_RESUME_TITLE:-}
       VNC_PASSWORD: ${VNC_PASSWORD:-}
+      # Часовой пояс компьютера: браузер робота, «день» робота (с 09:00), тихие часы обслуживания
+      USER_TZ: ${USER_TZ:-Europe/Moscow}
+      TZ: ${USER_TZ:-Europe/Moscow}
     volumes:
       # Профиль браузера и сессия hh — только в томе: не в репозитории и не в n8n
       - applier_data:/data

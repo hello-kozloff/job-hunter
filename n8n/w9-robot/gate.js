@@ -1,6 +1,6 @@
 // W9 · Gate — очередь робота: починка, можно ли сейчас отправлять, кого следующим, о чём сообщить.
 // Нода: Code, режим «Run Once for All Items». Вход: «Queue» — строки в очереди (apply_state ≠ ''), «Today» — живые
-// отклики робота за «день» (с 09:00 по Таиланду), «Health» — GET /health робота (ошибка — не отвечает), «Job», «Settings».
+// отклики робота за двое суток («день» с 09:00 по местному считает robotToday), «Health» — GET /health робота (ошибка — не отвечает), «Job», «Settings».
 // Static data (global): alertedSince — блок, о котором уже сообщили (одна тревога на блок, по since);
 //   alertMessageId — та тревога (снят блок → «✅ снова в работе»); downDay, limitDay — сообщения «не отвечает» и
 //   «лимит» — раз в «день» робота.
@@ -12,6 +12,8 @@
 //            робота: параллельные запуски W9 видят один блок, а отправит тревогу только первый;
 //   resolved — блок снят: { messageId, text, promptId } — поправить прошлую тревогу и удалить фото капчи;
 //   views — письма, которые перерисовать (нажали 🚀, а робот ждёт: «⏸ Робот ждёт: …»).
+
+// @include n8n/shared/time.js
 
 // @include n8n/shared/card.js
 // @include n8n/shared/settings.js
@@ -25,14 +27,17 @@ const queue = $('Queue')
   .all()
   .map((i) => i.json)
   .filter((r) => r.id);
-const today = $('Today')
-  .all()
-  .map((i) => i.json)
-  .filter((r) => r.id).length;
+const now = Date.now();
+const today = robotToday(
+  $('Today')
+    .all()
+    .map((i) => i.json)
+    .filter((r) => r.id),
+  now,
+);
 const h = $('Health').first()?.json ?? {};
 const health = h.ok && !h.error ? h : null;
 const state = $getWorkflowStaticData('global');
-const now = Date.now();
 const dayKey = new Date(robotDayStart(now)).toISOString().slice(0, 10);
 const limit = s['apply.daily_limit'];
 const out = { heal: [], next: null, wait: '', notice: null, resolved: null, views: [] };
@@ -74,7 +79,7 @@ if (out.wait === 'blocked') {
       // «Я не робот» или капча внутри окна отклика: ответ на фото отправил бы и сам отклик — решает человек
       smart: `🧩 <b>hh просит капчу</b> — очередь ждёт.\nРешите её в окне робота: ${vnc}, затем ▶️.`,
       errors: `⚠️ <b>Робот трижды подряд не смог откликнуться</b> — пауза. Посмотрите скриншоты; продолжить — ▶️.`,
-      limit: `⏸ <b>hh: лимит 200 откликов за сутки</b> — робот ждёт${b.until ? ` до ${thaiDate(b.until)} ${thaiTime(b.until)}` : ''}, дальше сам.`,
+      limit: `⏸ <b>hh: лимит 200 откликов за сутки</b> — робот ждёт${b.until ? ` до ${localDate(b.until)} ${localTime(b.until)}` : ''}, дальше сам.`,
       blocked: `⛔ <b>hh не принял отклик</b>${b.note ? `: «${esc(b.note)}»` : ''} — робот на паузе. Проверьте аккаунт; продолжить — ▶️.`,
     };
     out.notice =
@@ -101,7 +106,7 @@ if (out.wait === 'blocked') {
   // Блок сняли (▶️, /go, истёк сам) — прошлую тревогу поправить
   out.resolved = {
     messageId: state.alertMessageId ?? 0,
-    text: `✅ Робот снова в работе · ${thaiTime(new Date(now).toISOString())}`,
+    text: `✅ Робот снова в работе · ${localTime(new Date(now).toISOString())}`,
     // Фото капчи больше не нужно (решили через /go или «Общий экран») — удалить, чтобы на него не отвечали
     promptId: state.captchaPromptId ?? 0,
   };
