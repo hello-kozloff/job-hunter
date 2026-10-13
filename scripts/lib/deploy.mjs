@@ -5,6 +5,7 @@
 //   1. сборка workflow из n8n/**/*.js;
 //   2. туннель и профили compose по .env (NGROK_DOMAIN → WEBHOOK_URL, tunnel; APPLIER_TOKEN → applier);
 //   3. docker compose up (n8n, ngrok при туннеле); робот — только с applier: true (дождаться конца действия, пересобрать);
+//      без applier — тоже дождаться, пока робот закончит отклик: перезапуск n8n оборвал бы W9 на полпути;
 //   4. credentials из .env — через pipe прямо в контейнер, на диск хоста ключи не пишутся;
 //   5. импорт workflow (снимает публикацию со всех) и публикация рабочих:
 //      W4 (тревоги), W5 (письма), W7 (меню), W1 (сбор), W2 (оценка), W9 (робот), W11 (профиль) — всегда: в n8n 2.42
@@ -99,6 +100,10 @@ export async function deploy({ paused = false, applier = false } = {}) {
     sh('docker', ['compose', 'build', 'applier']);
     sh('docker', ['compose', 'up', '-d', '--wait', 'applier']);
   }
+
+  // Робот посреди отклика: импорт и перезапуск n8n оборвали бы W9, который ждёт его ответа (13.10.2026: отклик
+  // ушёл, а записать итог W9 не успел — строку вылечила очередь через 6 мин). Ждём, пока робот закончит
+  if (env.APPLIER_TOKEN && !applier) await waitApplierIdle(applierPort, env.APPLIER_TOKEN);
 
   await retry('credentials', () =>
     pipe(
