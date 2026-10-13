@@ -23,7 +23,7 @@ W8 Clock ──► W1 Collector ──► W2 Score ──► карточка в
 - **Сбор.** Поиск и страницы вакансий берутся с сайта hh.ru (InitialState и JSON-LD), API соискателей hh закрыт с 15.12.2025. Выдача за сутки умещается на одной странице.
 - **Отбор.** Сначала код отсеивает очевидное: стоп-слова, чужой стек, «только из РФ», чёрный список. Спорное решает нейросеть: Gemini Flash-Lite или Claude Haiku, переключаются в боте.
 - **Решение — за человеком.** Под карточкой кнопки ✅ / 🤔 / ❌. Если решение расходится с нейросетью, бот спрашивает «Почему?» — так копятся данные для правки промпта.
-- **Письмо.** Только факты из резюме, по-русски, 400–700 знаков, в стиле образцов из `docs/letter-example.md`.
+- **Письмо.** Только факты из резюме, по-русски, 400–700 знаков, в стиле своих образцов писем (по желанию).
 - **Отклик.** Кнопка 🚀 под письмом ставит вакансию в очередь робота: Playwright, отдельный контейнер `applier/`. Капчу робот отдаёт человеку, есть дневные лимиты и предохранитель `APPLY_LIVE`.
 - **Надзор:**
   - тревоги о сбоях (W4);
@@ -75,9 +75,10 @@ W8 Clock ──► W1 Collector ──► W2 Score ──► карточка в
    - по желанию `ANTHROPIC_API_KEY`.
 
    Подробно — [docs/stages/stage-3.md](docs/stages/stage-3.md).
-5. **Личные файлы** (в git не попадают):
-   - `docs/resume.md` — резюме, в конце раздел `## Дополнительно` для пет-проектов и фриланса;
-   - `docs/letter-example.md` — 2–3 образца писем в твоём стиле.
+5. **Профиль:** резюме, подпись, контакт, образцы писем. Это строки таблицы `settings`, подробно — [docs/onboarding.md](docs/onboarding.md). Пока онбординга в боте нет, профиль загружается из JSON (в git не попадает):
+   ```bash
+   node scripts/n8n-api.mjs profile-import docs/profile.json   # бэкап: profile-export docs/profile.json
+   ```
 6. **Деплой:**
    ```bash
    scripts/deploy.sh   # сборка workflow, credentials из .env, импорт, публикация, перезапуск n8n
@@ -130,6 +131,7 @@ W8 Clock ──► W1 Collector ──► W2 Score ──► карточка в
 | `node scripts/n8n-api.mjs run <id>` | Запуск workflow со сводкой по нодам |
 | `node scripts/n8n-api.mjs rows <таблица> [N]` | Последние строки таблицы |
 | `node scripts/n8n-api.mjs migrate` | Недостающие таблицы и колонки по `n8n/schema.mjs` |
+| `node scripts/n8n-api.mjs profile-import <json>` / `profile-export [json]` | Профиль и настройки бота: загрузить в таблицу `settings` / выгрузить (бэкап, перенос) |
 | `node scripts/n8n-api.mjs requeue <дни>` / `recheck <правило>` | Вернуть вакансии в обработку |
 | `node scripts/applier.mjs status \| login \| resume \| shot` | Состояние робота, вход в hh, снятие блока, скриншот |
 | `node scripts/applier.mjs apply <id> --letter-file f` | Сухой прогон отклика: до кнопки, без клика |
@@ -193,4 +195,5 @@ fixtures/                          страницы hh для тестов (не
 | [docs/stages/stage-0.md](docs/stages/stage-0.md) … [stage-6.md](docs/stages/stage-6.md) | Этапы: как устроено и как собрать руками |
 | [docs/bot-menu.md](docs/bot-menu.md) | Меню бота: кнопки, панель, callback_data |
 | [docs/settings.md](docs/settings.md) | Настройки из бота, расписание сбора, страж healthchecks |
+| [docs/onboarding.md](docs/onboarding.md) | Установка для всех: профиль в таблице, пресеты, онбординг, мастер |
 | [docs/git-flow.md](docs/git-flow.md) | Ветки, PR, релизы, правила коммитов |

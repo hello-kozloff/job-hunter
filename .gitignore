@@ -15,3 +15,6 @@ applier/node_modules/
 
 # Выгрузки резюме из hh (PDF) — личные данные
 docs/*.pdf
+
+# Профиль из таблицы settings (profile-export / profile-import): резюме и личные данные
+docs/profile*.json

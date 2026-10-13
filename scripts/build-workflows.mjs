@@ -1027,21 +1027,6 @@ const workflows = {
         columns: setColumns({ status: 'scoring' }),
         options: {},
       }),
-      node(
-        'W2',
-        'Resume',
-        'readWriteFile',
-        1.1,
-        [660, 0],
-        { operation: 'read', fileSelector: '/home/node/.n8n-files/docs/resume.md', options: {} },
-        { executeOnce: true },
-      ),
-      node('W2', 'Resume text', 'extractFromFile', 1.1, [880, 0], {
-        operation: 'text',
-        binaryPropertyName: 'data',
-        destinationKey: 'resume',
-        options: {},
-      }),
       code('W2', 'Build prompt', 'n8n/w2-score/build-prompt.js', [1100, 0]),
       node('W2', 'Claude?', 'if', 2.3, [1320, 0], ifTrue('W2', "={{ $json.provider === 'claude' }}")),
       node(
@@ -1073,8 +1058,8 @@ const workflows = {
         { credentials: { googlePalmApi: { id: IDS.geminiCredential, name: 'Gemini' } }, onError: 'continueRegularOutput' },
       ),
       code('W2', 'Parse verdict', 'n8n/w2-score/parse-verdict.js', [1760, 0]),
-      // Настройки бота: провайдер и правила (Build prompt), теневой режим (Format card, Quiet skips)
-      settingsNode('W2', [550, 150]),
+      // Настройки бота: провайдер, профиль и правила (Build prompt), теневой режим (Format card, Quiet skips)
+      settingsNode('W2', [660, 0]),
       code('W2', 'Format card', 'n8n/w2-score/format-card.js', [1980, -100]),
       telegram('W2', 'Send card', [2200, -100], {
         markup: {
@@ -1192,9 +1177,7 @@ const workflows = {
       ...W2_RECOVERY.links,
       ['Pending', 'Claim'],
       ['Claim', 'Settings'],
-      ['Settings', 'Resume'],
-      ['Resume', 'Resume text'],
-      ['Resume text', 'Build prompt'],
+      ['Settings', 'Build prompt'],
       ['Build prompt', 'Claude?'],
       ['Claude?', 'Claude', 0],
       ['Claude?', 'Gemini', 1],
@@ -1633,38 +1616,8 @@ const workflows = {
         returnAll: false,
         limit: 1,
       }),
-      node(
-        'W5',
-        'Resume',
-        'readWriteFile',
-        1.1,
-        [880, 0],
-        { operation: 'read', fileSelector: '/home/node/.n8n-files/docs/resume.md', options: {} },
-        { executeOnce: true },
-      ),
-      node('W5', 'Resume text', 'extractFromFile', 1.1, [1100, 0], {
-        operation: 'text',
-        binaryPropertyName: 'data',
-        destinationKey: 'resume',
-        options: {},
-      }),
-      node(
-        'W5',
-        'Example',
-        'readWriteFile',
-        1.1,
-        [1320, 0],
-        { operation: 'read', fileSelector: '/home/node/.n8n-files/docs/letter-example.md', options: {} },
-        { executeOnce: true },
-      ),
-      node('W5', 'Example text', 'extractFromFile', 1.1, [1540, 0], {
-        operation: 'text',
-        binaryPropertyName: 'data',
-        destinationKey: 'example',
-        options: {},
-      }),
-      // Провайдер нейросети — из настроек бота (⚙️ → 🤖 Нейросеть)
-      settingsNode('W5', [770, 150]),
+      // Провайдер нейросети и профиль (резюме, подпись, образцы писем) — из настроек бота
+      settingsNode('W5', [1100, 0]),
       code('W5', 'Build letter', 'n8n/w5-letter/build-letter.js', [1760, 0]),
       node('W5', 'Claude?', 'if', 2.3, [1980, 0], ifTrue('W5', "={{ $json.provider === 'claude' }}")),
       node(
@@ -1759,11 +1712,7 @@ const workflows = {
       ['Approved', 'Jobs'],
       ['Jobs', 'Vacancy'],
       ['Vacancy', 'Settings'],
-      ['Settings', 'Resume'],
-      ['Resume', 'Resume text'],
-      ['Resume text', 'Example'],
-      ['Example', 'Example text'],
-      ['Example text', 'Build letter'],
+      ['Settings', 'Build letter'],
       ['Build letter', 'Claude?'],
       ['Claude?', 'Claude', 0],
       ['Claude?', 'Gemini', 1],

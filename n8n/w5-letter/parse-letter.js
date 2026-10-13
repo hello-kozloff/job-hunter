@@ -2,9 +2,17 @@
 // Нода: Code, режим «Run Once for All Items».
 // Вход: ответы HTTP Request «Gemini» или «Claude» по порядку items «Build letter» (в запуске один провайдер).
 // Выход: { id, mode, ok, letter | problem } для «Format letter».
+// Контакт и подпись — из профиля (⚙️ → 👤, 13.10.2026): если модель их пропустила, дописываем.
+
+// @include n8n/shared/settings.js
 
 const prompts = $('Build letter').all().map((i) => i.json);
-const CONTACT = 'Для быстрой связи тг: @freshraveprince';
+const settings = loadSettings($('Settings').all());
+const CONTACT = settings['profile.contact'];
+const SIGNATURE = settings['profile.signature'];
+// Контакт уже есть в письме, если там есть его «ключ»: @ник, e-mail или телефон из строки контакта
+const contactKey = (CONTACT.match(/[\w.+-]+@[\w-]+\.[\w.-]+|@\w+|\+?\d[\d\s()-]{6,}\d/) ?? [CONTACT])[0];
+const signatureEnd = new RegExp(`${SIGNATURE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`);
 
 function bodyOf(res) {
   const b = res.body ?? res.data;
@@ -62,8 +70,8 @@ function finish(letter) {
   text = capitalize(CLEANUP.reduce((t, [pattern, replacement]) => t.replace(pattern, replacement), text))
     // Приветствие — отдельной строкой, даже если модель продолжила текст на той же строке
     .replace(/^Здравствуйте!\s*/, 'Здравствуйте!\n\n');
-  if (!text.includes('@freshraveprince')) text += `\n\n${CONTACT}`;
-  if (!/Никита\s*$/.test(text)) text += '\nНикита';
+  if (CONTACT && !text.includes(contactKey)) text += `\n\n${CONTACT}`;
+  if (SIGNATURE && !signatureEnd.test(text)) text += CONTACT ? `\n${SIGNATURE}` : `\n\n${SIGNATURE}`;
   return text;
 }
 
