@@ -44,6 +44,11 @@ const uuid = (seed) => {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
 };
 
+// Telegram-нода повторяет запрос: сеть до api.telegram.org иногда рвётся на TLS-рукопожатии (ECONNRESET,
+// 13.10.2026 — W7 «New: open choose»), запрос до Telegram не доходит, второй проходит. Только у нод без onError:
+// у остальных ошибка ожидаема («message is not modified», сообщение удалено), повтор лишь задержал бы ответ
+const TG_RETRY = { retryOnFail: true, maxTries: 3, waitBetweenTries: 2000 };
+
 const node = (wf, name, type, typeVersion, position, parameters, extra = {}) => ({
   id: uuid(`${wf}/${name}`),
   name,
@@ -51,6 +56,7 @@ const node = (wf, name, type, typeVersion, position, parameters, extra = {}) => 
   typeVersion,
   position,
   parameters,
+  ...(type === 'telegram' && !extra.onError && TG_RETRY),
   ...extra,
 });
 

@@ -229,6 +229,9 @@
           "disable_web_page_preview": true
         }
       },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "jobHunterTgBot01",
