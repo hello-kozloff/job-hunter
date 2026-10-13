@@ -132,6 +132,17 @@ const languages = (s) =>
     })
     .join(', ');
 
+// generic (13.10.2026): человек ищет офис или гибрид — город вакансии для него требование; желаемая зарплата
+// в профиле — нейросети нужна вилка. У пресета frontend текст вакансии прежний
+const officeSearch = !frontend && settings['search.formats'].some((f) => f !== 'REMOTE');
+const CURRENCY_SIGN = { RUR: '₽', USD: '$', EUR: '€', KZT: '₸', BYR: 'Br', UZS: 'сум' };
+function salaryText(r) {
+  if (!r.salary_from && !r.salary_to) return 'не указана';
+  const range = [r.salary_from && `от ${r.salary_from}`, r.salary_to && `до ${r.salary_to}`].filter(Boolean).join(' ');
+  const tax = r.salary_gross === true ? ' до вычета налогов' : r.salary_gross === false ? ' на руки' : '';
+  return `${range} ${CURRENCY_SIGN[r.currency] ?? r.currency ?? ''}${tax}`.trim();
+}
+
 const vacancyText = (r) =>
   [
     '<vacancy>',
@@ -140,7 +151,10 @@ const vacancyText = (r) =>
     `Требуемый опыт: ${EXPERIENCE[r.experience] ?? r.experience ?? ''}`,
     `Формат работы: ${list(r.work_formats, FORMAT)}`,
     `Занятость: ${list(r.employment_form, EMPLOYMENT)}`,
-    `Где размещена на hh (не требование к месту жительства): ${r.areas}`,
+    !frontend && facts.salary && `Зарплата: ${salaryText(r)}`,
+    officeSearch
+      ? `Где размещена на hh (для офиса и гибрида — город работы): ${r.areas}`
+      : `Где размещена на hh (не требование к месту жительства): ${r.areas}`,
     r.languages && `Языки (анкета hh): ${languages(r.languages)}`,
     r.key_skills && `Ключевые навыки: ${r.key_skills}`,
     // Страница вакансии не открылась — оцениваем по фрагменту из выдачи

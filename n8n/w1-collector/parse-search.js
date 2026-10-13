@@ -3,12 +3,12 @@
 // Вход: ответы HTTP Request «Search hh», по одному на страницу (Response Format = Text,
 //       Include Response Headers and Status = on).
 // Выход: ОДИН item —
-//   { ok: true,  firstRun, vacancies: [...], requests: [...] }  → IF «OK?» → Split Out
+//   { ok: true, vacancies: [...], requests: [...] }  → IF «OK?» → Split Out
 //   { ok: false, reason, html }                                → IF «OK?» → сохранить HTML → Stop and Error
-// requests — запросы поиска для сообщения о сборе: { page, status, total (нашёл hh), count (на странице) }
+// requests — запросы поиска для сообщения о сборе: { label, page, status, total (нашёл hh), count (на странице) }
+// Пустая выдача — не поломка, если hh сам сказал «найдено 0» (узкая профессия в одном городе за сутки)
 
 const plan = $('Plan').all().map((i) => i.json);
-const firstRun = Boolean(plan[0]?.firstRun);
 
 // HTML-сущности раскодируем за один проход: иначе &amp;quot; станет кавычкой и сломает JSON
 const NAMED = { quot: '"', amp: '&', lt: '<', gt: '>', apos: "'", nbsp: '\u00a0' };
@@ -81,7 +81,7 @@ function toRecord(v) {
     apply_url: `https://hh.ru/applicant/vacancy_response?vacancyId=${v.vacancyId}`,
     apply_type: 'hh',
     published_at: v.publicationTime?.$ ?? '',
-    status: firstRun ? 'seen' : 'new',
+    status: 'new',
   };
 }
 
@@ -115,6 +115,7 @@ for (const [index, item] of $input.all().entries()) {
   const list = state?.vacancySearchResult?.vacancies;
   if (!Array.isArray(list)) return fail('Нет vacancySearchResult.vacancies — сменилась структура', html);
   requests.push({
+    label: plan[index]?.label ?? '',
     page: plan[index]?.page ?? index,
     status: res.statusCode,
     total: state.vacancySearchResult.totalResults ?? null,
@@ -135,7 +136,9 @@ for (const [index, item] of $input.all().entries()) {
   }
 }
 
-// Пустая выдача по нашему запросу не бывает — считаем поломкой
-if (byKey.size === 0) return fail('В выдаче 0 вакансий — сменилась структура или запрос', htmlOf($input.first().json));
+// Пустая выдача — поломка, если hh не сказал «найдено 0»: значит, вакансии есть, а мы их не нашли в разметке
+if (byKey.size === 0 && requests.some((r) => r.total !== 0)) {
+  return fail('В выдаче 0 вакансий — сменилась структура или запрос', htmlOf($input.first().json));
+}
 
-return [{ json: { ok: true, firstRun, vacancies: [...byKey.values()], requests } }];
+return [{ json: { ok: true, vacancies: [...byKey.values()], requests } }];

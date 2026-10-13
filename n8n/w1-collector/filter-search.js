@@ -1,7 +1,7 @@
 // W1 · Filter search — быстрые правила по данным выдачи, до захода на страницу вакансии.
 // Нода: Code, режим «Run Once for All Items».
 // Вход: новые вакансии из «Is new» и строки чёрного списка из «Blacklist».
-// Выход: те же вакансии со status = new | rejected | seen и причиной в reasons.
+// Выход: те же вакансии со status = new | rejected и причиной в reasons.
 // Правила — решения пользователя от 07.10.2026 (CLAUDE.md §7). Из настроек бота (⚙️ → 🧹 Фильтр): какие правила
 // выключены (filter.rules_off), порог откликов (filter.max_responses, 0 — не отсекать) и стоп-слова (filter.stop_words).
 
@@ -9,8 +9,9 @@
 
 // @include n8n/shared/settings.js
 
-const firstRun = Boolean($('Plan').first().json.firstRun);
 const settings = loadSettings($('Settings').all());
+// Правила фронтенда (Angular, чужой стек, бэкенд) — только у пресета frontend (13.10.2026)
+const rules = filterRulesFor(settings['profile.preset']);
 const off = new Set(settings['filter.rules_off']);
 const maxResponses = settings['filter.max_responses'];
 const stopWords = wordsRegex(settings['filter.stop_words']);
@@ -79,10 +80,9 @@ const RULES = [
   ],
   ['responses', `> ${maxResponses} откликов`, (r) => maxResponses > 0 && (r.responses ?? 0) > maxResponses],
   ['blacklist', 'чёрный список', inBlacklist],
-].filter(([id]) => !off.has(id));
+].filter(([id]) => id === 'responses' || (id in rules && !off.has(id)));
 
 return rows.map((r) => {
-  if (firstRun) return { json: { ...r, status: 'seen', reasons: '' } };
   const failed = RULES.filter(([, , test]) => test(r)).map(([, name]) => name);
   return { json: { ...r, status: failed.length ? 'rejected' : 'new', reasons: failed.join(', ') } };
 });

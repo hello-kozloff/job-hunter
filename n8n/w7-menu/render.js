@@ -16,6 +16,8 @@
 // @include n8n/shared/card.js
 // @include n8n/shared/menu.js
 // @include n8n/shared/settings.js
+// @include n8n/shared/hh-roles.js
+
 // @include n8n/shared/search.js
 // @include n8n/shared/schedule.js
 // @include n8n/shared/robot.js
@@ -54,6 +56,7 @@ const LAYOUTS = [
   'set_llm',
   'open_rescue',
   'set_apply',
+  'set_rules_generic',
 ];
 // Выходы «Layout» после раскладок: приветствие, вопрос ⚙️ со списком (ForceReply)
 const ROUTE_START = LAYOUTS.length * 2;

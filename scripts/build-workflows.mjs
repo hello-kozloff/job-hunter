@@ -84,12 +84,12 @@ const workflow = (id, name, nodes, links, settings = {}) => ({
 
 // ---------- Общие куски ----------
 
-// Поисковый запрос hh — из n8n/shared/search.js. Слова и период — настройки бота (⚙️ → 🔎 Поиск):
-// W1 «Plan» берёт их из таблицы settings, W0 (ручная проверка) — значения по умолчанию
-const { SEARCH_URL, searchQuery, loadSettings } = new Function(
-  `${read('n8n/shared/settings.js')}\n${read('n8n/shared/search.js')}\nreturn { SEARCH_URL, searchQuery, loadSettings };`,
+// Поисковый запрос hh — из n8n/shared/search.js. Слова, период, роли, формат и город — настройки (⚙️ → 🔎 Поиск,
+// онбординг): W1 «Plan» берёт их из таблицы settings и отдаёт готовые URL, W0 (ручная проверка) — запрос по умолчанию
+const { SEARCH_URL, searchParams, loadSettings } = new Function(
+  `${read('n8n/shared/settings.js')}\n${read('n8n/shared/search.js')}\nreturn { SEARCH_URL, searchParams, loadSettings };`,
 )();
-const SEARCH_QUERY = searchQuery(loadSettings([]));
+const SEARCH_QUERY = searchParams(loadSettings([]));
 
 const BROWSER_HEADERS = [
   ['User-Agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'],
@@ -462,6 +462,17 @@ const PANEL_LAYOUTS = [
       ],
     ],
   ],
+  // 6 правил фильтра без фронтенд-правил (пресет generic, 13.10.2026: n8n/shared/settings.js → filterRulesFor)
+  [
+    'set rules generic',
+    [
+      ...[0, 2, 4].map((i) => [
+        [panelButton(`r${i}.text`), panelButton(`r${i}.cb`)],
+        [panelButton(`r${i + 1}.text`), panelButton(`r${i + 1}.cb`)],
+      ]),
+      [['⬅️ Фильтр', 's:filter']],
+    ],
+  ],
 ];
 
 // W3: состояние после нажатия кнопки, которое посчитали ноды «Apply choice» и «Apply sent»
@@ -795,16 +806,7 @@ const workflows = {
         columns: AUTO_MAP,
         options: {},
       }),
-      node(
-        'W1',
-        'Any row',
-        'dataTable',
-        1.1,
-        [880, 0],
-        { resource: 'row', operation: 'get', dataTableId: VACANCIES, returnAll: false, limit: 1 },
-        { alwaysOutputData: true, executeOnce: true },
-      ),
-      settingsNode('W1', [770, 150]),
+      settingsNode('W1', [880, 0]),
       code('W1', 'Plan', 'n8n/w1-collector/plan.js', [1100, 0]),
       node(
         'W1',
@@ -812,18 +814,8 @@ const workflows = {
         'httpRequest',
         4.5,
         [1320, 0],
-        hhRequest({
-          url: SEARCH_URL,
-          // Слова и период — из «Plan» (настройки бота)
-          query: [
-            ...SEARCH_QUERY.map(([key, value]) => [
-              key,
-              { text: '={{ $json.text }}', search_period: '={{ $json.period }}' }[key] ?? value,
-            ]),
-            ['page', '={{ $json.page }}'],
-          ],
-          batching: true,
-        }),
+        // Готовый адрес запроса — из «Plan» (настройки и профиль): удалёнка и, если есть, офис в городе
+        hhRequest({ url: '={{ $json.url }}', batching: true }),
       ),
       code('W1', 'Parse search', 'n8n/w1-collector/parse-search.js', [1540, 0]),
       node('W1', 'OK?', 'if', 2.3, [1760, 0], ifTrue('W1', '={{ $json.ok }}')),
@@ -962,8 +954,7 @@ const workflows = {
       ['Busy', 'Start'],
       ['Start', 'Start run'],
       ['Start run', 'Settings'],
-      ['Settings', 'Any row'],
-      ['Any row', 'Plan'],
+      ['Settings', 'Plan'],
       ['Plan', 'Search hh'],
       ['Search hh', 'Parse search'],
       ['Parse search', 'OK?'],

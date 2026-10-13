@@ -36,7 +36,9 @@ const periodText = (days) => SEARCH_LABELS.search_period[days] ?? `за ${days} 
 const responsesText = (n) => (n ? `больше ${n}` : 'не отсекать');
 const VERDICT_TEXT = { apply: '🟢 apply', maybe: '🟡 maybe', skip: '🔴 skip' };
 const providerText = (p) => (p === 'claude' ? 'Claude' : 'Gemini');
-const rulesOn = () => Object.keys(FILTER_RULES).filter((id) => !settings['filter.rules_off'].includes(id));
+// Правила пресета (у generic — без фронтенд-правил) и включённые из них
+const presetRules = () => Object.keys(filterRulesFor(settings['profile.preset']));
+const rulesOn = () => presetRules().filter((id) => !settings['filter.rules_off'].includes(id));
 const companies = (n) => {
   const d = n % 10;
   const dd = n % 100;
@@ -62,7 +64,7 @@ function settingsRootView(note) {
     '',
     `🕐 <b>Сбор</b>: ${describeSchedule(sch)} · ${collectsPerDay(sch)} в сутки${sch.paused ? ' · ⏸ <b>пауза</b>' : ''}`,
     `🔎 <b>Поиск</b>: ${periodText(settings['search.period'])} · везде — ${settings['search.anywhere'].length} сл., в названии — ${settings['search.in_name'].length}`,
-    `🧹 <b>Фильтр</b>: правил ${rulesOn().length} из ${Object.keys(FILTER_RULES).length} · отклики — ${responsesText(settings['filter.max_responses'])} · стоп-слов ${settings['filter.stop_words'].length} · ЧС ${blacklist.length}`,
+    `🧹 <b>Фильтр</b>: правил ${rulesOn().length} из ${presetRules().length} · отклики — ${responsesText(settings['filter.max_responses'])} · стоп-слов ${settings['filter.stop_words'].length} · ЧС ${blacklist.length}`,
     `🤖 <b>Нейросеть</b>: ${providerText(settings['llm.provider'])} · теневой режим ${settings['llm.shadow'] ? 'вкл' : 'выкл'} · спорных случаев ${settings['llm.cases'].length}`,
     `🚀 <b>Робот</b>: ${settings['apply.enabled'] ? 'вкл' : 'выкл'}${settings['apply.paused'] ? ' · ⏸ пауза' : ''} · сегодня ${robotToday(rows, now)}/${settings['apply.daily_limit']} · ${robotState().short}`,
   ];
@@ -150,7 +152,7 @@ function settingsFilterView() {
   const lines = [
     '🧹 <b>Фильтр</b> — отсекает до нейросети',
     '',
-    `Правила: ${Object.entries(FILTER_RULES)
+    `Правила: ${Object.entries(filterRulesFor(settings['profile.preset']))
       .map(([id, label]) => `${off.includes(id) ? '◻️' : '✅'} ${label}`)
       .join(' · ')}`,
     `Отклики: ${responsesText(settings['filter.max_responses'])}`,
@@ -172,9 +174,11 @@ function settingsFilterView() {
   };
 }
 
+// Правила пресета: у frontend — все 10, у остальных — 6, без правил фронтенда (своя раскладка кнопок)
 function settingsRulesView() {
   const off = settings['filter.rules_off'];
-  const ids = Object.keys(FILTER_RULES);
+  const rules = filterRulesFor(settings['profile.preset']);
+  const ids = Object.keys(rules);
   const lines = [
     '⚙️ <b>Правила фильтра</b>',
     '',
@@ -184,9 +188,9 @@ function settingsRulesView() {
   if (notes.length) lines.push('', ...notes);
   const b = {};
   ids.forEach((id, i) => {
-    b[`r${i}`] = { text: `${off.includes(id) ? '◻️' : '✅'} ${FILTER_RULES[id]}`, cb: `st:${id}` };
+    b[`r${i}`] = { text: `${off.includes(id) ? '◻️' : '✅'} ${rules[id]}`, cb: `st:${id}` };
   });
-  return { layout: 'set_rules', text: lines.join('\n'), b };
+  return { layout: ids.length === Object.keys(FILTER_RULES).length ? 'set_rules' : 'set_rules_generic', text: lines.join('\n'), b };
 }
 
 function settingsBlacklistView() {
@@ -309,8 +313,8 @@ function settingsPrompt(name) {
   }
   return [
     SETTING_PROMPTS[name],
-    `Сейчас: ${settings[name].join(', ')}`,
+    `Сейчас: ${settings[name].join(', ') || '—'}`,
     '',
-    'Пришли новый список через запятую — заменю его целиком. «*» в конце слова — любое окончание.',
+    `Пришли новый список через запятую — заменю его целиком. «*» в конце слова — любое окончание.${SETTINGS[name].min === 0 ? ' Очистить — «-».' : ''}`,
   ].join('\n');
 }

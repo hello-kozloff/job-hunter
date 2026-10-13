@@ -14,6 +14,8 @@ const s = loadSettings($('Settings').all());
 const result = (name, value) => [{ json: { name, value_json: JSON.stringify(value), value, previous: s[name] } }];
 
 if (job.input && SETTINGS[job.input.name]?.words) {
+  // «-» — очистить список, если он может быть пустым (слова «везде в тексте», стоп-слова)
+  if (/^[-—]$/.test(String(job.input.text).trim()) && SETTINGS[job.input.name].min === 0) return result(job.input.name, []);
   const parsed = parseWords(job.input.text);
   return parsed.error ? [] : result(job.input.name, parsed.words);
 }
