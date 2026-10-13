@@ -1,0 +1,6 @@
+# Переводы строк — LF везде: на Windows git иначе превратит их в CRLF, и сломаются bash-скрипты
+# (applier/entrypoint.sh внутри образа робота, scripts/*.sh) и сравнение текстов
+* text=auto eol=lf
+*.pdf binary
+*.png binary
+*.jpg binary

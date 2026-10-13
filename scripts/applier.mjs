@@ -18,19 +18,12 @@
 //                                                    error, dry_run, captcha, smart, login, limit, busy, down, slow)
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readEnv, local } from './lib/env.mjs';
 
-const BASE = 'http://127.0.0.1:5682';
-const VNC = 'vnc://localhost:5901';
+const BASE = `http://127.0.0.1:${local().applierPort}`;
+const VNC = `vnc://localhost:${readEnv().VNC_PORT || 5901}`;
 
-const env = Object.fromEntries(
-  readFileSync(new URL('../.env', import.meta.url), 'utf8')
-    .split('\n')
-    .filter((line) => /^[A-Z0-9_]+=/.test(line))
-    .map((line) => {
-      const i = line.indexOf('=');
-      return [line.slice(0, i), line.slice(i + 1).trim().replace(/^['"]|['"]$/g, '')];
-    }),
-);
+const env = readEnv();
 if (!env.APPLIER_TOKEN) {
   console.error('В .env нет APPLIER_TOKEN — см. .env.example, раздел «Робот-отклик»');
   process.exit(1);

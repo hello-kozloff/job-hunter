@@ -32,38 +32,9 @@ import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { readCode } from './lib/code.mjs';
 
-const BASE = 'http://127.0.0.1:5678/rest';
-const ENV_URL = new URL('../.env', import.meta.url);
+import { readEnv, setEnv, local } from './lib/env.mjs';
 
-function readEnv() {
-  return Object.fromEntries(
-    readFileSync(ENV_URL, 'utf8')
-      .split('\n')
-      .filter((line) => /^[A-Z0-9_]+=/.test(line))
-      .map((line) => {
-        const i = line.indexOf('=');
-        return [line.slice(0, i), line.slice(i + 1).trim().replace(/^['"]|['"]$/g, '')];
-      }),
-  );
-}
-
-// Записать ключи в .env: существующие строки заменяются, новые дописываются в конец
-function setEnv(vars, comment) {
-  const lines = readFileSync(ENV_URL, 'utf8').split('\n');
-  const rest = { ...vars };
-  const out = lines.map((line) => {
-    const key = line.match(/^([A-Z0-9_]+)=/)?.[1];
-    if (key && key in rest) {
-      const value = rest[key];
-      delete rest[key];
-      return `${key}=${value}`;
-    }
-    return line;
-  });
-  const added = Object.entries(rest).map(([k, v]) => `${k}=${v}`);
-  if (added.length) out.push('', `# ${comment}`, ...added);
-  writeFileSync(ENV_URL, `${out.join('\n').replace(/\n*$/, '')}\n`, { mode: 0o600 });
-}
+const BASE = `http://127.0.0.1:${local().n8nPort}/rest`;
 
 async function api(path, { method = 'GET', body, cookie } = {}) {
   const res = await fetch(`${BASE}${path}`, {
@@ -377,7 +348,7 @@ async function setupOwner(email) {
   });
   setEnv(
     { N8N_OWNER_EMAIL: email, N8N_OWNER_PASSWORD: password },
-    'Владелец локального n8n (scripts/n8n-api.mjs setup-owner). Вход: http://localhost:5678',
+    `Владелец локального n8n (scripts/n8n-api.mjs setup-owner). Вход: http://localhost:${local().n8nPort}`,
   );
   console.log(`Владелец ${email} создан, пароль записан в .env`);
 }

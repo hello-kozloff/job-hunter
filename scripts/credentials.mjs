@@ -7,17 +7,9 @@
 //   APPLIER_TOKEN  → «Applier» (робот-отклик, этап 6: W6, W7, W9 ходят в его API с заголовком X-Applier-Token)
 // n8n при импорте шифрует ключи N8N_ENCRYPTION_KEY. Используется только через pipe в scripts/deploy.sh —
 // на диск хоста ключи не пишутся.
-import { readFileSync } from 'node:fs';
+import { readEnv } from './lib/env.mjs';
 
-const env = Object.fromEntries(
-  readFileSync(new URL('../.env', import.meta.url), 'utf8')
-    .split('\n')
-    .filter((line) => /^[A-Z0-9_]+=/.test(line))
-    .map((line) => {
-      const i = line.indexOf('=');
-      return [line.slice(0, i), line.slice(i + 1).trim().replace(/^['"]|['"]$/g, '')];
-    }),
-);
+const env = readEnv();
 
 const credentials = [
   env.TG_BOT_TOKEN && {

@@ -7,12 +7,14 @@
 // Импорт в локальный n8n: scripts/deploy.sh
 import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { TABLES } from '../n8n/schema.mjs';
 import { readCode } from './lib/code.mjs';
 
-const ROOT = new URL('..', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 // Код Code-ноды: файл n8n/**/*.js, строки «// @include …» раскрываются (общий код карточки и т. п.)
-const read = (path) => readCode(`${ROOT}${path}`);
+const read = (path) => readCode(join(ROOT, path));
 
 // Постоянные id: повторный импорт обновляет те же workflow, а не создаёт копии
 const IDS = {
@@ -3060,8 +3062,8 @@ const workflows = {
   ),
 };
 
-mkdirSync(`${ROOT}n8n/workflows`, { recursive: true });
+mkdirSync(join(ROOT, 'n8n/workflows'), { recursive: true });
 for (const [file, wf] of Object.entries(workflows)) {
-  writeFileSync(`${ROOT}n8n/workflows/${file}.json`, `${JSON.stringify(wf, null, 2)}\n`);
+  writeFileSync(join(ROOT, `n8n/workflows/${file}.json`), `${JSON.stringify(wf, null, 2)}\n`);
   console.log(`n8n/workflows/${file}.json  ${wf.name} (${wf.nodes.length} нод)`);
 }
