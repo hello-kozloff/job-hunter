@@ -82,7 +82,7 @@
 
 ## 5. Поисковый запрос
 
-Рабочий запрос (W0, W1; источник правды — `n8n/shared/search.js`, его же показывает сообщение о сборе), с 07.10.2026:
+Рабочий запрос владельца (W0, W1; источник правды — `n8n/shared/search.js`, его же показывает сообщение о сборе), с 07.10.2026. С 13.10.2026 (часть C «Установки для всех», `docs/onboarding.md`) все параметры — из настроек и профиля: слова, `search.roles` (professional_role, справочник `n8n/shared/hh-roles.js`), `search.formats`, `search.area`, `search.education`, период. Удалёнка ищется по всем регионам, офис и гибрид — отдельным запросом в городе профиля (до двух запросов за сбор). У владельца — один запрос, URL прежний до символа:
 
 ```
 https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs OR vue OR vue.js OR vuejs OR nuxt OR nuxt.js OR nuxtjs OR typescript OR AI OR ИИ OR LLM OR GenAI OR GPT OR нейросети OR нейросетей)&professional_role=96&work_format=REMOTE&education=not_required_or_not_specified&search_period=1&order_by=publication_time&items_on_page=100&enable_snippets=true&ored_clusters=true&page=0
@@ -111,7 +111,8 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
                  раз в день, static data summaryDay; после сна — на первом тике) → W6 (13.10.2026)
 [W1 Collector] вызов из W8 (kind schedule | catchup) или W7 «🔄 Собрать сейчас» (kind bot) | Manual
                  → Busy + Start: журнал runs (идёт другой сбор — запись running моложе 10 мин — этот пропускаем)
-                 → Start run (запись running) → поиск hh → разбор InitialState → склейка дублей
+                 → Start run (запись running) → Plan (1–2 запроса: удалёнка, офис в городе) → поиск hh → разбор
+                 InitialState (пусто при «найдено 0» — не поломка) → склейка дублей
                  → только новые (нет ни external_id, ни dup_key) → Blacklist + Filter search (правила по выдаче)
                  → Insert (new | rejected) → для new: страница вакансии → Parse vacancy (правила по описанию)
                  → Update (detailed | rejected) → Score job (блок «🔎 Сбор»: запросы к hh, что искали, новые и отсеянные
@@ -153,7 +154,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
                  при смене расписания): W1 шлёт сигнал после поиска; нет сигнала → их бот пишет в Telegram
 ```
 
-**Статусы:** `seen` (бэкфилл, не обрабатывается) | `new` (прошла выдачу) → `detailed` (прошла все правила; если `error` — страница не открылась, оценка по фрагменту) | `rejected` (+ `reasons`) → `scoring` (W2 оценивает; карточка не ушла — «Release» вернёт в `detailed`, застрявшие дольше 30 мин вернёт W6) → `waiting` (W2: решение нейросети, карточка отправлена) → `approved` (✅) | `maybe` (🤔) | `skipped` (❌); `approved` + письмо (W5) → «📨 Отправил» → `applied` (+ `applied_at`); W6: `waiting` 3 дня → `expired`, закрыта на hh → `archived`; этап 6+: `failed | needs_human`.
+**Статусы:** `seen` (бэкфилл первого запуска; с 13.10.2026 бэкфилла нет — первый сбор сразу оценивается) | `new` (прошла выдачу) → `detailed` (прошла все правила; если `error` — страница не открылась, оценка по фрагменту) | `rejected` (+ `reasons`) → `scoring` (W2 оценивает; карточка не ушла — «Release» вернёт в `detailed`, застрявшие дольше 30 мин вернёт W6) → `waiting` (W2: решение нейросети, карточка отправлена) → `approved` (✅) | `maybe` (🤔) | `skipped` (❌); `approved` + письмо (W5) → «📨 Отправил» → `applied` (+ `applied_at`); W6: `waiting` 3 дня → `expired`, закрыта на hh → `archived`; этап 6+: `failed | needs_human`.
 
 **Хранилище:** n8n Data Tables, таблица `vacancies`.
 - Лимит поднят до 100 МБ env-переменной.
@@ -225,6 +226,8 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 ## 7. Правила отбора
 
 Решения пользователя (06–07.10.2026). Код: `n8n/w1-collector/filter-search.js` (по выдаче) и `parse-vacancy.js` (по странице вакансии). С 07.10.2026 правила включаются и выключаются в боте (⚙️ → 🧹 Фильтр → Правила), там же порог откликов, стоп-слова и чёрный список; слова и период поиска — ⚙️ → 🔎 Поиск (`docs/settings.md`). Ниже — значения по умолчанию.
+
+Правила ниже — пресет `frontend` (владелец). У остальных (пресет `generic`, 13.10.2026) Angular, «чужой стек», «бэкенд», «нет React и Vue» и «AI не на JS/TS» не работают и не показываются в ⚙️; `lead` по умолчанию выключен; стоп-слова и правила оценки — из резюме (онбординг).
 
 **Отсекаем по выдаче (Filter search):**
 - опыт «нет опыта»; junior / стажёр / intern / младший;
@@ -303,7 +306,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - `scripts/run-code-node.mjs` — прогон кода Code-ноды на сохранённых страницах hh без n8n (моки `$input` и `$('Node')`):
   ```bash
   node scripts/run-code-node.mjs n8n/w1-collector/parse-search.js \
-    fixtures/search-p0.html,fixtures/search-p1.html --ref 'Plan={"firstRun":true}'
+    fixtures/search-p0.html,fixtures/search-p1.html --ref 'Plan=[{"label":"удалёнка","page":0},{"label":"удалёнка","page":1}]'
   ```
 - Фикстуры: `fixtures/search-p0.html`, `search-p1.html`, `vacancy.html` (не в git) и `synthetic-captcha.html` (в git).
 - В живом n8n: `node scripts/n8n-api.mjs run jobHunterW1Colle` (сводка по нодам), `node scripts/n8n-api.mjs rows vacancies 5`.

@@ -17,6 +17,12 @@ const FILTER_RULES = {
   only_rf: 'только из РФ',
   no_stack: 'нет React и Vue',
 };
+// Правила фронтенда (пресет frontend, 13.10.2026): у остальных профессий они отсекли бы всё — не работают
+// и не показываются в ⚙️
+const FRONTEND_FILTER_RULES = ['angular', 'foreign', 'backend', 'no_stack'];
+// Правила фильтра для пресета: id → подпись
+const filterRulesFor = (preset) =>
+  Object.fromEntries(Object.entries(FILTER_RULES).filter(([id]) => preset === 'frontend' || !FRONTEND_FILTER_RULES.includes(id)));
 
 const SETTINGS = {
   // Сбор (W8 Clock): интервал днём и ночью (мин, 0 — ночью не собирать), «день» по Москве, пауза
@@ -24,18 +30,27 @@ const SETTINGS = {
   'collect.night_every': { default: 120, options: [60, 120, 240, 0] },
   'collect.day_window': { default: '07-18', options: ['07-18', '08-20', '06-22', '09-18'] },
   'collect.paused': { default: false, options: [false, true] },
-  // Поиск на hh (W1, n8n/shared/search.js): период в днях; слова везде в тексте и только в названии
+  // Поиск на hh (W1, n8n/shared/search.js): период в днях; слова везде в тексте и только в названии.
+  // Слов «везде» может не быть (ищем только по названию) — «-» в ответе на ✏️ очищает список
   'search.period': { default: 1, options: [1, 3, 7] },
-  'search.anywhere': { default: ['frontend'], words: true },
+  'search.anywhere': { default: ['frontend'], words: true, min: 0 },
   'search.in_name': {
     default: ['react', 'next.js', 'nextjs', 'vue', 'vue.js', 'vuejs', 'nuxt', 'nuxt.js', 'nuxtjs', 'typescript',
       'AI', 'ИИ', 'LLM', 'GenAI', 'GPT', 'нейросети', 'нейросетей'],
     words: true,
   },
+  // Роли hh (professional_role, n8n/shared/hh-roles.js), формат работы, город для офиса и гибрида, образование —
+  // онбординг пишет их по резюме (13.10.2026, docs/onboarding.md). Удалёнка ищется по всем регионам, офис и гибрид —
+  // в городе search.area: два запроса hh
+  'search.roles': { default: ['96'], roles: true },
+  'search.formats': { default: ['REMOTE'], formats: true },
+  'search.area': { default: null, area: true },
+  'search.education': { default: ['not_required_or_not_specified'], education: true },
   // Фильтр W1: порог откликов (0 — не отсекать), выключенные правила, стоп-слова в названии («*» — любое окончание)
   'filter.max_responses': { default: 3000, options: [1000, 2000, 3000, 5000, 0] },
   'filter.rules_off': { default: [], list: Object.keys(FILTER_RULES) },
   'filter.stop_words': {
+    min: 0,
     default: ['php*', 'laravel', 'symfony', 'yii', 'wordpress', 'bitrix*', 'битрикс*', 'qa', '1c', '1с', 'teacher',
       'tutor', 'instructor', "o'qituvchi", 'oqituvchi', 'преподавател*', 'тестировщик*', 'наставник*'],
     words: true,
@@ -143,7 +158,15 @@ function loadSettings(items) {
 
 function validSetting(spec, value) {
   if (spec.options) return spec.options.some((o) => o === value);
-  if (spec.words) return Array.isArray(value) && value.length > 0 && value.length <= 40 && value.every((w) => WORD_RE.test(w));
+  if (spec.words) {
+    return Array.isArray(value) && value.length >= (spec.min ?? 1) && value.length <= 40 && value.every((w) => WORD_RE.test(w));
+  }
+  if (spec.roles) return Array.isArray(value) && value.length <= 10 && value.every((id) => /^\d{1,4}$/.test(String(id)));
+  if (spec.formats) return Array.isArray(value) && value.length > 0 && value.every((f) => WORK_FORMATS.includes(f));
+  if (spec.area) {
+    return value === null || (Boolean(value) && /^\d{1,7}$/.test(String(value.id)) && typeof value.name === 'string' && value.name.length <= 80);
+  }
+  if (spec.education) return Array.isArray(value) && value.every((e) => EDUCATION.includes(e));
   if (spec.list) return Array.isArray(value) && value.every((v) => spec.list.includes(v));
   if (spec.cases) {
     return (
@@ -172,6 +195,10 @@ function validSetting(spec, value) {
   }
   return false;
 }
+
+// Форматы работы и уровни образования — значения параметров поиска hh
+const WORK_FORMATS = ['REMOTE', 'HYBRID', 'ON_SITE', 'FIELD_WORK'];
+const EDUCATION = ['not_required_or_not_specified', 'special_secondary', 'higher'];
 
 // Разделы правил оценки (llm.rules) и список строк: до 20 строк, каждая — до max знаков
 const RULE_KEYS = ['skip', 'maybe', 'apply', 'ignore', 'notes'];

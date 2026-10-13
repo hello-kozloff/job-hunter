@@ -14,8 +14,11 @@ const responses = $input.all().map((i) => i.json);
 
 // @include n8n/shared/settings.js
 
-// Правила, выключенные в настройках бота (⚙️ → 🧹 Фильтр → Правила): only_rf, no_stack
-const off = new Set(loadSettings($('Settings').all())['filter.rules_off']);
+// Правила, выключенные в настройках бота (⚙️ → 🧹 Фильтр → Правила): only_rf, no_stack. «Нет React и Vue» и
+// «AI не на JS/TS» — только у пресета frontend (13.10.2026)
+const settings = loadSettings($('Settings').all());
+const off = new Set(settings['filter.rules_off']);
+if (!('no_stack' in filterRulesFor(settings['profile.preset']))) off.add('no_stack');
 
 // «Работа только из РФ». Совпавший кусок пишем в reasons, чтобы ложные срабатывания было видно
 const RF_ONLY = [

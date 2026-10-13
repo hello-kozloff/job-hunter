@@ -15,7 +15,7 @@
 //
 // Пример:
 //   node scripts/run-code-node.mjs n8n/w1-collector/parse-search.js \
-//     fixtures/search-p0.html,fixtures/search-p1.html --ref 'Plan={"firstRun":true}'
+//     fixtures/search-p0.html,fixtures/search-p1.html --ref 'Plan=[{"label":"удалёнка","page":0},{"label":"удалёнка","page":1}]'
 import { readFileSync, writeFileSync } from 'node:fs';
 import { readCode } from './lib/code.mjs';
 

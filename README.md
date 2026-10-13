@@ -144,7 +144,7 @@ W8 Clock ──► W1 Collector ──► W2 Score ──► карточка в
 ```bash
 # Code-нода на сохранённых страницах hh
 node scripts/run-code-node.mjs n8n/w1-collector/parse-search.js \
-  fixtures/search-p0.html,fixtures/search-p1.html --ref 'Plan={"firstRun":true}'
+  fixtures/search-p0.html,fixtures/search-p1.html --ref 'Plan=[{"label":"удалёнка","page":0},{"label":"удалёнка","page":1}]'
 
 cd applier && npm ci && npm test   # чистые функции робота
 applier/sim/run.sh                 # робот на поддельном hh в контейнере без сети

@@ -26,11 +26,15 @@
 | `collect.day_window` | `07-18` | `07-18` · `08-20` · `06-22` · `09-18` (часы МСК) | то же |
 | `collect.paused` | false | false · true | то же; пауза ставит на паузу и стража |
 | `search.period` | 1 | 1 · 3 · 7 дней | W1 «Plan» (`search_period`), сообщение о сборе |
-| `search.anywhere` | `frontend` | список слов (✏️) | W1: по всему тексту вакансии |
+| `search.anywhere` | `frontend` | список слов (✏️), может быть пустым («-») | W1: по всему тексту вакансии |
 | `search.in_name` | react … нейросетей (17 слов) | список слов (✏️) | W1: только в названии (`NAME:(…)`) |
+| `search.roles` | 96 | id ролей hh (`n8n/shared/hh-roles.js`), до 10 | W1: `professional_role` |
+| `search.formats` | REMOTE | REMOTE · HYBRID · ON_SITE · FIELD_WORK | W1: удалёнка — запрос по всем регионам, остальное — запрос в городе `search.area` |
+| `search.area` | нет | `{ id, name }` — регион hh | W1: город для офиса и гибрида; без него офис не ищется |
+| `search.education` | not_required_or_not_specified | список: not_required_or_not_specified · special_secondary · higher; пусто — без фильтра | W1: `education` |
 | `filter.max_responses` | 3000 | 1000 · 2000 · 3000 · 5000 · 0 (не отсекать) | W1 «Filter search» |
 | `filter.rules_off` | пусто | правила из `FILTER_RULES` | W1 «Filter search» и «Parse vacancy» |
-| `filter.stop_words` | php\*, laravel, … наставник\* (18) | список слов (✏️) | W1 «Filter search»: стоп-слова в названии |
+| `filter.stop_words` | php\*, laravel, … наставник\* (18) | список слов (✏️), может быть пустым («-») | W1 «Filter search»: стоп-слова в названии |
 | `llm.provider` | `gemini` | gemini · claude | W2 (оценка), W5 (письма); заменяет `LLM_PROVIDER` из `.env` |
 | `llm.shadow` | true | true · false | W2: выкл — skip без карточки («Quiet skips»: status skipped без `my_decision`), в итоге «🔴 N без карточек» |
 | `llm.cases` | Vue без React: maybe, fullstack: maybe, AI на JS/TS: apply, React Native: skip | список «случай: решение» (✏️) | W2 «Build prompt» |
