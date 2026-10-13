@@ -107,7 +107,9 @@ function settingsCollectView() {
       notes.push(`⚠️ Страж healthchecks не обновлён: ${esc(error.slice(0, 120))}`);
     }
   }
-  if (job.collectNow) notes.push('🔄 Запустил сбор — итог придёт сообщением о сборе');
+  if (job.collectNow) {
+    notes.push(settings['profile.ready'] ? '🔄 Запустил сбор — итог придёт сообщением о сборе' : '📄 Сначала пришли резюме в PDF — без профиля искать нечего');
+  }
   if (notes.length) lines.push('', ...notes);
 
   return {

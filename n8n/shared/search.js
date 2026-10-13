@@ -84,7 +84,7 @@ function describeSearch(s) {
   const filters = [
     `${formats.join(', ')}${s['search.area'] && s['search.formats'].some((f) => f !== 'REMOTE') ? ` (офис и гибрид — ${s['search.area'].name})` : ''}`,
     s['search.roles'].length ? s['search.roles'].map(roleName).join(', ') : 'все роли',
-    ...s['search.education'].map((e) => SEARCH_LABELS.education[e] ?? e),
+    s['search.education'].length ? `образование: ${s['search.education'].map((e) => SEARCH_LABELS.education[e] ?? e).join(' или ')}` : null,
     SEARCH_LABELS.search_period[s['search.period']] ?? `за ${s['search.period']} дн.`,
     SEARCH_LABELS.order_by.publication_time,
   ];
@@ -92,5 +92,5 @@ function describeSearch(s) {
     s['search.anywhere'].length && `везде в тексте: ${s['search.anywhere'].join(' · ')}`,
     s['search.in_name'].length && `в названии: ${s['search.in_name'].join(' · ')}`,
   ];
-  return { words: words.filter(Boolean).join('\n'), filters: filters.join(' · ') };
+  return { words: words.filter(Boolean).join('\n'), filters: filters.filter(Boolean).join(' · ') };
 }

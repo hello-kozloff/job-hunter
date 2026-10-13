@@ -29,6 +29,8 @@ const IDS = {
   clock: 'jobHunterW8Clock',
   // Робот-отклик (этап 6, docs/stages/stage-6.md): очередь 🚀, капча, блоки
   robot: 'jobHunterW9Robot',
+  // Профиль (13.10.2026, docs/onboarding.md): онбординг по резюме PDF, ⚙️ → 👤. W10 зарезервирован под Inbox (6.2)
+  profile: 'jobHunterW11Prof',
   n8nApiCredential: 'jobHunterN8nApi1',
   // Ключ API healthchecks.io (HC_API_KEY в .env) — бот обновляет расписание стража (07.10.2026)
   hcCredential: 'jobHunterHcApi01',
@@ -343,6 +345,8 @@ const PANEL_LAYOUTS = [
   [
     'settings',
     [
+      // Профиль (W11, 13.10.2026): резюме, подпись, контакт, пояс, образцы писем
+      [['👤 Профиль', 'pf:view']],
       [
         ['🕐 Сбор', panelButton('collect.cb')],
         ['🔎 Поиск', panelButton('search.cb')],
@@ -473,6 +477,68 @@ const PANEL_LAYOUTS = [
       [['⬅️ Фильтр', 's:filter']],
     ],
   ],
+];
+
+// W11: раскладки панели профиля (онбординг, ⚙️ → 👤). Порядок = LAYOUTS в n8n/w11-profile/render.js.
+// В ✅ онбординга — шаг (pf:ok:<шаг>): двойное нажатие не перескочит шаг
+const PROFILE_LAYOUTS = [
+  ['pf summary', [[['✅ Всё верно', 'pf:ok:summary'], ['✏️ Поправить', 'pf:e:profile']]]],
+  ['pf gender', [[['делал', 'pf:g:m'], ['делала', 'pf:g:f']]]],
+  ['pf signature', [[['✅ Так и подписывать', 'pf:ok:signature'], ['✏️ Другая', 'pf:e:signature']]]],
+  ['pf contact', [[['✅ Верно', 'pf:ok:contact'], ['✏️ Другой', 'pf:e:contact']]]],
+  [
+    'pf tz',
+    [
+      [[panelButton('tz.text'), 'pf:ok:tz']],
+      [
+        ['МСК', 'pf:tz:Europe/Moscow'],
+        ['UTC+4', 'pf:tz:Etc/GMT-4'],
+        ['UTC+5', 'pf:tz:Etc/GMT-5'],
+        ['UTC+7', 'pf:tz:Etc/GMT-7'],
+      ],
+      [['✏️ Другой', 'pf:e:tz']],
+    ],
+  ],
+  [
+    'pf review',
+    [
+      [
+        ['✅ Сохранить', 'pf:yes'],
+        ['❌ Отмена', 'pf:no'],
+      ],
+      [['✏️ Поправить', 'pf:e:profile']],
+    ],
+  ],
+  [
+    'pf replace',
+    [
+      [
+        ['🔄 Всё заново', 'pf:new:all'],
+        ['📄 Только текст', 'pf:new:text'],
+      ],
+      [['❌ Отмена', 'pf:new:no']],
+    ],
+  ],
+  ['pf replace text', [[['📄 Обновить текст резюме', 'pf:new:text']], [['❌ Отмена', 'pf:new:no']]]],
+  [
+    'pf profile',
+    [
+      [
+        ['✏️ Поправить', 'pf:e:profile'],
+        ['➕ Дополнить', 'pf:e:extra'],
+      ],
+      [
+        ['✍️ Подпись', 'pf:e:signature'],
+        ['📇 Контакт', 'pf:e:contact'],
+      ],
+      [
+        ['🕐 Пояс', 'pf:e:tz'],
+        ['✉️ Образцы писем', 'pf:e:examples'],
+      ],
+      [['⬅️ Настройки', 's:root']],
+    ],
+  ],
+  ['pf plain', null],
 ];
 
 // W3: состояние после нажатия кнопки, которое посчитали ноды «Apply choice» и «Apply sent»
@@ -1207,6 +1273,9 @@ const workflows = {
       // Меню бота (кнопки под полем ввода, команды, кнопки панели) — в W7 Bot menu
       node('W3', 'Panel?', 'if', 2.3, [440, -400], ifTrue('W3', "={{ $json.action === 'panel' }}")),
       runWorkflow('W3', 'Menu', [660, -500], IDS.menu),
+      // Профиль (W11, 13.10.2026): резюме PDF, кнопки pf:*, ответы на вопросы профиля
+      node('W3', 'Profile?', 'if', 2.3, [330, -320], ifTrue('W3', "={{ $json.action === 'profile' }}")),
+      runWorkflow('W3', 'Profile', [550, -380], IDS.profile),
       // Робот-отклик (этап 6): 🚀, ⛔, ▶️, /go, ответ на фото капчи — всё решает W9 Robot (он и отвечает на нажатие)
       node('W3', 'Robot?', 'if', 2.3, [440, -250], ifTrue('W3', "={{ $json.action === 'robot' }}")),
       runWorkflow('W3', 'Robot', [660, -300], IDS.robot),
@@ -1511,7 +1580,9 @@ const workflows = {
       ['Settings', 'Route'],
       ['Route', 'Panel?'],
       ['Panel?', 'Menu', 0],
-      ['Panel?', 'Robot?', 1],
+      ['Panel?', 'Profile?', 1],
+      ['Profile?', 'Profile', 0],
+      ['Profile?', 'Robot?', 1],
       ['Robot?', 'Robot', 0],
       ['Robot?', 'Button?', 1],
       ['Button?', 'Vacancy', 0],
@@ -2660,6 +2731,236 @@ const workflows = {
       { timezone: 'Europe/Moscow', errorWorkflow: IDS.errors, saveDataSuccessExecution: 'none' },
     );
   })(),
+
+  // Профиль (13.10.2026, docs/onboarding.md): резюме PDF → нейросеть → «Вот что я понял» → подпись, контакт, пояс →
+  // профиль в settings и первый сбор; потом ⚙️ → 👤 — правка полей, новое резюме, правка нейросетью.
+  'w11-profile': workflow(
+    IDS.profile,
+    'W11 Profile',
+    [
+      // Вызов из W3: { action: 'profile', op, field, value, text, file, chatId, queryId, messageId, … }
+      node('W11', 'Called by W3', 'executeWorkflowTrigger', 1.1, [0, -100], { inputSource: 'passthrough' }),
+      // Ручной запуск — панель профиля
+      node('W11', 'Manual', 'manualTrigger', 1, [0, 100], {}),
+      code('W11', 'Job', 'n8n/w11-profile/job.js', [220, 0]),
+      // Нажатие кнопки — сразу ответ (убрать «часики»): разбор резюме идёт секунды
+      node('W11', 'Answer?', 'if', 2.3, [440, -250], ifTrue('W11', '={{ Boolean($json.queryId) }}')),
+      answerQuery('W11', 'Answer', [660, -250], "={{ $('Job').first().json.queryId }}", '', { onError: 'continueRegularOutput' }),
+      settingsNode('W11', [440, 0]),
+      code('W11', 'Plan', 'n8n/w11-profile/plan.js', [660, 0]),
+      node('W11', 'Route', 'switch', 3.4, [880, 0], {
+        mode: 'expression',
+        numberOutputs: 3,
+        output: "={{ ({ pdf: 0, llm: 1, step: 2 })[$json.route] }}",
+        options: {},
+      }),
+      // Резюме PDF: «Читаю…» (станет панелью) → файл из Telegram → текст
+      telegram('W11', 'Reading', [1100, -400], { text: '📄 Читаю резюме…', fields: { disable_notification: true } }),
+      node(
+        'W11',
+        'Get file',
+        'telegram',
+        1.2,
+        [1320, -400],
+        { resource: 'file', operation: 'get', fileId: "={{ $('Job').first().json.file.id }}", download: true, additionalFields: {} },
+        { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
+      ),
+      node(
+        'W11',
+        'Extract PDF',
+        'extractFromFile',
+        1.1,
+        [1540, -400],
+        { operation: 'pdf', binaryPropertyName: 'data', options: { joinPages: true, maxPages: 10 } },
+        { onError: 'continueRegularOutput' },
+      ),
+      code('W11', 'PDF text', 'n8n/w11-profile/pdf-text.js', [1760, -400]),
+      node('W11', 'To LLM?', 'if', 2.3, [1980, -400], ifTrue('W11', '={{ $json.toLlm }}')),
+      // Нейросеть: разбор резюме или правка профиля по пожеланию — тот же провайдер, что для оценки
+      code('W11', 'Build extract', 'n8n/w11-profile/build-extract.js', [2200, -200]),
+      node('W11', 'Claude?', 'if', 2.3, [2420, -200], ifTrue('W11', "={{ $json.provider === 'claude' }}")),
+      node(
+        'W11',
+        'Claude',
+        'httpRequest',
+        4.5,
+        [2640, -300],
+        llmRequest({
+          url: 'https://api.anthropic.com/v1/messages',
+          credential: 'anthropicApi',
+          headers: [['anthropic-version', '2023-06-01']],
+          interval: 1000,
+        }),
+        { credentials: { anthropicApi: { id: IDS.claudeCredential, name: 'Claude' } }, onError: 'continueRegularOutput' },
+      ),
+      node(
+        'W11',
+        'Gemini',
+        'httpRequest',
+        4.5,
+        [2640, -100],
+        llmRequest({
+          url: '=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.model }}:generateContent',
+          credential: 'googlePalmApi',
+          interval: 1000,
+        }),
+        { credentials: { googlePalmApi: { id: IDS.geminiCredential, name: 'Gemini' } }, onError: 'continueRegularOutput' },
+      ),
+      code('W11', 'Parse profile', 'n8n/w11-profile/parse-profile.js', [2860, -200]),
+      node('W11', 'Parsed?', 'if', 2.3, [3080, -200], ifTrue('W11', '={{ $json.ok }}')),
+      // Офис или гибрид — город из резюме → регион hh (автоподсказка hh.ru)
+      node(
+        'W11',
+        'Area?',
+        'if',
+        2.3,
+        [3300, -300],
+        ifTrue('W11', "={{ $json.draft.facts.formats.some((f) => f !== 'REMOTE') && Boolean($json.draft.facts.city) && $json.draft.search.area?.name !== $json.draft.facts.city }}"),
+      ),
+      node(
+        'W11',
+        'Area lookup',
+        'httpRequest',
+        4.5,
+        [3520, -400],
+        {
+          method: 'GET',
+          url: 'https://hh.ru/autosuggest/multiprefix/v2',
+          sendQuery: true,
+          specifyQuery: 'keypair',
+          queryParameters: pairs([
+            ['d', 'areas_RU'],
+            ['q', '={{ $json.draft.facts.city }}'],
+          ]),
+          sendHeaders: true,
+          specifyHeaders: 'keypair',
+          headerParameters: pairs([BROWSER_HEADERS[0], ['Accept', 'application/json']]),
+          options: { timeout: 15000 },
+        },
+        { onError: 'continueRegularOutput' },
+      ),
+      code('W11', 'Area', 'n8n/w11-profile/area.js', [3740, -400]),
+      // Сколько вакансий за период найдёт hh по черновику — для «Вот что я понял»
+      code('W11', 'Estimate plan', 'n8n/w11-profile/estimate-plan.js', [3960, -300]),
+      node('W11', 'Estimate?', 'if', 2.3, [4180, -300], ifTrue('W11', '={{ !$json.none }}')),
+      node(
+        'W11',
+        'Estimate',
+        'httpRequest',
+        4.5,
+        [4400, -400],
+        hhRequest({ url: '={{ $json.url }}', headers: [...BROWSER_HEADERS, ['Referer', 'https://hh.ru/']], batching: true }),
+        { onError: 'continueRegularOutput' },
+      ),
+      code('W11', 'Estimate parse', 'n8n/w11-profile/estimate.js', [4620, -300]),
+      // Шаг: что показать, что сохранить, запускать ли первый сбор
+      code('W11', 'Step', 'n8n/w11-profile/step.js', [4840, 0]),
+      // Ветки «Step» по порядку (execution order v1, сверху вниз): сохранить → первый сбор → панель → вопрос → удалить
+      node('W11', 'Save?', 'if', 2.3, [5060, -500], ifTrue('W11', '={{ Boolean($json.save) }}')),
+      code('W11', 'Save rows', 'n8n/w11-profile/save-rows.js', [5280, -500]),
+      node('W11', 'Save profile', 'dataTable', 1.1, [5500, -500], {
+        resource: 'row',
+        operation: 'upsert',
+        dataTableId: SETTINGS_TABLE,
+        matchType: 'allConditions',
+        filters: { conditions: [{ keyName: 'name', keyValue: '={{ $json.name }}' }] },
+        columns: setColumns({ name: '={{ $json.name }}', value_json: '={{ $json.value_json }}' }),
+        options: {},
+      }),
+      code('W11', 'Collect job', 'n8n/w11-profile/collect-job.js', [5060, -350]),
+      runWorkflow('W11', 'Run W1', [5280, -350], IDS.collector),
+      code('W11', 'Render', 'n8n/w11-profile/render.js', [5060, 0]),
+      node('W11', 'Layout', 'switch', 3.4, [5280, 0], {
+        mode: 'expression',
+        numberOutputs: PROFILE_LAYOUTS.length * 2,
+        output: '={{ $json.route }}',
+        options: {},
+      }),
+      ...PROFILE_LAYOUTS.flatMap(([layout, rows], i) => [
+        telegram('W11', `New: ${layout}`, [5500, -900 + i * 300], {
+          fields: { disable_notification: true },
+          ...(rows && { markup: { replyMarkup: 'inlineKeyboard', inlineKeyboard: keyboard(rows) } }),
+        }),
+        // Правка панели: «message is not modified» (нажали то же самое) — не ошибка
+        editMessage(
+          `Edit: ${layout}`,
+          [5500, -750 + i * 300],
+          { chatId: '={{ $json.chatId }}', messageId: '={{ $json.messageId }}', text: '={{ $json.text }}', rows },
+          'W11',
+          { onError: 'continueRegularOutput' },
+        ),
+      ]),
+      code('W11', 'Remember', 'n8n/w11-profile/remember.js', [5720, 0]),
+      node('W11', 'Prompt?', 'if', 2.3, [5060, 300], ifTrue('W11', '={{ Boolean($json.prompt) }}')),
+      telegram('W11', 'Prompt', [5280, 300], {
+        text: '={{ $json.prompt }}',
+        fields: { disable_notification: true },
+        markup: { replyMarkup: 'forceReply', forceReply: { force_reply: true } },
+      }),
+      code('W11', 'Delete ids', 'n8n/w11-profile/delete-ids.js', [5060, 500]),
+      node(
+        'W11',
+        'Delete',
+        'telegram',
+        1.2,
+        [5280, 500],
+        { resource: 'message', operation: 'deleteMessage', chatId: '={{ $json.chatId }}', messageId: '={{ $json.messageId }}' },
+        { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
+      ),
+    ],
+    [
+      ['Called by W3', 'Job'],
+      ['Manual', 'Job'],
+      ['Job', 'Answer?'],
+      ['Answer?', 'Answer', 0],
+      ['Job', 'Settings'],
+      ['Settings', 'Plan'],
+      ['Plan', 'Route'],
+      ['Route', 'Reading', 0],
+      ['Route', 'Build extract', 1],
+      ['Route', 'Step', 2],
+      ['Reading', 'Get file'],
+      ['Get file', 'Extract PDF'],
+      ['Extract PDF', 'PDF text'],
+      ['PDF text', 'To LLM?'],
+      ['To LLM?', 'Build extract', 0],
+      ['To LLM?', 'Step', 1],
+      ['Build extract', 'Claude?'],
+      ['Claude?', 'Claude', 0],
+      ['Claude?', 'Gemini', 1],
+      ['Claude', 'Parse profile'],
+      ['Gemini', 'Parse profile'],
+      ['Parse profile', 'Parsed?'],
+      ['Parsed?', 'Area?', 0],
+      ['Parsed?', 'Step', 1],
+      ['Area?', 'Area lookup', 0],
+      ['Area?', 'Estimate plan', 1],
+      ['Area lookup', 'Area'],
+      ['Area', 'Estimate plan'],
+      ['Estimate plan', 'Estimate?'],
+      ['Estimate?', 'Estimate', 0],
+      ['Estimate?', 'Estimate parse', 1],
+      ['Estimate', 'Estimate parse'],
+      ['Estimate parse', 'Step'],
+      ['Step', 'Save?'],
+      ['Save?', 'Save rows', 0],
+      ['Save rows', 'Save profile'],
+      ['Step', 'Collect job'],
+      ['Collect job', 'Run W1'],
+      ['Step', 'Render'],
+      ['Render', 'Layout'],
+      ...PROFILE_LAYOUTS.flatMap(([layout], i) => [
+        ['Layout', `New: ${layout}`, i * 2],
+        ['Layout', `Edit: ${layout}`, i * 2 + 1],
+        [`New: ${layout}`, 'Remember'],
+      ]),
+      ['Step', 'Prompt?'],
+      ['Prompt?', 'Prompt', 0],
+      ['Step', 'Delete ids'],
+      ['Delete ids', 'Delete'],
+    ],
+    { errorWorkflow: IDS.errors },
+  ),
 
   'w4-errors': workflow(
     IDS.errors,
