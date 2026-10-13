@@ -9,6 +9,8 @@
 //   оценок нет  — «🔎 Сбор» одним живым сообщением без звука (live = true — следующее сообщение о сборе его заменит);
 //   тревоги     — отдельным сообщением.
 
+// @include n8n/shared/time.js
+
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const all = (name) => {
   try {
@@ -24,8 +26,7 @@ const report = String($input.first()?.json?.report ?? '');
 const results = all('Parse verdict');
 const sent = all('Send card');
 
-const thaiHour = (new Date().getUTCHours() + 7) % 24;
-const quiet = thaiHour >= 23 || thaiHour < 9;
+const quiet = quietHours();
 const messages = [];
 
 // Итог оценки; что отсеял фильтр W1 — в блоке «🔎 Сбор»

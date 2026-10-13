@@ -5,6 +5,8 @@
 //   [📝 Отклик на hh] [🔗 Вакансия] / [🔄 Переписать] [📨 Отправил]; robot (этап 6: робот включён в ⚙️, вакансия ✅ без
 //   теста и не на сайте работодателя) → «Send letter: robot» — ещё и [🚀 Откликнуться роботом] сверху.
 
+// @include n8n/shared/time.js
+
 // @include n8n/shared/card.js
 // @include n8n/shared/settings.js
 // @include n8n/shared/robot.js

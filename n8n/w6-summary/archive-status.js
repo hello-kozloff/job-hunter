@@ -5,6 +5,8 @@
 // Не ответила, капча и т. п. — не трогаем, проверим завтра.
 // Выход: только закрытые { id, tg_message_id, tg_letter_id, cardText, letterText } → карточка и письмо без кнопок.
 
+// @include n8n/shared/time.js
+
 // @include n8n/shared/card.js
 // @include n8n/shared/letter.js
 // @include n8n/shared/hh.js

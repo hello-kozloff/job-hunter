@@ -162,10 +162,14 @@ test('GROUP: у каждого исхода есть группа для n8n', (
   }
 });
 
-test('robotDayStart: «день» робота начинается в 09:00 по Таиланду (02:00 UTC)', () => {
-  assert.equal(robotDayStart(new Date('2026-10-11T05:00:00Z')).toISOString(), '2026-10-11T02:00:00.000Z');
-  assert.equal(robotDayStart(new Date('2026-10-11T01:59:00Z')).toISOString(), '2026-10-10T02:00:00.000Z');
-  assert.equal(robotDayStart(new Date('2026-10-11T02:00:00Z')).toISOString(), '2026-10-11T02:00:00.000Z');
+test('robotDayStart: «день» робота начинается в 09:00 по местному', () => {
+  // Бангкок (UTC+7): 09:00 = 02:00 UTC
+  assert.equal(robotDayStart(new Date('2026-10-11T05:00:00Z'), 'Asia/Bangkok').toISOString(), '2026-10-11T02:00:00.000Z');
+  assert.equal(robotDayStart(new Date('2026-10-11T01:59:00Z'), 'Asia/Bangkok').toISOString(), '2026-10-10T02:00:00.000Z');
+  assert.equal(robotDayStart(new Date('2026-10-11T02:00:00Z'), 'Asia/Bangkok').toISOString(), '2026-10-11T02:00:00.000Z');
+  // Москва (UTC+3): 09:00 = 06:00 UTC; Нью-Йорк летом (UTC−4): 09:00 = 13:00 UTC
+  assert.equal(robotDayStart(new Date('2026-10-11T05:00:00Z'), 'Europe/Moscow').toISOString(), '2026-10-10T06:00:00.000Z');
+  assert.equal(robotDayStart(new Date('2026-07-11T14:00:00Z'), 'America/New_York').toISOString(), '2026-07-11T13:00:00.000Z');
   assert.equal(stamp(new Date('2026-10-11T07:05:09.123Z')), '20261011-070509');
 });
 

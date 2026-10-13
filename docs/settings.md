@@ -36,7 +36,7 @@
 | `llm.cases` | Vue без React: maybe, fullstack: maybe, AI на JS/TS: apply, React Native: skip | список «случай: решение» (✏️) | W2 «Build prompt» |
 | `apply.enabled` | false | false · true | W5: письмо с [🚀 Откликнуться роботом]; W9: 🚀 при выключенном — тост и письмо без 🚀; выключили — очередь назад в ✅ (W7 «Robot kick» → W9 `dequeue`) |
 | `apply.paused` | false | false · true | W9: очередь копится, робот не отправляет; сняли паузу — W9 `tick` |
-| `apply.daily_limit` | 25 | 10 · 15 · 25 · 40 | W9 «Gate»: живых откликов робота в «день» (с 09:00 по Таиланду); сверху — потолок робота `APPLIER_DAILY_CAP=40` |
+| `apply.daily_limit` | 25 | 10 · 15 · 25 · 40 | W9 «Gate»: живых откликов робота в «день» (с 09:00 по местному); сверху — потолок робота `APPLIER_DAILY_CAP=40` |
 | `profile.*`, `llm.rules`, `letters.*` | — | профиль человека: резюме, факты, подпись, контакт, правила, образцы писем | W2, W5 — подробно в `docs/onboarding.md` |
 
 **Робот-отклик** (`apply.*`, этап 6, `docs/stages/stage-6.md`): раздел ⚙️ → 🚀 Робот — вкл/выкл, пауза, лимит в день и строка

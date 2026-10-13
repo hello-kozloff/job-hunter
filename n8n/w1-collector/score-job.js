@@ -8,6 +8,8 @@
 // W2 шлёт его одним живым сообщением без звука (прошлое удаляет) или ставит сверху итога «📊 Оценено»
 // (решения пользователя 07.10.2026).
 
+// @include n8n/shared/time.js
+
 // @include n8n/shared/settings.js
 
 // @include n8n/shared/search.js
@@ -32,9 +34,7 @@ const plural = (n, one, few, many) => {
   if (d === 1 && dd !== 11) return one;
   return d >= 2 && d <= 4 && (dd < 12 || dd > 14) ? few : many;
 };
-// Время: по Таиланду (UTC+7), в скобках — по Москве (UTC+3), как в меню W7
-const hhmm = (t, offset) => new Date(t + offset * 3600 * 1000).toISOString().slice(11, 16);
-const thaiMsk = (t) => `${hhmm(t, 7)} (${hhmm(t, 3)} МСК)`;
+// Время: по местному, в скобках — по Москве, как в меню W7 (n8n/shared/time.js)
 
 const plan = $('Plan').first().json;
 const search = $('Parse search').first().json;
@@ -84,13 +84,13 @@ const { words, filters } = describeSearch(settings);
 // Расписание — из настроек бота (⚙️ → 🕐 Сбор)
 const next = nextCollect(Date.now(), scheduleFrom(settings));
 const report = [
-  `🔎 Сбор ${thaiMsk(plan.startedAt ?? Date.now())} · ${fresh.length ? `новых ${fresh.length}` : 'новых нет'}`,
+  `🔎 Сбор ${localMsk(plan.startedAt ?? Date.now())} · ${fresh.length ? `новых ${fresh.length}` : 'новых нет'}`,
   requestLine,
   countLine,
   ...rejectedLines,
   `<blockquote expandable>${esc(words)}\n${esc(filters)}</blockquote>`,
   `🔗 <a href="${esc(searchUrl(requests[0]?.page ?? 0, settings))}">Открыть этот поиск на hh</a>`,
-  next ? `Следующий сбор ${thaiMsk(next)}` : '⏸ Сбор на паузе — дальше только «🔄 Собрать сейчас» в ⚙️ Настройках',
+  next ? `Следующий сбор ${localMsk(next)}` : '⏸ Сбор на паузе — дальше только «🔄 Собрать сейчас» в ⚙️ Настройках',
 ].join('\n');
 
 // Журнал сборов: запись из «Start run» и итог сбора

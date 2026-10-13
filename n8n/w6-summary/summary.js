@@ -1,9 +1,11 @@
-// W6 · Summary — утренняя сводка за сутки (10:00 по Таиланду = 06:00 МСК).
+// W6 · Summary — утренняя сводка за сутки: в 10:00 по местному её запускают «часы» W8 (13.10.2026).
 // Нода: Code, режим «Run Once for All Items». Выполняется последней (ветки выше — устаревшие и закрытые).
 // Вход: «All rows» (таблица до правок этого запуска), «Plan», «Expire rows» / «Archive status» (если были),
 //       «Runs» — журнал сборов W1, «Executions» — запуски n8n из публичного API (ошибки),
 //       «Robot health» — GET /health робота-отклика (этап 6), $input — «Tunnel» (проверка туннеля ngrok).
 // Выход: одно сообщение { text, silent }. Без звука, если сбоев нет (решение пользователя 07.10.2026).
+
+// @include n8n/shared/time.js
 
 // @include n8n/shared/settings.js
 
@@ -132,11 +134,11 @@ const robotLineText =
 if (robotOn) {
   const h = $('Robot health').first()?.json ?? {};
   if (!h.ok || h.error) problems.push('робот-отклик не отвечает');
-  else if (h.blocked) problems.push(`робот ждёт (${h.blocked.kind}) с ${new Date(at(h.blocked.since) + 7 * 3600 * 1000).toISOString().slice(11, 16)}`);
+  else if (h.blocked) problems.push(`робот ждёт (${h.blocked.kind}) с ${localHM(at(h.blocked.since))}`);
   else if (!h.loggedIn) problems.push('робот не вошёл в hh');
 }
 
-const date = new Date(now + 7 * 3600 * 1000).toISOString().slice(0, 10).split('-').reverse().slice(0, 2).join('.');
+const date = localDM(now);
 const lines = [
   `☀️ <b>Сводка за сутки</b> · ${date}`,
   `🔎 Новых вакансий: ${fresh.length} → фильтр отсеял ${rejected.length}${topReasons ? ` (${topReasons})` : ''}`,

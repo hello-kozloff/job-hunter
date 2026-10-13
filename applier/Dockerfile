@@ -4,7 +4,6 @@ FROM mcr.microsoft.com/playwright:v1.64.0-noble
 
 ENV DEBIAN_FRONTEND=noninteractive \
     DISPLAY=:99 \
-    TZ=Asia/Bangkok \
     LANG=ru_RU.UTF-8 \
     NODE_ENV=production \
     DATA_DIR=/data

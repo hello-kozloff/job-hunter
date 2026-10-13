@@ -25,7 +25,7 @@ function letterText(r) {
     !sent && !closed && r.robot_hint ? `🤖 Робот не откликается: ${esc(r.robot_hint)}` : '',
     !sent && !closed && r.has_test && r.apply_result !== 'test' && !r.robot_hint ? '📝 У вакансии тест — ответы в форме отклика на hh.' : '',
     sent
-      ? robot || `📨 Отклик отправлен${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}`
+      ? robot || `📨 Отклик отправлен${r.applied_at ? ` ${localDate(r.applied_at)}` : ''}`
       : closed
         ? '🔒 Вакансия закрыта на hh — отклик уже не отправить'
         : robot || '<i>Нажми на письмо — скопируется. Поправить — ответь на это сообщение.</i>',

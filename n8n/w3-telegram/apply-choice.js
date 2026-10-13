@@ -19,6 +19,8 @@
 //   keyboard: decided | choose | none (карточки нет или перерисовывать нечего).
 //   Вакансия в очереди робота (apply_state ≠ '', этап 6) — решение не меняется, тост «сначала ⛔ под письмом».
 
+// @include n8n/shared/time.js
+
 // @include n8n/shared/card.js
 
 const action = $('Route').first().json;

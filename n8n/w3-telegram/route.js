@@ -24,7 +24,8 @@
 
 // @include n8n/shared/menu.js
 
-const update = $input.first().json;
+// Обновление — из триггера: между ним и «Route» стоит «Settings» (часовой пояс)
+const update = $('Telegram Trigger').first().json;
 const allowed = String($env.TG_CHAT_ID ?? '');
 const ours = (chatId) => !allowed || String(chatId) === allowed;
 const panel = (fields) => [

@@ -2,6 +2,8 @@
 // Нода: Code, режим «Run Once for All Items». Вход: строки в очереди (apply_state = queued) из «Queued».
 // Выход: по item на вакансию: { id, chatId, messageId, layout: manual, text, url, apply_url } → «Unqueue all» и «View»
 
+// @include n8n/shared/time.js
+
 // @include n8n/shared/card.js
 // @include n8n/shared/robot.js
 // @include n8n/shared/letter.js

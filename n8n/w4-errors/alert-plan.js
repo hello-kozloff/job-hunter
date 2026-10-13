@@ -7,6 +7,8 @@
 //        → «Save repeat». Открытой считается тревога, которая повторялась последние 6 ч; закрывает её и
 //        успешный запуск того же workflow (W1, W2: «✅ снова работает»).
 
+// @include n8n/shared/time.js
+
 const HOLD = 6 * 3600 * 1000;
 const f = $('Format error').first().json;
 const nowMs = Date.now();
@@ -18,7 +20,6 @@ const open = $input
 
 if (!open) return [{ json: { repeat: false, text: f.text, key: f.key, workflow: f.workflow, message: f.message, now } }];
 
-const thai = (iso) => new Date(Date.parse(iso) + 7 * 3600 * 1000).toISOString().slice(11, 16);
 const hits = (open.hits || 1) + 1;
 return [
   {
@@ -28,7 +29,7 @@ return [
       tg_message_id: open.tg_message_id,
       hits,
       now,
-      text: `${f.text}\n\n🔁 Повторяется: ×${hits}, с ${thai(open.first_at)} до ${thai(now)} по Таиланду`,
+      text: `${f.text}\n\n🔁 Повторяется: ×${hits}, с ${localTime(open.first_at)} до ${localTime(now)} по местному`,
     },
   },
 ];
