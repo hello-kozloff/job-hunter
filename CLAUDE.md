@@ -150,6 +150,10 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 [W9 Robot]     🚀 под письмом → W3 → W9: очередь в колонке apply_state ('' → queued → applying), лимит дня, отклик через
                  applier (POST /apply), итог — правка письма и карточки; капча — фото в Telegram, ответ текстом; вход / сбои —
                  тревога с [▶️]; Schedule раз в минуту + вызов себя после успеха (docs/stages/stage-6.md → 6.1a)
+[W11 Profile]  онбординг (13.10.2026, docs/onboarding.md): резюме PDF в чат → W3 → W11: Telegram File → Extract From PDF
+                 → нейросеть (Gemini | Claude) → проверка → город (автоподсказка hh) → оценка объёма → «Вот что я понял»
+                 → подпись, контакт, пояс → профиль в settings, profile.ready, сразу W1; потом ⚙️ → 👤 Профиль: правка
+                 полей, новое резюме, правка нейросетью (предпросмотр); пока profile.ready = false — W8 не собирает
 [Страж]        healthchecks.io (OnCalendar = расписание сбора, grace = интервал днём + 20 мин; бот обновляет его через API
                  при смене расписания): W1 шлёт сигнал после поиска; нет сигнала → их бот пишет в Telegram
 ```
@@ -182,6 +186,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - chat_id — в `.env` как `TG_CHAT_ID`, в нодах `{{ $env.TG_CHAT_ID }}` (Variables в Community edition нет);
 - кнопки ловит W3 через Telegram Trigger (v1.5: проверяет секретный заголовок, Restrict to Chat IDs = TG_CHAT_ID). Публичный HTTPS → контейнер ngrok (`COMPOSE_PROFILES=tunnel`, `ngrok/policy.yml`), `WEBHOOK_URL=https://<NGROK_DOMAIN>/` (→ `N8N_WEBHOOK_URL`);
 - робот-отклик (этап 6): `l:<id>:robot` — 🚀, `l:<id>:stop` — ⛔, `rb:go` и `/go` — ▶️ после блока, ответ на фото капчи → W9; ⚙️ → 🚀 Робот (`s:apply`);
+- профиль (W11, 13.10.2026): `pf:view` (⚙️ → 👤), `pf:ok:<шаг>`, `pf:e:<поле>` (вопрос ForceReply), `pf:g:<m|f>`, `pf:tz:<IANA>`, `pf:new:<all|text|no>`, `pf:yes|no`; документ PDF в чате → W11; ответы на `PROFILE_PROMPTS` → W11;
 - callback_data кнопок: `v:<id строки>:<apply|maybe|skip|earlier|ban|edit>` — карточка (`ban` — «🚫 В ЧС»: компания в `blacklist`, вакансия — ❌ с причиной «чёрный список») (`earlier` — «📨 Уже откликался», 07.10.2026: status = applied без письма и `applied_at`, без «Почему?», вне теневого режима); `l:<id>:<redo|sent|unsent>` — письмо; панель меню (W7): `p:l:<tab>:<page>`, `p:s`, `p:x`, `p:n` («📋 К вакансиям» под отправленным письмом), `pv:<id>:<choice>:<tab>:<page>` (`score` — «🤖 На оценку» у отсеянной фильтром, 08.10.2026);
 - меню бота (07.10.2026, `docs/bot-menu.md`): кнопки под полем ввода `[📋 Вакансии] [📊 Статистика]` (ставит `/start`), одна живая панель — нажатие пользователя и прошлая панель удаляются, листание правит панель на месте;
 - тихие часы: 23:00–09:00 по местному (пояс человека `profile.tz`, у владельца — Таиланд; `n8n/shared/time.js`) — карточки и сводка без звука (`disable_notification`), тревоги со звуком;
@@ -295,7 +300,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 | 4. Письмо ✅ (параллельно с теневым режимом этапа 3) | W5 Letter по ✅: письмо → копирование → «📝 Отклик на hh» → «📨 Отправил» (`docs/stages/stage-4.md`). 07.10.2026 работает на живых нажатиях: ✅ → письмо, правка ответом, «🔄», «📨 Отправил» / «↩️ Отменить» (пользователь: «всё остальное идеально работает»); промпт поправлен по замечаниям (фраза об интересе, «готов погрузиться» в известные технологии) | **MVP: полуавтомат A** |
 | 5. Мониторинг ✅ | W6 Summary + страж healthchecks.io (`docs/stages/stage-5.md`). 07.10.2026: ручной прогон — сводка пришла, 14 хвостов проверены на hh, туннель 403 ✓; W1 шлёт сигнал стражу (ответ `OK`) | Сводка каждое утро, страж ловит простои |
 | **6. Робот-отклик** (6.2 — после «Установки для всех») | 🚀 под письмом → робот (Playwright, `applier/`) откликается сам; статусы откликов и чаты HR (`docs/stages/stage-6.md`). 6.0 ✅ (10.10.2026): сервис, вход, разведка, запись, сухой прогон; 6.1a ✅ (11.10.2026): 🚀 и W9 проверены вживую на фейковом роботе; 6.1b ✅ (12.10.2026): 3 живых отклика, письмо приложено, релиз v2026.10.12; дальше 6.2 — W10 Inbox | Отклик без ручных шагов, чаты HR в Telegram |
-| **Установка для всех** ← **ТЕКУЩИЙ** (13.10.2026, до 6.2) | Мастер установки, резюме PDF в боте, любые профессии (`docs/onboarding.md`). Части: A ✅ профиль в `settings` вместо файлов (промпты владельца — до символа, `prompt_v` прежний) → B часовой пояс → C поиск и фильтр под любую профессию → D онбординг W11 → E мастер → F чистая установка рядом и релиз | Чужой человек ставит одной командой, присылает PDF — и получает карточки под свою профессию |
+| **Установка для всех** ← **ТЕКУЩИЙ** (13.10.2026, до 6.2) | Мастер установки, резюме PDF в боте, любые профессии (`docs/onboarding.md`). Части: A ✅ профиль в `settings` вместо файлов (промпты владельца — до символа, `prompt_v` прежний) → B ✅ часовой пояс (W6 через W8) → C ✅ поиск и фильтр под любую профессию → D ✅ онбординг W11 → E мастер → F чистая установка рядом и релиз | Чужой человек ставит одной командой, присылает PDF — и получает карточки под свою профессию |
 | 7. Веб-формы | LLM-сопоставление полей + Playwright | Меньше `needs_human` |
 | 8. Другие источники | Habr Карьера и др. | Больше вакансий |
 
@@ -355,10 +360,12 @@ n8n/w3-telegram/*.js                код Code-нод W3 (кнопки, «По�
 n8n/w5-letter/*.js                  код Code-нод W5 (промпт письма, разбор, сообщение)
 n8n/w6-summary/*.js                 код Code-нод W6 (устаревшие, закрытые на hh, сводка)
 n8n/w7-menu/*.js                    код Code-нод W7 (меню бота: список, карточка, статистика, настройки)
-n8n/w8-clock/*.js                   код Code-нод W8 («часы» сбора)
+n8n/w8-clock/*.js                   код Code-нод W8 («часы» сбора и утренней сводки)
 n8n/w9-robot/*.js                   код Code-нод W9 (робот-отклик: план 🚀/⛔, ворота очереди, исход, капча, блоки)
+n8n/w11-profile/*.js                код Code-нод W11 (онбординг: PDF → нейросеть → профиль; ⚙️ → 👤)
 n8n/shared/*.js                     общий код Code-нод (карточка, письмо, разбор страницы hh, меню, расписание W1, робот-отклик,
-                                    поисковый запрос hh, признак AI-вакансии),
+                                    поисковый запрос hh, признак AI-вакансии, время человека time.js, профиль profile.js,
+                                    справочник ролей hh hh-roles.js),
                                     подключается строкой // @include
 n8n/w4-errors/*.js                  код Code-нод W4
 n8n/schema.mjs                      схема таблиц vacancies и blacklist
@@ -371,6 +378,7 @@ scripts/n8n-api.mjs                 владелец, запуск/публик�
                                     правилом после его правки), api-key
 scripts/credentials.mjs             JSON credentials Telegram / Gemini / Claude из .env (только через pipe)
 scripts/run-code-node.mjs           прогон Code-ноды на фикстурах без n8n (--ref, --env, --static)
+scripts/hh-roles.mjs                справочник ролей hh из страницы поиска → n8n/shared/hh-roles.js
 scripts/applier.mjs                 CLI робота-отклика: status, login, recon, record, apply (сухой), resume, shot
 applier/                            робот-отклик (этап 6): Dockerfile, src/ (server, browser, store, hh/, flows/), test/
 scripts/lib/code.mjs                чтение кода Code-ноды с раскрытием // @include
@@ -394,6 +402,7 @@ Workflow в n8n (постоянные id):
 | `jobHunterW7Menu1` | W7 Bot menu | меню бота: список вакансий, карточка с решением, статистика (вызывает W3; Manual — приветствие с кнопками) |
 | `jobHunterW8Clock` | W8 Clock | «часы» сбора: каждые 15 мин решают по настройкам бота, пора ли запускать W1 |
 | `jobHunterW9Robot` | W9 Robot | робот-отклик: очередь 🚀, отклик через applier, капча и блоки (вызывают W3 и W7; Schedule раз в минуту) |
+| `jobHunterW11Prof` | W11 Profile | профиль: онбординг по резюме PDF, ⚙️ → 👤 (вызывает W3) |
 
 Credentials: `jobHunterTgBot01` «Telegram bot», `jobHunterGemini1` «Gemini», `jobHunterClaude1` «Claude», `jobHunterN8nApi1` «n8n API» (ключ публичного API, создаёт `n8n-api.mjs api-key`), `jobHunterHcApi01` «healthchecks API» (`HC_API_KEY`, если есть в `.env`), `jobHunterApplier` «Applier» (`APPLIER_TOKEN` — заголовок `X-Applier-Token` к роботу-отклику).
 

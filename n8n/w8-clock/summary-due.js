@@ -7,6 +7,8 @@
 
 // @include n8n/shared/time.js
 
+// @include n8n/shared/settings.js
+
 const SUMMARY_HOUR = 10;
 const state = $getWorkflowStaticData('global');
 const now = Date.now();
@@ -18,6 +20,7 @@ if (state.summaryDay === undefined) {
   state.summaryDay = due ? day : '';
   return [];
 }
-if (!due || state.summaryDay === day) return [];
+// Профиля ещё нет — сводки нет (сводку за этот день пришлём, как только онбординг закончится и наступит 10:00)
+if (!due || state.summaryDay === day || !loadSettings($('Settings').all())['profile.ready']) return [];
 state.summaryDay = day;
 return [{ json: { kind: 'summary' } }];
