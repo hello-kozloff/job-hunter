@@ -60,6 +60,24 @@ const SETTINGS = {
   'apply.enabled': { default: false, options: [false, true] },
   'apply.paused': { default: false, options: [false, true] },
   'apply.daily_limit': { default: 25, options: [10, 15, 25, 40] },
+  // Профиль (13.10.2026, docs/onboarding.md): резюме и факты о человеке. Пишет онбординг W11 (резюме PDF в боте)
+  // или импорт (node scripts/n8n-api.mjs profile-import). Умолчания — поведение до онбординга: онбординг
+  // записывает все свои строки явно. Пресет frontend — откалиброванные правила владельца в коде (W2, W5)
+  'profile.ready': { default: false, options: [false, true] },
+  'profile.preset': { default: 'generic', options: ['generic', 'frontend'] },
+  'profile.resume': { default: '', text: 30000 },
+  'profile.extra': { default: '', text: 4000 },
+  // Факты из резюме (имя и его родительный падеж, должность, компании, пол — только если указан в резюме…)
+  'profile.facts': { default: {}, object: true },
+  // Строки «О кандидате» промпта W2
+  'profile.about': { default: [], lines: 400 },
+  'profile.signature': { default: '', text: 60 },
+  'profile.contact': { default: '', text: 160 },
+  // Правила оценки пресета generic — из резюме (W11): { skip, maybe, apply, ignore, notes } — списки строк
+  'llm.rules': { default: {}, rules: true },
+  // Письма (W5): свои образцы и замена разделов промпта { intro, facts, style } (у владельца — из импорта)
+  'letters.examples': { default: '', text: 4000 },
+  'letters.prompt': { default: {}, object: true },
 };
 
 // Встроенные спорные случаи промпта W2: как узнать их в списке пользователя, решение по умолчанию
@@ -131,7 +149,30 @@ function validSetting(spec, value) {
       value.every((c) => CASE_RE.test(c?.case ?? '') && ['apply', 'maybe', 'skip'].includes(c?.decision))
     );
   }
+  if (spec.text) return typeof value === 'string' && value.length <= spec.text;
+  if (spec.lines) return validLines(value, spec.lines);
+  if (spec.object) return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  if (spec.rules) {
+    return (
+      Boolean(value) &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      Object.entries(value).every(([key, lines]) => RULE_KEYS.includes(key) && validLines(lines, 400))
+    );
+  }
   return false;
+}
+
+// Разделы правил оценки (llm.rules) и список строк: до 20 строк, каждая — до max знаков
+const RULE_KEYS = ['skip', 'maybe', 'apply', 'ignore', 'notes'];
+const validLines = (lines, max) =>
+  Array.isArray(lines) && lines.length <= 20 && lines.every((l) => typeof l === 'string' && l.length <= max);
+
+// Текст резюме для промптов W2 и W5: резюме и «Дополнительно» (то, что человек дописал сам) — своим разделом
+function resumeText(s) {
+  const resume = String(s['profile.resume'] ?? '').trim();
+  const extra = String(s['profile.extra'] ?? '').trim();
+  return extra ? `${resume}\n\n## Дополнительно\n${extra}` : resume;
 }
 
 // Спорный случай: 2–80 знаков, без угловых скобок и обратных кавычек

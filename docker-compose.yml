@@ -42,9 +42,8 @@ services:
       - n8n_data:/home/node/.n8n
       # Файловые ноды n8n 2.x видят только ~/.n8n-files.
       # Сюда W1 сохраняет HTML, если парсер сломался.
+      # Резюме и образцы писем с 13.10.2026 — в таблице settings (профиль), не в файлах
       - ./fixtures:/home/node/.n8n-files/fixtures
-      # Резюме для промпта W2 (docs/resume.md), только чтение
-      - ./docs:/home/node/.n8n-files/docs:ro
 
   # Туннель для кнопок Telegram (W3): https://<NGROK_DOMAIN>/webhook/* → n8n.
   # Включается строкой COMPOSE_PROFILES=tunnel в .env; там же NGROK_AUTHTOKEN, NGROK_DOMAIN
