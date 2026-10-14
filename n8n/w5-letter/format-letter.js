@@ -1,7 +1,7 @@
 // W5 · Format letter — сообщение с письмом для Telegram (Parse Mode = HTML), ответом на карточку.
 // Нода: Code, режим «Run Once for All Items».
 // Вход: «Parse letter»; задание — из «Jobs», вакансия — из «Vacancy».
-// Выход: { id, ok, mode, letter, instruction, text, replyTo, apply_url, url, letter_notes, robot } → «Send letter» с кнопками
+// Выход: { id, ok, mode, same, letter, instruction, text, replyTo, apply_url, url, letter_notes, robot } → «Send letter» с кнопками
 //   [📝 Отклик на hh] [🔗 Вакансия] / [🔄 Переписать] [📨 Отправил] / [↩️ Отменить отклик]; robot (этап 6: робот включён в ⚙️, вакансия ✅ без
 //   теста и не на сайте работодателя) → «Send letter: robot» — ещё и [🚀 Откликнуться роботом] сверху.
 
@@ -35,6 +35,8 @@ return $input.all().map((item) => {
       id: r.id,
       ok: r.ok,
       mode: r.mode,
+      // Нейросеть повторилась (Parse letter) — предупреждение в тексте письма
+      same: r.same ?? '',
       letter: r.letter ?? '',
       instruction: job.instruction ?? '',
       // Новое письмо — новая отметка об отклике не нужна: строка остаётся approved
