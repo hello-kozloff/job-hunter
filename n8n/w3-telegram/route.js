@@ -6,7 +6,8 @@
 //      callback_data = pv:<id>:<choice>:<tab>:<page> — в карточке на панели меню (W7; score — «🤖 На оценку» у отсеянной):
 //      panel = { messageId, tab, page } — панель перерисуется после решения.
 //   { action: 'letter', id, op, queryId, chatId, messageId } — кнопка под письмом (W5):
-//      callback_data = l:<id строки>:<redo|sent|unsent>; messageId — сообщение с письмом.
+//      callback_data = l:<id строки>:<redo|sent|unsent|cancel>; messageId — сообщение с письмом;
+//      cancel — «↩️ Отменить отклик» (14.10.2026): вакансия снова ждёт решения.
 //   { action: 'robot', op, id, queryId, chatId, messageId, text, promptId, userMessageId } — робот-отклик (этап 6) →
 //      W9 Robot: l:<id>:robot — 🚀 (op enqueue), l:<id>:stop — ⛔ (op stop), rb:go и команда /go — ▶️ после блока
 //      (op resume), ответ на фото капчи (подпись начинается с ROBOT_PROMPTS.captcha) — op captcha, text — ответ.
@@ -85,7 +86,7 @@ if (cb) {
   }
   if (data === 'rb:go') return [{ json: { action: 'robot', op: 'resume', id: 0, ...pressed } }];
 
-  const letter = data.match(/^l:(\d+):(redo|sent|unsent)$/);
+  const letter = data.match(/^l:(\d+):(redo|sent|unsent|cancel)$/);
   if (letter) {
     return [{ json: { action: 'letter', id: Number(letter[1]), op: letter[2], ...pressed } }];
   }

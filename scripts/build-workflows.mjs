@@ -543,9 +543,10 @@ const PROFILE_LAYOUTS = [
   ['pf plain', null],
 ];
 
-// W3: состояние после нажатия кнопки, которое посчитали ноды «Apply choice» и «Apply sent»
+// W3: состояние после нажатия кнопки, которое посчитали ноды «Apply choice», «Apply sent» и «Apply cancel»
 const CHOICE = "$('Apply choice').first().json";
 const SENT = "$('Apply sent').first().json";
+const CANCEL = "$('Apply cancel').first().json";
 
 // Перерисовать сообщение в чате TG_CHAT_ID без кнопок (W6: устаревшие и закрытые карточки и письма).
 // onError = continue: сообщение могли удалить — запись в таблицу важнее
@@ -657,7 +658,22 @@ const editCard = (name, position, rows, src = CHOICE, messageId = 'messageId') =
     rows,
   });
 
-// Кнопки под письмом (W5 «Send letter», W3 «Letter: restore»). src — выражение с id, apply_url, url
+// Кнопки выбора на карточке (W2 «Send card», W3 «Card: choose» и «Card: reset»). src — выражение с id.
+// «📨 Уже откликался» — откликался до бота: без письма, вне теневого режима. «🚫 В ЧС» — компания в чёрный список, вакансия — ❌
+const cardButtons = (src) => [
+  [
+    ['✅ Откликнусь', `=v:{{ ${src}.id }}:apply`],
+    ['🤔 Возможно', `=v:{{ ${src}.id }}:maybe`],
+    ['❌ Мимо', `=v:{{ ${src}.id }}:skip`],
+  ],
+  [
+    ['📨 Уже откликался', `=v:{{ ${src}.id }}:earlier`],
+    ['🚫 В ЧС', `=v:{{ ${src}.id }}:ban`],
+  ],
+];
+
+// Кнопки под письмом (W5 «Send letter», W3 «Letter: restore», W9 «Letter: robot|manual»). src — выражение с id, apply_url, url.
+// «↩️ Отменить отклик» (14.10.2026) — вакансия снова ждёт решения (W3 «Apply cancel»)
 const letterButtons = (src) => [
   [
     ['📝 Отклик на hh', { url: `={{ ${src}.apply_url }}` }],
@@ -667,6 +683,7 @@ const letterButtons = (src) => [
     ['🔄 Переписать', `=l:{{ ${src}.id }}:redo`],
     ['📨 Отправил', `=l:{{ ${src}.id }}:sent`],
   ],
+  [['↩️ Отменить отклик', `=l:{{ ${src}.id }}:cancel`]],
 ];
 
 // ---------- Робот-отклик (этап 6, docs/stages/stage-6.md) ----------
@@ -1124,18 +1141,7 @@ const workflows = {
       telegram('W2', 'Send card', [2200, -100], {
         markup: {
           replyMarkup: 'inlineKeyboard',
-          inlineKeyboard: keyboard([
-            [
-              ['✅ Откликнусь', '=v:{{ $json.id }}:apply'],
-              ['🤔 Возможно', '=v:{{ $json.id }}:maybe'],
-              ['❌ Мимо', '=v:{{ $json.id }}:skip'],
-            ],
-            // Откликался до бота: без письма, вне теневого режима. «🚫 В ЧС» — компания в чёрный список, вакансия — ❌
-            [
-              ['📨 Уже откликался', '=v:{{ $json.id }}:earlier'],
-              ['🚫 В ЧС', '=v:{{ $json.id }}:ban'],
-            ],
-          ]),
+          inlineKeyboard: keyboard(cardButtons('$json')),
         },
         fields: { disable_notification: '={{ $json.silent }}' },
         // Ошибка одной карточки не должна терять остальные: Card sent запишет только отправленные
@@ -1413,17 +1419,7 @@ const workflows = {
       editCard('Card: decided', [1760, -200], [[['↩️ Изменить', `=v:{{ ${CHOICE}.id }}:edit`]]]),
       // keyboard = none (🤖 На оценку, закрыта на hh) — перерисовывать нечего
       node('W3', 'Choose?', 'if', 2.3, [1650, 0], ifTrue('W3', `={{ ${CHOICE}.keyboard === 'choose' }}`)),
-      editCard('Card: choose', [1760, 0], [
-        [
-          ['✅ Откликнусь', `=v:{{ ${CHOICE}.id }}:apply`],
-          ['🤔 Возможно', `=v:{{ ${CHOICE}.id }}:maybe`],
-          ['❌ Мимо', `=v:{{ ${CHOICE}.id }}:skip`],
-        ],
-        [
-          ['📨 Уже откликался', `=v:{{ ${CHOICE}.id }}:earlier`],
-          ['🚫 В ЧС', `=v:{{ ${CHOICE}.id }}:ban`],
-        ],
-      ]),
+      editCard('Card: choose', [1760, 0], cardButtons(CHOICE)),
       node('W3', 'Ask?', 'if', 2.3, [1980, -200], ifTrue('W3', `={{ Boolean(${CHOICE}.ask) }}`)),
       telegram('W3', 'Ask why', [2200, -200], {
         text: `={{ ${CHOICE}.ask }}`,
@@ -1443,7 +1439,7 @@ const workflows = {
       }),
       // ✅ и письма ещё нет → письмо (W5). Ветка ниже «Ask?»: вопрос «почему?» уходит первым
       node('W3', 'Letter?', 'if', 2.3, [1980, -50], ifTrue('W3', `={{ ${CHOICE}.need_letter }}`)),
-      // Кнопки под письмом: «🔄 Переписать» и «📨 Отправил»
+      // Кнопки под письмом: «🔄 Переписать», «📨 Отправил» / «↩️ Отменить», «↩️ Отменить отклик»
       node('W3', 'Letter button?', 'if', 2.3, [660, 250], ifTrue('W3', "={{ $json.action === 'letter' }}")),
       node('W3', 'Redo?', 'if', 2.3, [880, 200], ifTrue('W3', "={{ $json.op === 'redo' }}")),
       answerQuery('W3', 'Answer redo', [1100, 150], "={{ $('Route').first().json.queryId }}", '✍️ Пишу новый вариант…'),
@@ -1507,6 +1503,54 @@ const workflows = {
         text: `={{ ${SENT}.cardText }}`,
         rows: [[['↩️ Изменить', `=v:{{ ${SENT}.id }}:edit`]]],
       }),
+      // «↩️ Отменить отклик» (14.10.2026): вакансия снова ждёт решения. Своя ветка — путь «📨 Отправил» / «↩️ Отменить»
+      // не трогаем (Save sent не пишет письмо и решение)
+      node('W3', 'Cancel?', 'if', 2.3, [1210, 300], ifTrue('W3', "={{ $('Route').first().json.op === 'cancel' }}")),
+      code('W3', 'Apply cancel', 'n8n/w3-telegram/apply-cancel.js', [1320, 1150]),
+      // Тост до записи: при отказе (робот в работе, письмо пишется, отклик отправлен) больше ничего не делаем
+      answerQuery('W3', 'Answer cancel', [1540, 1150], `={{ ${CANCEL}.queryId }}`, `={{ ${CANCEL}.toast }}`),
+      node('W3', 'Cancel ok?', 'if', 2.3, [1760, 1150], ifTrue('W3', `={{ ${CANCEL}.ok }}`)),
+      // Решение и «Почему?» сброшены, письмо забыто (✅ снова — новое письмо), 3 дня до «⌛ устарела» — заново.
+      // tg_letter_id и tg_ask_id — числа: «пусто» = 0 (так их уже читают W5 «Old letters», W6 и W9)
+      node('W3', 'Save cancel', 'dataTable', 1.1, [1980, 1150], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        ...byId(`={{ ${CANCEL}.id }}`),
+        columns: setColumns({
+          status: 'waiting',
+          my_decision: '',
+          my_reason: '',
+          tg_ask_id: '={{ 0 }}',
+          letter: '',
+          tg_letter_id: '={{ 0 }}',
+          card_at: '={{ new Date().toISOString() }}',
+        }),
+        options: {},
+      }),
+      editW3('Card: reset', [2200, 1150], {
+        chatId: `={{ ${CANCEL}.chatId }}`,
+        messageId: `={{ ${CANCEL}.cardId }}`,
+        text: `={{ ${CANCEL}.cardText }}`,
+        rows: cardButtons(CANCEL),
+      }),
+      // Сначала письмо без кнопок, потом удаление: старше 48 ч Telegram удалить не даст — останется без кнопок
+      editW3('Letter: cancelled', [2420, 1150], {
+        chatId: `={{ ${CANCEL}.chatId }}`,
+        messageId: `={{ ${CANCEL}.letterMessageId }}`,
+        text: `={{ ${CANCEL}.letterText }}`,
+        rows: null,
+      }),
+      code('W3', 'Cancel ids', 'n8n/w3-telegram/cancel-ids.js', [2640, 1150]),
+      node(
+        'W3',
+        'Delete cancelled',
+        'telegram',
+        1.2,
+        [2860, 1150],
+        { resource: 'message', operation: 'deleteMessage', chatId: '={{ $env.TG_CHAT_ID }}', messageId: '={{ $json.messageId }}' },
+        { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
+      ),
       // Решение на карточке в ленте, отклик отправлен или отменён — обновить панель меню,
       // если на ней открыта эта вакансия (W7)
       code('W3', 'Sync job', 'n8n/w3-telegram/sync-job.js', [2640, 325]),
@@ -1672,7 +1716,17 @@ const workflows = {
       ['Redo?', 'Answer redo', 0],
       ['Answer redo', 'Letter job'],
       ['Redo?', 'Sent row', 1],
-      ['Sent row', 'Apply sent'],
+      ['Sent row', 'Cancel?'],
+      ['Cancel?', 'Apply cancel', 0],
+      ['Apply cancel', 'Answer cancel'],
+      ['Answer cancel', 'Cancel ok?'],
+      ['Cancel ok?', 'Save cancel', 0],
+      ['Save cancel', 'Card: reset'],
+      ['Card: reset', 'Letter: cancelled'],
+      ['Letter: cancelled', 'Cancel ids'],
+      ['Cancel ids', 'Delete cancelled'],
+      ['Delete cancelled', 'Sync job'],
+      ['Cancel?', 'Apply sent', 1],
       ['Apply sent', 'Save sent'],
       ['Save sent', 'Answer sent'],
       ['Answer sent', 'Busy sent?'],

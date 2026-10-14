@@ -2514,6 +2514,18 @@
                   }
                 ]
               }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "↩️ Отменить отклик",
+                    "additionalFields": {
+                      "callback_data": "=l:{{ $json.id }}:cancel"
+                    }
+                  }
+                ]
+              }
             }
           ]
         },
@@ -2580,6 +2592,18 @@
                     "text": "📨 Отправил",
                     "additionalFields": {
                       "callback_data": "=l:{{ $json.id }}:sent"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "↩️ Отменить отклик",
+                    "additionalFields": {
+                      "callback_data": "=l:{{ $json.id }}:cancel"
                     }
                   }
                 ]
