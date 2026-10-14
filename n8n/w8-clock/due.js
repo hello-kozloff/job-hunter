@@ -10,12 +10,14 @@
 
 // @include n8n/shared/schedule.js
 
-const sch = scheduleFrom(loadSettings($('Settings').all()));
+const s = loadSettings($('Settings').all());
+const sch = scheduleFrom(s);
 const state = $getWorkflowStaticData('global');
 const now = Date.now();
 // Первый тик после деплоя смотрит на шаг назад — слот этого тика не потеряется
 const since = state.dispatchedAt ?? now - COLLECT_STEP;
-if (sch.paused || !countCollectSlots(since, now, sch)) return [];
+// Профиля ещё нет (резюме не прислали) — искать нечего (13.10.2026)
+if (!s['profile.ready'] || sch.paused || !countCollectSlots(since, now, sch)) return [];
 
 state.dispatchedAt = now;
 // Тик опаздывает на секунды: слот этого тика — значит вовремя

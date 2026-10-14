@@ -7,6 +7,8 @@
 //   unsent — status = approved; письму возвращаются все кнопки (с 🚀, если подходит роботу), карточке — «↩️ Изменить».
 //   busy — вакансия в очереди робота (этап 6): ничего не меняем, только тост. «📨 Отправил» пишет apply_by = me.
 
+// @include n8n/shared/time.js
+
 // @include n8n/shared/card.js
 // @include n8n/shared/robot.js
 // @include n8n/shared/letter.js

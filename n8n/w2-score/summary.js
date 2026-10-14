@@ -9,6 +9,8 @@
 //   оценок нет  — «🔎 Сбор» одним живым сообщением без звука (live = true — следующее сообщение о сборе его заменит);
 //   тревоги     — отдельным сообщением.
 
+// @include n8n/shared/time.js
+
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const all = (name) => {
   try {
@@ -24,13 +26,46 @@ const report = String($input.first()?.json?.report ?? '');
 const results = all('Parse verdict');
 const sent = all('Send card');
 
-const thaiHour = (new Date().getUTCHours() + 7) % 24;
-const quiet = thaiHour >= 23 || thaiHour < 9;
+const quiet = quietHours();
 const messages = [];
+
+// Первый поиск после онбординга (profile.first_quiet, 14.10.2026): без карточек и без блока «🔎 Сбор» — одно живое
+// сообщение с прогрессом и итог в конце. Оценки копятся в static data (first)
+// Флаг — из «Quiet flag» (своя ветка выше: «Settings» не выполняется, если оценивать нечего)
+const firstQuiet = all('Quiet flag').some((r) => r.name === 'profile.first_quiet' && r.value_json === 'true');
+const claimed = all('Claim').length;
 
 // Итог оценки; что отсеял фильтр W1 — в блоке «🔎 Сбор»
 const scored = results.filter((r) => r.outcome === 'scored');
-if (scored.length) {
+const state = $getWorkflowStaticData('global');
+if (firstQuiet) {
+  const f = (state.first ??= { apply: 0, maybe: 0, skip: 0, n: 0 });
+  for (const r of scored) {
+    f.n += 1;
+    if (f[r.decision] !== undefined) f[r.decision] += 1;
+  }
+  // Pending берёт до 40 за запуск: полная пачка — вероятно, есть ещё; меньше — это была последняя
+  if (claimed >= 40) {
+    messages.push({ text: `⏳ Идёт первый поиск: оценено ${f.n}, продолжаю… Карточки по одной не шлю — пришлю итог.`, silent: true, report: true, live: true, again: true });
+  } else {
+    // Захвачены, но не сохранены (429, 503 и т. п.) — «Release» (ветка ниже) вернёт их в очередь
+    const left = claimed - all('First save').length - all('Quiet skips').length;
+    messages.push({
+      text: [
+        `✅ <b>Первый поиск готов</b>: оценено ${f.n} — 🟢 ${f.apply} подходят · 🟡 ${f.maybe} спорно · 🔴 ${f.skip} мимо.`,
+        left ? `Ещё ${left} не успел оценить (ошибка нейросети) — оценю в следующие сборы.` : '',
+        'Все вакансии — в 📋 Вакансии → ⏳ Ждут решения. Дальше новые будут приходить карточками.',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+      silent: false,
+      report: true,
+      live: false,
+      done: true,
+    });
+    delete state.first;
+  }
+} else if (scored.length) {
   const count = (d) => scored.filter((r) => r.decision === d).length;
   const parts = [`🟢 ${count('apply')}`, `🟡 ${count('maybe')}`, `🔴 ${count('skip')}`];
   if (count('error')) parts.push(`⚠️ ${count('error')}`);

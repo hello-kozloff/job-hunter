@@ -1,6 +1,6 @@
 // Общий код карточки вакансии в Telegram: W2 «Format card» и W3 «Apply choice».
 // В Code-ноду попадает при сборке: строка «// @include n8n/shared/card.js» заменяется этим файлом
-// (scripts/build-workflows.mjs, scripts/run-code-node.mjs).
+// (scripts/build-workflows.mjs, scripts/run-code-node.mjs). Раньше него — n8n/shared/time.js (localDate).
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -42,9 +42,6 @@ function published(s) {
   return m ? `${m[2]}.${m[1]}` : '';
 }
 
-// Момент в UTC (applied_at) → дата по Таиланду (UTC+7): '2026-10-06T21:17:55Z' → '07.10'
-const thaiDate = (iso) => (Date.parse(iso) ? published(new Date(Date.parse(iso) + 7 * 3600 * 1000).toISOString()) : '');
-
 // Итоговые состояния без кнопок: W3 «📨 Отправил», W6 «⌛ устарела» и «🔒 закрыта на hh»
 const FINAL = { expired: '⌛ Устарела: 3 дня без решения', archived: '🔒 Вакансия закрыта на hh' };
 
@@ -75,7 +72,7 @@ function cardText(r) {
   // Робот (этап 6): «🚀 … роботом»; нашёлся на hh без «📨 Отправил» (6.2) — «📨 … на hh»
   const who = r.apply_by === 'robot' ? '🚀 Отклик отправлен роботом' : r.apply_by === 'hh' ? '📨 Отклик есть на hh' : '📨 Отклик отправлен';
   const sent =
-    r.status === 'applied' && r.my_decision !== 'earlier' ? `${who}${r.applied_at ? ` ${thaiDate(r.applied_at)}` : ''}` : '';
+    r.status === 'applied' && r.my_decision !== 'earlier' ? `${who}${r.applied_at ? ` ${localDate(r.applied_at)}` : ''}` : '';
   return [`<a href="${r.url}"><b>${esc(r.title)}</b></a>`, meta, flags, verdict, mine, sent, FINAL[r.status] ?? '']
     .filter(Boolean)
     .join('\n');

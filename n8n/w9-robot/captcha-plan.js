@@ -6,6 +6,8 @@
 //   сообщение (с кнопками меню — ForceReply их спрятал), дальше очередь; не подошла — новое фото капчи (notice → те же
 //   ноды, что у «Gate»).
 
+// @include n8n/shared/time.js
+
 // @include n8n/shared/card.js
 // @include n8n/shared/robot.js
 // @include n8n/shared/menu.js

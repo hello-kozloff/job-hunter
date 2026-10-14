@@ -1,5 +1,5 @@
 // W7 · Render — раздел «⚙️ Настройки» панели меню (07.10.2026). Подключается в render.js строкой
-// «// @include n8n/w7-menu/settings-view.js», после помощников времени (thaiMsk, hhmm).
+// «// @include n8n/w7-menu/settings-view.js», после помощников времени (localMsk, n8n/shared/time.js).
 // Значения — из таблицы settings плюс изменение этого нажатия: «Setting change» выполнилась раньше (ветка выше).
 // Раскладки: settings (корень), set_collect, set_search, set_filter, set_rules, set_blacklist, set_confirm, set_llm,
 // set_apply (🚀 Робот, этап 6: состояние робота — «Robot health», GET /health робота).
@@ -25,12 +25,20 @@ const unbanned = Number(job.unban) || 0;
 const blacklist = ranNode('Blacklist').filter((r) => r.id && r.id !== unbanned);
 
 const everyText = (m) => (m % 60 ? `${m} мин` : `${m / 60} ч`);
-const pad2 = (n) => String(n).padStart(2, '0');
+// Час по МСК → «ЧЧ:ММ» по местному: пояс человека может отличаться от Москвы и на нецелое число часов (pad2, TZ —
+// из n8n/shared/time.js)
+const mskDiff = tzOffsetMin(Date.now(), TZ) - tzOffsetMin(Date.now(), MSK_TZ);
+const mskHourLocal = (h) => {
+  const m = (((h * 60 + mskDiff) % 1440) + 1440) % 1440;
+  return `${pad2(Math.floor(m / 60))}:${pad2(m % 60)}`;
+};
 const periodText = (days) => SEARCH_LABELS.search_period[days] ?? `за ${days} дн.`;
 const responsesText = (n) => (n ? `больше ${n}` : 'не отсекать');
 const VERDICT_TEXT = { apply: '🟢 apply', maybe: '🟡 maybe', skip: '🔴 skip' };
 const providerText = (p) => (p === 'claude' ? 'Claude' : 'Gemini');
-const rulesOn = () => Object.keys(FILTER_RULES).filter((id) => !settings['filter.rules_off'].includes(id));
+// Правила пресета (у generic — без фронтенд-правил) и включённые из них
+const presetRules = () => Object.keys(filterRulesFor(settings['profile.preset']));
+const rulesOn = () => presetRules().filter((id) => !settings['filter.rules_off'].includes(id));
 const companies = (n) => {
   const d = n % 10;
   const dd = n % 100;
@@ -56,7 +64,7 @@ function settingsRootView(note) {
     '',
     `🕐 <b>Сбор</b>: ${describeSchedule(sch)} · ${collectsPerDay(sch)} в сутки${sch.paused ? ' · ⏸ <b>пауза</b>' : ''}`,
     `🔎 <b>Поиск</b>: ${periodText(settings['search.period'])} · везде — ${settings['search.anywhere'].length} сл., в названии — ${settings['search.in_name'].length}`,
-    `🧹 <b>Фильтр</b>: правил ${rulesOn().length} из ${Object.keys(FILTER_RULES).length} · отклики — ${responsesText(settings['filter.max_responses'])} · стоп-слов ${settings['filter.stop_words'].length} · ЧС ${blacklist.length}`,
+    `🧹 <b>Фильтр</b>: правил ${rulesOn().length} из ${presetRules().length} · отклики — ${responsesText(settings['filter.max_responses'])} · стоп-слов ${settings['filter.stop_words'].length} · ЧС ${blacklist.length}`,
     `🤖 <b>Нейросеть</b>: ${providerText(settings['llm.provider'])} · теневой режим ${settings['llm.shadow'] ? 'вкл' : 'выкл'} · спорных случаев ${settings['llm.cases'].length}`,
     `🚀 <b>Робот</b>: ${settings['apply.enabled'] ? 'вкл' : 'выкл'}${settings['apply.paused'] ? ' · ⏸ пауза' : ''} · сегодня ${robotToday(rows, now)}/${settings['apply.daily_limit']} · ${robotState().short}`,
   ];
@@ -80,11 +88,11 @@ function settingsCollectView() {
   const lines = [
     '🕐 <b>Сбор</b>',
     '',
-    `Днём — ${pad2(sch.dayFrom)}:00–${pad2(sch.dayTo)}:00 МСК (${pad2((sch.dayFrom + 4) % 24)}:00–${pad2((sch.dayTo + 4) % 24)}:00 у тебя): каждые ${everyText(sch.dayEvery)}`,
+    `Днём — ${pad2(sch.dayFrom)}:00–${pad2(sch.dayTo)}:00 МСК${mskDiff ? ` (${mskHourLocal(sch.dayFrom)}–${mskHourLocal(sch.dayTo)} у тебя)` : ''}: каждые ${everyText(sch.dayEvery)}`,
     `Ночью: ${sch.nightEvery ? `каждые ${everyText(sch.nightEvery)}` : 'не собирать'}`,
     sch.paused
       ? '⏸ <b>На паузе</b>: сборов нет. «▶️ Возобновить» — и сбор пойдёт по расписанию'
-      : `Сборов в сутки: ${collectsPerDay(sch)} · следующий: ${next ? thaiMsk(next) : '—'}`,
+      : `Сборов в сутки: ${collectsPerDay(sch)} · следующий: ${next ? localMsk(next) : '—'}`,
   ];
 
   const notes = changeNotes();
@@ -99,7 +107,9 @@ function settingsCollectView() {
       notes.push(`⚠️ Страж healthchecks не обновлён: ${esc(error.slice(0, 120))}`);
     }
   }
-  if (job.collectNow) notes.push('🔄 Запустил сбор — итог придёт сообщением о сборе');
+  if (job.collectNow) {
+    notes.push(settings['profile.ready'] ? '🔄 Запустил сбор — итог придёт сообщением о сборе' : '📄 Сначала пришли резюме в PDF — без профиля искать нечего');
+  }
   if (notes.length) lines.push('', ...notes);
 
   return {
@@ -144,7 +154,7 @@ function settingsFilterView() {
   const lines = [
     '🧹 <b>Фильтр</b> — отсекает до нейросети',
     '',
-    `Правила: ${Object.entries(FILTER_RULES)
+    `Правила: ${Object.entries(filterRulesFor(settings['profile.preset']))
       .map(([id, label]) => `${off.includes(id) ? '◻️' : '✅'} ${label}`)
       .join(' · ')}`,
     `Отклики: ${responsesText(settings['filter.max_responses'])}`,
@@ -166,9 +176,11 @@ function settingsFilterView() {
   };
 }
 
+// Правила пресета: у frontend — все 10, у остальных — 6, без правил фронтенда (своя раскладка кнопок)
 function settingsRulesView() {
   const off = settings['filter.rules_off'];
-  const ids = Object.keys(FILTER_RULES);
+  const rules = filterRulesFor(settings['profile.preset']);
+  const ids = Object.keys(rules);
   const lines = [
     '⚙️ <b>Правила фильтра</b>',
     '',
@@ -178,9 +190,9 @@ function settingsRulesView() {
   if (notes.length) lines.push('', ...notes);
   const b = {};
   ids.forEach((id, i) => {
-    b[`r${i}`] = { text: `${off.includes(id) ? '◻️' : '✅'} ${FILTER_RULES[id]}`, cb: `st:${id}` };
+    b[`r${i}`] = { text: `${off.includes(id) ? '◻️' : '✅'} ${rules[id]}`, cb: `st:${id}` };
   });
-  return { layout: 'set_rules', text: lines.join('\n'), b };
+  return { layout: ids.length === Object.keys(FILTER_RULES).length ? 'set_rules' : 'set_rules_generic', text: lines.join('\n'), b };
 }
 
 function settingsBlacklistView() {
@@ -259,9 +271,9 @@ function settingsApplyView() {
       ? `Включён: под новыми письмами — [🚀 Откликнуться роботом]${paused ? '\n⏸ <b>Очередь на паузе</b>: нажатия копятся, робот ждёт' : ''}`
       : 'Выключен: кнопки 🚀 под письмами нет, откликаешься сам',
     `Состояние: ${robotState().long}`,
-    `Сегодня: ${robotToday(rows, now)} из ${limit} (день — с 09:00 по Таиланду) · в очереди: ${count(rows, (r) => r.apply_state)}`,
+    `Сегодня: ${robotToday(rows, now)} из ${limit} (день — с 09:00 по местному) · в очереди: ${count(rows, (r) => r.apply_state)}`,
     '',
-    `Окно робота — «Общий экран»: ${VNC_URL} (режим «Управление»). Капча и вход в hh — там; потом ▶️ или /go.`,
+    `Окно робота — VNC ${VNC_URL} (на Mac — «Общий экран», режим «Управление»; на Windows и Linux — любой VNC-клиент). Капча и вход в hh — там; потом ▶️ или /go.`,
   ];
   const notes = changeNotes();
   if (notes.length) lines.push('', ...notes);
@@ -303,8 +315,8 @@ function settingsPrompt(name) {
   }
   return [
     SETTING_PROMPTS[name],
-    `Сейчас: ${settings[name].join(', ')}`,
+    `Сейчас: ${settings[name].join(', ') || '—'}`,
     '',
-    'Пришли новый список через запятую — заменю его целиком. «*» в конце слова — любое окончание.',
+    `Пришли новый список через запятую — заменю его целиком. «*» в конце слова — любое окончание.${SETTINGS[name].min === 0 ? ' Очистить — «-».' : ''}`,
   ].join('\n');
 }

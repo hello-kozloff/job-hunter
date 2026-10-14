@@ -2,6 +2,8 @@
 // Нода: Code, режим «Run Once for All Items». Вход: список expire из «Plan».
 // Выход: { id, tg_message_id, text } → «Card: expired» (Telegram) → «Expired done» → «Save expired».
 
+// @include n8n/shared/time.js
+
 // @include n8n/shared/card.js
 
 return $('Plan')

@@ -20,44 +20,21 @@
 //   node scripts/n8n-api.mjs recheck <правило> [--dry]  правило фильтра поменялось: удалить строки, отсеянные
 //                                                      им (rejected, правило в reasons, например «Vue/Angular»),
 //                                                      следующий запуск W1 оценит их по текущим правилам
+//   node scripts/n8n-api.mjs profile-import <file.json> профиль и настройки бота в таблицу settings: JSON
+//                                                      { "имя настройки": значение } (docs/onboarding.md)
+//   node scripts/n8n-api.mjs profile-export [file.json] все строки settings в JSON того же вида (бэкап, перенос);
+//                                                      без файла — в stdout. Там резюме — файл с правами 600
 //
 // Вход — N8N_OWNER_EMAIL / N8N_OWNER_PASSWORD из .env.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { TABLES } from '../n8n/schema.mjs';
 import { randomBytes } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { readCode } from './lib/code.mjs';
 
-const BASE = 'http://127.0.0.1:5678/rest';
-const ENV_URL = new URL('../.env', import.meta.url);
+import { readEnv, setEnv, local } from './lib/env.mjs';
 
-function readEnv() {
-  return Object.fromEntries(
-    readFileSync(ENV_URL, 'utf8')
-      .split('\n')
-      .filter((line) => /^[A-Z0-9_]+=/.test(line))
-      .map((line) => {
-        const i = line.indexOf('=');
-        return [line.slice(0, i), line.slice(i + 1).trim().replace(/^['"]|['"]$/g, '')];
-      }),
-  );
-}
-
-// Записать ключи в .env: существующие строки заменяются, новые дописываются в конец
-function setEnv(vars, comment) {
-  const lines = readFileSync(ENV_URL, 'utf8').split('\n');
-  const rest = { ...vars };
-  const out = lines.map((line) => {
-    const key = line.match(/^([A-Z0-9_]+)=/)?.[1];
-    if (key && key in rest) {
-      const value = rest[key];
-      delete rest[key];
-      return `${key}=${value}`;
-    }
-    return line;
-  });
-  const added = Object.entries(rest).map(([k, v]) => `${k}=${v}`);
-  if (added.length) out.push('', `# ${comment}`, ...added);
-  writeFileSync(ENV_URL, `${out.join('\n').replace(/\n*$/, '')}\n`, { mode: 0o600 });
-}
+const BASE = `http://127.0.0.1:${local().n8nPort}/rest`;
 
 async function api(path, { method = 'GET', body, cookie } = {}) {
   const res = await fetch(`${BASE}${path}`, {
@@ -367,20 +344,70 @@ async function setupOwner(email) {
   const password = `Jh${randomBytes(15).toString('base64url')}7`;
   await api('/owner/setup', {
     method: 'POST',
-    body: { email, firstName: 'Никита', lastName: 'Костров', password },
+    body: { email, firstName: 'Job', lastName: 'Hunter', password },
   });
   setEnv(
     { N8N_OWNER_EMAIL: email, N8N_OWNER_PASSWORD: password },
-    'Владелец локального n8n (scripts/n8n-api.mjs setup-owner). Вход: http://localhost:5678',
+    `Владелец локального n8n (scripts/n8n-api.mjs setup-owner). Вход: http://localhost:${local().n8nPort}`,
   );
   console.log(`Владелец ${email} создан, пароль записан в .env`);
 }
 
+// Таблица Data Tables по имени: { cookie, base, table } для запросов к её строкам
+async function dataTable(name) {
+  const cookie = await login();
+  const personal = await personalProject(cookie);
+  const base = `/projects/${personal.id}/data-tables`;
+  const { json: tables } = await api(base, { cookie });
+  const table = (tables.data ?? tables).find((t) => t.name === name);
+  if (!table) throw new Error(`Таблицы ${name} нет — сначала migrate`);
+  return { cookie, base, table };
+}
+
+// Схема настроек бота — тот же код, что в Code-нодах (n8n/shared/settings.js)
+const { SETTINGS, validSetting } = new Function(`${readCode(fileURLToPath(new URL('../n8n/shared/settings.js', import.meta.url)))}\nreturn { SETTINGS, validSetting };`)();
+
+// Профиль и настройки из JSON { "имя": значение } → upsert строк settings по name. Значения проверяются схемой:
+// хоть одно не проходит — не пишется ничего. Неизвестное этой версии имя пишется с предупреждением (код его
+// пропускает, пока не узнает)
+async function profileImport(file) {
+  if (!file) throw new Error('usage: profile-import <file.json>');
+  const values = JSON.parse(readFileSync(file, 'utf8'));
+  const bad = Object.entries(values).filter(([name, value]) => SETTINGS[name] && !validSetting(SETTINGS[name], value));
+  if (bad.length) throw new Error(`Не проходят проверку: ${bad.map(([name]) => name).join(', ')} — ничего не записано`);
+  const unknown = Object.keys(values).filter((name) => !SETTINGS[name]);
+  const { cookie, base, table } = await dataTable('settings');
+  for (const [name, value] of Object.entries(values)) {
+    await api(`${base}/${table.id}/upsert`, {
+      method: 'POST',
+      body: {
+        filter: { type: 'and', filters: [{ columnName: 'name', condition: 'eq', value: name }] },
+        data: { name, value_json: JSON.stringify(value) },
+      },
+      cookie,
+    });
+  }
+  console.log(`settings: записано ${Object.keys(values).length}: ${Object.keys(values).join(', ')}`);
+  if (unknown.length) console.log(`⚠️  Этой версии кода неизвестны (пока не используются): ${unknown.join(', ')}`);
+}
+
+async function profileExport(file) {
+  const { cookie, base, table } = await dataTable('settings');
+  const { json: content } = await api(`${base}/${table.id}/rows?take=1000&skip=0`, { cookie });
+  const values = Object.fromEntries(
+    (content.data ?? []).sort((a, b) => a.name.localeCompare(b.name)).map((r) => [r.name, JSON.parse(r.value_json)]),
+  );
+  const json = `${JSON.stringify(values, null, 2)}\n`;
+  if (!file) return process.stdout.write(json);
+  writeFileSync(file, json, { mode: 0o600 });
+  console.log(`${file}: ${Object.keys(values).length} настроек`);
+}
+
 const [command, ...args] = process.argv.slice(2);
-const commands = { 'setup-owner': setupOwner, run, publish, unpublish, executions, rows, migrate, 'blacklist-seed': blacklistSeed, 'tunnel-env': tunnelEnv, requeue, recheck, 'api-key': apiKey };
+const commands = { 'setup-owner': setupOwner, run, publish, unpublish, executions, rows, migrate, 'blacklist-seed': blacklistSeed, 'tunnel-env': tunnelEnv, requeue, recheck, 'api-key': apiKey, 'profile-import': profileImport, 'profile-export': profileExport };
 if (!commands[command]) {
   console.error(
-    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> [node] | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate | blacklist-seed | tunnel-env | requeue <days> [--dry] | recheck <rule> [--dry] | api-key',
+    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> [node] | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate | blacklist-seed | tunnel-env | requeue <days> [--dry] | recheck <rule> [--dry] | api-key | profile-import <file.json> | profile-export [file.json]',
   );
   process.exit(2);
 }

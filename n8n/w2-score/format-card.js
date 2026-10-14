@@ -4,16 +4,20 @@
 // Выход: { id, text, silent, decision, llm_reason, llm_model } → «Send card» с кнопками ✅ / 🤔 / ❌.
 // Теневой режим (настройка llm.shadow, ⚙️ → 🤖 Нейросеть): карточка приходит на каждую оценённую вакансию,
 // включая skip. Выключен — skip без карточки: строку закрывает «Quiet skips», в итоге — «🔴 N без карточек».
-// Тихие часы: с 23:00 до 09:00 по Таиланду (UTC+7) карточки приходят без звука.
+// Тихие часы: с 23:00 до 09:00 по местному карточки приходят без звука (n8n/shared/time.js).
+
+// @include n8n/shared/time.js
 
 // @include n8n/shared/card.js
 
 // @include n8n/shared/settings.js
 
-const shadow = loadSettings($('Settings').all())['llm.shadow'];
+const settings = loadSettings($('Settings').all());
+const shadow = settings['llm.shadow'];
+// Первый поиск после онбординга — без карточек (W2 «First save» сохранит оценки, «Summary» пришлёт итог)
+if (settings['profile.first_quiet']) return [];
 
-const thaiHour = (new Date().getUTCHours() + 7) % 24;
-const silent = thaiHour >= 23 || thaiHour < 9;
+const silent = quietHours();
 
 return $input
   .all()

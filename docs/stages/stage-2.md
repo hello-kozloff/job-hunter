@@ -49,7 +49,7 @@ node scripts/n8n-api.mjs run jobHunterW1Colle          # W1 примет их к
 
 ```bash
 node scripts/run-code-node.mjs n8n/w1-collector/filter-search.js <vacancies.json> \
-  --ref 'Is new=@<vacancies.json>' --ref 'Plan={"firstRun":false}' --ref 'Blacklist=[]'
+  --ref 'Is new=@<vacancies.json>' --ref 'Blacklist=[]'
 node scripts/run-code-node.mjs n8n/w1-collector/parse-vacancy.js fixtures/vacancy.html \
   --ref 'Is candidate=@<row.json>'
 ```

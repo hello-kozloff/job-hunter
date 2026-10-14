@@ -20,11 +20,15 @@
 //      unban — убрать компанию из чёрного списка, id — компания для подтверждения (/bl<id>);
 //      resume = true — список там, где был (p:n — «📋 К вакансиям» под письмом: новая панель, не правка письма);
 //      messageId — панель, где нажали кнопку (правим её); userMessageId — сообщение пользователя (удалить).
+//   { action: 'profile', op, field, value, chatId, queryId, messageId, userMessageId, promptId, text, file, username } —
+//      профиль (W11, 13.10.2026): документ в чате (op pdf | not_pdf, file = { id, name, size }), кнопки pf:* и ответы
+//      на вопросы профиля (PROFILE_PROMPTS, op input).
 // Чужие чаты отсекает сам Telegram Trigger (Restrict to Chat IDs = TG_CHAT_ID); здесь — вторая проверка.
 
 // @include n8n/shared/menu.js
 
-const update = $input.first().json;
+// Обновление — из триггера: между ним и «Route» стоит «Settings» (часовой пояс)
+const update = $('Telegram Trigger').first().json;
 const allowed = String($env.TG_CHAT_ID ?? '');
 const ours = (chatId) => !allowed || String(chatId) === allowed;
 const panel = (fields) => [
@@ -37,6 +41,17 @@ if (cb) {
   const data = String(cb.data ?? '');
   const chatId = String(cb.message.chat.id);
   const pressed = { chatId, queryId: cb.id, messageId: cb.message.message_id };
+
+  // Профиль (W11): pf:view | pf:ok | pf:yes | pf:no | pf:e:<поле> | pf:g:<m|f> | pf:tz:<IANA> | pf:new:<all|text|no>
+  const pf = data.match(/^pf:(view|ok|yes|no|e|g|tz|new)(?::(.+))?$/);
+  if (pf) {
+    const [, kind, arg = ''] = pf;
+    const op = { view: 'view', ok: 'ok', yes: 'confirm', no: 'confirm', e: 'ask', g: 'set', tz: 'set', new: 'replace' }[kind];
+    const field = { e: arg, g: 'gender', tz: 'tz' }[kind] ?? '';
+    // pf:ok:<шаг> — шаг, на котором показали кнопку (W11 не перескочит шаг при двойном нажатии)
+    const value = { ok: arg, yes: 'yes', no: 'no', g: arg, tz: arg, new: arg }[kind] ?? '';
+    return [{ json: { action: 'profile', op, field, value, ...pressed, username: cb.from?.username ?? '' } }];
+  }
 
   const list = data.match(/^p:l:([a-z]+):(\d+)$/);
   if (list && TABS[list[1]]) return panel({ ...pressed, view: 'list', tab: list[1], page: Number(list[2]) });
@@ -98,6 +113,43 @@ const msg = update.message;
 if (!msg || !ours(msg.chat?.id)) return [];
 const text = String(msg.text ?? '').trim();
 const typed = { chatId: String(msg.chat.id), userMessageId: msg.message_id };
+
+// Документ в чате — резюме (W11): PDF разберём, остальное — подскажем, что нужен PDF
+if (msg.document) {
+  const d = msg.document;
+  const pdf = d.mime_type === 'application/pdf' || /\.pdf$/i.test(d.file_name ?? '');
+  return [
+    {
+      json: {
+        action: 'profile',
+        op: pdf ? 'pdf' : 'not_pdf',
+        file: { id: d.file_id, name: String(d.file_name ?? ''), size: Number(d.file_size ?? 0) },
+        ...typed,
+        username: msg.from?.username ?? '',
+      },
+    },
+  ];
+}
+
+// Ответ на вопрос профиля (W11): поле — по началу текста вопроса
+const profilePrompt = Object.keys(PROFILE_PROMPTS).find((key) =>
+  String(msg.reply_to_message?.text ?? '').startsWith(PROFILE_PROMPTS[key]),
+);
+if (profilePrompt && text) {
+  return [
+    {
+      json: {
+        action: 'profile',
+        op: 'input',
+        field: profilePrompt,
+        text: text.slice(0, 4000),
+        ...typed,
+        promptId: msg.reply_to_message.message_id,
+        username: msg.from?.username ?? '',
+      },
+    },
+  ];
+}
 
 // Кнопки под полем ввода и команды: /v169 → [v, 169], /stats@bot → [stats, '']
 const command = text.match(/^\/([a-z]+)(\d*)(?:@\w+)?(?:\s|$)/i);

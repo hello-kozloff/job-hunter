@@ -2,9 +2,17 @@
 // Нода: Code, режим «Run Once for All Items».
 // Вход: ответы HTTP Request «Gemini» или «Claude» по порядку items «Build letter» (в запуске один провайдер).
 // Выход: { id, mode, ok, letter | problem } для «Format letter».
+// Контакт и подпись — из профиля (⚙️ → 👤, 13.10.2026): если модель их пропустила, дописываем.
+
+// @include n8n/shared/settings.js
 
 const prompts = $('Build letter').all().map((i) => i.json);
-const CONTACT = 'Для быстрой связи тг: @freshraveprince';
+const settings = loadSettings($('Settings').all());
+const CONTACT = settings['profile.contact'];
+const SIGNATURE = settings['profile.signature'];
+// Контакт уже есть в письме, если там есть его «ключ»: @ник, e-mail или телефон из строки контакта
+const contactKey = (CONTACT.match(/[\w.+-]+@[\w-]+\.[\w.-]+|@\w+|\+?\d[\d\s()-]{6,}\d/) ?? [CONTACT])[0];
+const signatureEnd = new RegExp(`${SIGNATURE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`);
 
 function bodyOf(res) {
   const b = res.body ?? res.data;
@@ -62,8 +70,22 @@ function finish(letter) {
   text = capitalize(CLEANUP.reduce((t, [pattern, replacement]) => t.replace(pattern, replacement), text))
     // Приветствие — отдельной строкой, даже если модель продолжила текст на той же строке
     .replace(/^Здравствуйте!\s*/, 'Здравствуйте!\n\n');
-  if (!text.includes('@freshraveprince')) text += `\n\n${CONTACT}`;
-  if (!/Никита\s*$/.test(text)) text += '\nНикита';
+  // Контакт и подпись — всегда отдельными строками в конце (14.10.2026: модель приклеивала контакт к последнему
+  // абзацу). Убираем их из текста, где бы модель их ни написала, и ставим заново
+  if (CONTACT) {
+    const keyAt = text.indexOf(contactKey);
+    if (keyAt >= 0) {
+      const lineStart = text.lastIndexOf('\n', keyAt) + 1;
+      const before = text.slice(lineStart, keyAt);
+      // Строка контакта — от начала её фразы («Для быстрой связи…») до конца строки
+      const sentenceAt = Math.max(before.search(/[^.!?]*$/), 0);
+      text = (text.slice(0, lineStart + sentenceAt) + text.slice(text.indexOf('\n', keyAt) < 0 ? text.length : text.indexOf('\n', keyAt))).replace(/[ \t]+$/gm, '');
+    }
+  }
+  if (SIGNATURE) text = text.replace(signatureEnd, '');
+  text = text.replace(/\s+$/, '');
+  if (CONTACT) text += `\n\n${CONTACT}`;
+  if (SIGNATURE) text += CONTACT ? `\n${SIGNATURE}` : `\n\n${SIGNATURE}`;
   return text;
 }
 

@@ -131,6 +131,8 @@ Manual ───┴→ Any row → Plan → Search hh → Parse search → OK?
 
 **Code** → имя `Plan` → вставь `n8n/w1-collector/plan.js`.
 
+> С 13.10.2026 бэкфилла нет: «Plan» отдаёт item на каждый запрос `{ page: 0, label, url }` (удалёнка и офис в городе, `docs/onboarding.md`, часть C).
+
 - Первый запуск: 2 item — `{page: 0, firstRun: true}` и `{page: 1, firstRun: true}`.
 - Обычный запуск: 1 item `{page: 0, firstRun: false}`.
 

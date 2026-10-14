@@ -14,7 +14,7 @@
   - `loadSettings($('Settings').all())` — значения с учётом таблицы; значение не из списка заменяется значением по умолчанию;
   - `nextSetting(name, value)` — следующее значение по кругу (кнопка «▸»);
   - `scheduleFrom(settings)` — расписание для `n8n/shared/schedule.js`.
-- **Чтение** — нода «Settings» (Data Table Get, все строки, один раз за запуск) в W1, W6, W7, W8; хелпер `settingsNode` в `scripts/build-workflows.mjs`.
+- **Чтение** — нода «Settings» (Data Table Get, все строки, один раз за запуск) в W1, W2, W5, W6, W7, W8, W9; хелпер `settingsNode` в `scripts/build-workflows.mjs`.
 - **Запись** — только W7: «Setting change» (следующее значение) → «Save setting» (upsert по `name`). Панель после нажатия показывает новое значение.
 
 ## Настройки
@@ -26,17 +26,22 @@
 | `collect.day_window` | `07-18` | `07-18` · `08-20` · `06-22` · `09-18` (часы МСК) | то же |
 | `collect.paused` | false | false · true | то же; пауза ставит на паузу и стража |
 | `search.period` | 1 | 1 · 3 · 7 дней | W1 «Plan» (`search_period`), сообщение о сборе |
-| `search.anywhere` | `frontend` | список слов (✏️) | W1: по всему тексту вакансии |
+| `search.anywhere` | `frontend` | список слов (✏️), может быть пустым («-») | W1: по всему тексту вакансии |
 | `search.in_name` | react … нейросетей (17 слов) | список слов (✏️) | W1: только в названии (`NAME:(…)`) |
+| `search.roles` | 96 | id ролей hh (`n8n/shared/hh-roles.js`), до 10 | W1: `professional_role` |
+| `search.formats` | REMOTE | REMOTE · HYBRID · ON_SITE · FIELD_WORK | W1: удалёнка — запрос по всем регионам, остальное — запрос в городе `search.area` |
+| `search.area` | нет | `{ id, name }` — регион hh | W1: город для офиса и гибрида; без него офис не ищется |
+| `search.education` | not_required_or_not_specified | список: not_required_or_not_specified · special_secondary · higher; пусто — без фильтра | W1: `education` |
 | `filter.max_responses` | 3000 | 1000 · 2000 · 3000 · 5000 · 0 (не отсекать) | W1 «Filter search» |
 | `filter.rules_off` | пусто | правила из `FILTER_RULES` | W1 «Filter search» и «Parse vacancy» |
-| `filter.stop_words` | php\*, laravel, … наставник\* (18) | список слов (✏️) | W1 «Filter search»: стоп-слова в названии |
+| `filter.stop_words` | php\*, laravel, … наставник\* (18) | список слов (✏️), может быть пустым («-») | W1 «Filter search»: стоп-слова в названии |
 | `llm.provider` | `gemini` | gemini · claude | W2 (оценка), W5 (письма); заменяет `LLM_PROVIDER` из `.env` |
 | `llm.shadow` | true | true · false | W2: выкл — skip без карточки («Quiet skips»: status skipped без `my_decision`), в итоге «🔴 N без карточек» |
 | `llm.cases` | Vue без React: maybe, fullstack: maybe, AI на JS/TS: apply, React Native: skip | список «случай: решение» (✏️) | W2 «Build prompt» |
 | `apply.enabled` | false | false · true | W5: письмо с [🚀 Откликнуться роботом]; W9: 🚀 при выключенном — тост и письмо без 🚀; выключили — очередь назад в ✅ (W7 «Robot kick» → W9 `dequeue`) |
 | `apply.paused` | false | false · true | W9: очередь копится, робот не отправляет; сняли паузу — W9 `tick` |
-| `apply.daily_limit` | 25 | 10 · 15 · 25 · 40 | W9 «Gate»: живых откликов робота в «день» (с 09:00 по Таиланду); сверху — потолок робота `APPLIER_DAILY_CAP=40` |
+| `apply.daily_limit` | 25 | 10 · 15 · 25 · 40 | W9 «Gate»: живых откликов робота в «день» (с 09:00 по местному); сверху — потолок робота `APPLIER_DAILY_CAP=40` |
+| `profile.*`, `llm.rules`, `letters.*` | — | профиль человека: резюме, факты, подпись, контакт, правила, образцы писем | W2, W5 — подробно в `docs/onboarding.md` |
 
 **Робот-отклик** (`apply.*`, этап 6, `docs/stages/stage-6.md`): раздел ⚙️ → 🚀 Робот — вкл/выкл, пауза, лимит в день и строка
 состояния робота (GET /health: на связи / ждёт капчу или вход / не вошёл / не отвечает; сухой прогон или боевой). Предохранитель

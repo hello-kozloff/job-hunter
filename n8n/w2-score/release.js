@@ -15,7 +15,7 @@ const all = (name) => {
   }
 };
 // Карточка ушла или skip закрыт без карточки (теневой режим выключен)
-const carded = new Set([...all('Card sent'), ...all('Quiet skips')].map((r) => r.id));
+const carded = new Set([...all('Card sent'), ...all('Quiet skips'), ...all('First save')].map((r) => r.id));
 return all('Claim')
   .map((r) => r.id)
   .filter((id) => id && !carded.has(id))

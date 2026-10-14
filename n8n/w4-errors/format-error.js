@@ -5,7 +5,8 @@
 // key — workflow + нода + текст ошибки без чисел и ссылок: повтор той же проблемы (hh отвечает 403 на каждом
 // сборе) не шлёт новую тревогу, а правит открытую (07.10.2026, «Alert plan»).
 
-const e = $input.first().json;
+// Ошибка — из триггера: между ним и этой нодой стоит «Settings» (часовой пояс)
+const e = $('Error Trigger').first().json;
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 // Ошибка самого триггера приходит в поле trigger, а не execution

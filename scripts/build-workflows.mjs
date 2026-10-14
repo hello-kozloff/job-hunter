@@ -7,12 +7,14 @@
 // Импорт в локальный n8n: scripts/deploy.sh
 import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { TABLES } from '../n8n/schema.mjs';
 import { readCode } from './lib/code.mjs';
 
-const ROOT = new URL('..', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 // Код Code-ноды: файл n8n/**/*.js, строки «// @include …» раскрываются (общий код карточки и т. п.)
-const read = (path) => readCode(`${ROOT}${path}`);
+const read = (path) => readCode(join(ROOT, path));
 
 // Постоянные id: повторный импорт обновляет те же workflow, а не создаёт копии
 const IDS = {
@@ -29,6 +31,8 @@ const IDS = {
   clock: 'jobHunterW8Clock',
   // Робот-отклик (этап 6, docs/stages/stage-6.md): очередь 🚀, капча, блоки
   robot: 'jobHunterW9Robot',
+  // Профиль (13.10.2026, docs/onboarding.md): онбординг по резюме PDF, ⚙️ → 👤. W10 зарезервирован под Inbox (6.2)
+  profile: 'jobHunterW11Prof',
   n8nApiCredential: 'jobHunterN8nApi1',
   // Ключ API healthchecks.io (HC_API_KEY в .env) — бот обновляет расписание стража (07.10.2026)
   hcCredential: 'jobHunterHcApi01',
@@ -44,6 +48,11 @@ const uuid = (seed) => {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
 };
 
+// Telegram-нода повторяет запрос: сеть до api.telegram.org иногда рвётся на TLS-рукопожатии (ECONNRESET,
+// 13.10.2026 — W7 «New: open choose»), запрос до Telegram не доходит, второй проходит. Только у нод без onError:
+// у остальных ошибка ожидаема («message is not modified», сообщение удалено), повтор лишь задержал бы ответ
+const TG_RETRY = { retryOnFail: true, maxTries: 3, waitBetweenTries: 2000 };
+
 const node = (wf, name, type, typeVersion, position, parameters, extra = {}) => ({
   id: uuid(`${wf}/${name}`),
   name,
@@ -51,6 +60,7 @@ const node = (wf, name, type, typeVersion, position, parameters, extra = {}) => 
   typeVersion,
   position,
   parameters,
+  ...(type === 'telegram' && !extra.onError && TG_RETRY),
   ...extra,
 });
 
@@ -78,12 +88,12 @@ const workflow = (id, name, nodes, links, settings = {}) => ({
 
 // ---------- Общие куски ----------
 
-// Поисковый запрос hh — из n8n/shared/search.js. Слова и период — настройки бота (⚙️ → 🔎 Поиск):
-// W1 «Plan» берёт их из таблицы settings, W0 (ручная проверка) — значения по умолчанию
-const { SEARCH_URL, searchQuery, loadSettings } = new Function(
-  `${read('n8n/shared/settings.js')}\n${read('n8n/shared/search.js')}\nreturn { SEARCH_URL, searchQuery, loadSettings };`,
+// Поисковый запрос hh — из n8n/shared/search.js. Слова, период, роли, формат и город — настройки (⚙️ → 🔎 Поиск,
+// онбординг): W1 «Plan» берёт их из таблицы settings и отдаёт готовые URL, W0 (ручная проверка) — запрос по умолчанию
+const { SEARCH_URL, searchParams, loadSettings } = new Function(
+  `${read('n8n/shared/settings.js')}\n${read('n8n/shared/search.js')}\nreturn { SEARCH_URL, searchParams, loadSettings };`,
 )();
-const SEARCH_QUERY = searchQuery(loadSettings([]));
+const SEARCH_QUERY = searchParams(loadSettings([]));
 
 const BROWSER_HEADERS = [
   ['User-Agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'],
@@ -207,8 +217,9 @@ const BLACKLIST = { __rl: true, mode: 'name', value: 'blacklist' };
 const RUNS = { __rl: true, mode: 'name', value: 'runs' };
 const ALERTS = { __rl: true, mode: 'name', value: 'alerts' };
 const SETTINGS_TABLE = { __rl: true, mode: 'name', value: 'settings' };
-// Настройки бота (⚙️): все строки таблицы settings, один раз на запуск; пустая — значения по умолчанию
-const settingsNode = (wf, position) =>
+// Настройки бота (⚙️) и профиль: все строки таблицы settings, один раз на запуск; пустая — значения по умолчанию.
+// Часовой пояс человека (n8n/shared/time.js) тоже берётся отсюда
+const settingsNode = (wf, position, extra = {}) =>
   node(
     wf,
     'Settings',
@@ -216,7 +227,7 @@ const settingsNode = (wf, position) =>
     1.1,
     position,
     { resource: 'row', operation: 'get', dataTableId: SETTINGS_TABLE, returnAll: true },
-    { executeOnce: true, alwaysOutputData: true },
+    { executeOnce: true, alwaysOutputData: true, ...extra },
   );
 
 // Insert/Update пишут все поля item в одноимённые колонки
@@ -336,6 +347,8 @@ const PANEL_LAYOUTS = [
   [
     'settings',
     [
+      // Профиль (W11, 13.10.2026): резюме, подпись, контакт, пояс, образцы писем
+      [['👤 Профиль', 'pf:view']],
       [
         ['🕐 Сбор', panelButton('collect.cb')],
         ['🔎 Поиск', panelButton('search.cb')],
@@ -455,6 +468,79 @@ const PANEL_LAYOUTS = [
       ],
     ],
   ],
+  // 6 правил фильтра без фронтенд-правил (пресет generic, 13.10.2026: n8n/shared/settings.js → filterRulesFor)
+  [
+    'set rules generic',
+    [
+      ...[0, 2, 4].map((i) => [
+        [panelButton(`r${i}.text`), panelButton(`r${i}.cb`)],
+        [panelButton(`r${i + 1}.text`), panelButton(`r${i + 1}.cb`)],
+      ]),
+      [['⬅️ Фильтр', 's:filter']],
+    ],
+  ],
+];
+
+// W11: раскладки панели профиля (онбординг, ⚙️ → 👤). Порядок = LAYOUTS в n8n/w11-profile/render.js.
+// В ✅ онбординга — шаг (pf:ok:<шаг>): двойное нажатие не перескочит шаг
+const PROFILE_LAYOUTS = [
+  ['pf summary', [[['✅ Всё верно', 'pf:ok:summary'], ['✏️ Поправить', 'pf:e:profile']]]],
+  ['pf gender', [[['делал', 'pf:g:m'], ['делала', 'pf:g:f']]]],
+  ['pf signature', [[['✅ Так и подписывать', 'pf:ok:signature'], ['✏️ Другая', 'pf:e:signature']]]],
+  ['pf contact', [[['✅ Верно', 'pf:ok:contact'], ['✏️ Другой', 'pf:e:contact']]]],
+  [
+    'pf tz',
+    [
+      [[panelButton('tz.text'), 'pf:ok:tz']],
+      [
+        ['МСК', 'pf:tz:Europe/Moscow'],
+        ['UTC+4', 'pf:tz:Etc/GMT-4'],
+        ['UTC+5', 'pf:tz:Etc/GMT-5'],
+        ['UTC+7', 'pf:tz:Etc/GMT-7'],
+      ],
+      [['✏️ Другой', 'pf:e:tz']],
+    ],
+  ],
+  [
+    'pf review',
+    [
+      [
+        ['✅ Сохранить', 'pf:yes'],
+        ['❌ Отмена', 'pf:no'],
+      ],
+      [['✏️ Поправить', 'pf:e:profile']],
+    ],
+  ],
+  [
+    'pf replace',
+    [
+      [
+        ['🔄 Всё заново', 'pf:new:all'],
+        ['📄 Только текст', 'pf:new:text'],
+      ],
+      [['❌ Отмена', 'pf:new:no']],
+    ],
+  ],
+  ['pf replace text', [[['📄 Обновить текст резюме', 'pf:new:text']], [['❌ Отмена', 'pf:new:no']]]],
+  [
+    'pf profile',
+    [
+      [
+        ['✏️ Поправить', 'pf:e:profile'],
+        ['➕ Дополнить', 'pf:e:extra'],
+      ],
+      [
+        ['✍️ Подпись', 'pf:e:signature'],
+        ['📇 Контакт', 'pf:e:contact'],
+      ],
+      [
+        ['🕐 Пояс', 'pf:e:tz'],
+        ['✉️ Образцы писем', 'pf:e:examples'],
+      ],
+      [['⬅️ Настройки', 's:root']],
+    ],
+  ],
+  ['pf plain', null],
 ];
 
 // W3: состояние после нажатия кнопки, которое посчитали ноды «Apply choice» и «Apply sent»
@@ -788,16 +874,7 @@ const workflows = {
         columns: AUTO_MAP,
         options: {},
       }),
-      node(
-        'W1',
-        'Any row',
-        'dataTable',
-        1.1,
-        [880, 0],
-        { resource: 'row', operation: 'get', dataTableId: VACANCIES, returnAll: false, limit: 1 },
-        { alwaysOutputData: true, executeOnce: true },
-      ),
-      settingsNode('W1', [770, 150]),
+      settingsNode('W1', [880, 0]),
       code('W1', 'Plan', 'n8n/w1-collector/plan.js', [1100, 0]),
       node(
         'W1',
@@ -805,18 +882,8 @@ const workflows = {
         'httpRequest',
         4.5,
         [1320, 0],
-        hhRequest({
-          url: SEARCH_URL,
-          // Слова и период — из «Plan» (настройки бота)
-          query: [
-            ...SEARCH_QUERY.map(([key, value]) => [
-              key,
-              { text: '={{ $json.text }}', search_period: '={{ $json.period }}' }[key] ?? value,
-            ]),
-            ['page', '={{ $json.page }}'],
-          ],
-          batching: true,
-        }),
+        // Готовый адрес запроса — из «Plan» (настройки и профиль): удалёнка и, если есть, офис в городе
+        hhRequest({ url: '={{ $json.url }}', batching: true }),
       ),
       code('W1', 'Parse search', 'n8n/w1-collector/parse-search.js', [1540, 0]),
       node('W1', 'OK?', 'if', 2.3, [1760, 0], ifTrue('W1', '={{ $json.ok }}')),
@@ -955,8 +1022,7 @@ const workflows = {
       ['Busy', 'Start'],
       ['Start', 'Start run'],
       ['Start run', 'Settings'],
-      ['Settings', 'Any row'],
-      ['Any row', 'Plan'],
+      ['Settings', 'Plan'],
       ['Plan', 'Search hh'],
       ['Search hh', 'Parse search'],
       ['Parse search', 'OK?'],
@@ -1021,21 +1087,6 @@ const workflows = {
         columns: setColumns({ status: 'scoring' }),
         options: {},
       }),
-      node(
-        'W2',
-        'Resume',
-        'readWriteFile',
-        1.1,
-        [660, 0],
-        { operation: 'read', fileSelector: '/home/node/.n8n-files/docs/resume.md', options: {} },
-        { executeOnce: true },
-      ),
-      node('W2', 'Resume text', 'extractFromFile', 1.1, [880, 0], {
-        operation: 'text',
-        binaryPropertyName: 'data',
-        destinationKey: 'resume',
-        options: {},
-      }),
       code('W2', 'Build prompt', 'n8n/w2-score/build-prompt.js', [1100, 0]),
       node('W2', 'Claude?', 'if', 2.3, [1320, 0], ifTrue('W2', "={{ $json.provider === 'claude' }}")),
       node(
@@ -1067,8 +1118,8 @@ const workflows = {
         { credentials: { googlePalmApi: { id: IDS.geminiCredential, name: 'Gemini' } }, onError: 'continueRegularOutput' },
       ),
       code('W2', 'Parse verdict', 'n8n/w2-score/parse-verdict.js', [1760, 0]),
-      // Настройки бота: провайдер и правила (Build prompt), теневой режим (Format card, Quiet skips)
-      settingsNode('W2', [550, 150]),
+      // Настройки бота: провайдер, профиль и правила (Build prompt), теневой режим (Format card, Quiet skips)
+      settingsNode('W2', [660, 0]),
       code('W2', 'Format card', 'n8n/w2-score/format-card.js', [1980, -100]),
       telegram('W2', 'Send card', [2200, -100], {
         markup: {
@@ -1109,6 +1160,45 @@ const workflows = {
         dataTableId: VACANCIES,
         ...byId('={{ $json.id }}'),
         columns: AUTO_MAP,
+        options: {},
+      }),
+      // Первый поиск после онбординга (profile.first_quiet, 14.10.2026): без карточек, итог одним сообщением
+      code('W2', 'First save', 'n8n/w2-score/first-save.js', [1980, 200]),
+      node('W2', 'Save first', 'dataTable', 1.1, [2200, 200], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        ...byId('={{ $json.id }}'),
+        columns: AUTO_MAP,
+        options: {},
+      }),
+      node(
+        'W2',
+        'Quiet flag',
+        'dataTable',
+        1.1,
+        [1760, 250],
+        {
+          resource: 'row',
+          operation: 'get',
+          dataTableId: SETTINGS_TABLE,
+          matchType: 'allConditions',
+          filters: { conditions: [{ keyName: 'name', keyValue: 'profile.first_quiet' }] },
+          returnAll: true,
+        },
+        { alwaysOutputData: true, onError: 'continueRegularOutput' },
+      ),
+      code('W2', 'First next', 'n8n/w2-score/first-next.js', [1980, 850]),
+      node('W2', 'First again?', 'if', 2.3, [2200, 800], ifTrue('W2', '={{ $json.again }}')),
+      runWorkflow('W2', 'Score again', [2420, 800], IDS.score),
+      node('W2', 'First done?', 'if', 2.3, [2200, 950], ifTrue('W2', '={{ $json.done }}')),
+      node('W2', 'Quiet off', 'dataTable', 1.1, [2420, 950], {
+        resource: 'row',
+        operation: 'upsert',
+        dataTableId: SETTINGS_TABLE,
+        matchType: 'allConditions',
+        filters: { conditions: [{ keyName: 'name', keyValue: 'profile.first_quiet' }] },
+        columns: setColumns({ name: 'profile.first_quiet', value_json: 'false' }),
         options: {},
       }),
       code('W2', 'Summary', 'n8n/w2-score/summary.js', [1980, 300]),
@@ -1176,6 +1266,8 @@ const workflows = {
     [
       ['Called by W1', 'Pending'],
       ['Manual', 'Pending'],
+      ['Called by W1', 'Quiet flag'],
+      ['Manual', 'Quiet flag'],
       ['Called by W1', 'Summary'],
       ['Manual', 'Summary'],
       ['Called by W1', 'Run stats'],
@@ -1186,9 +1278,7 @@ const workflows = {
       ...W2_RECOVERY.links,
       ['Pending', 'Claim'],
       ['Claim', 'Settings'],
-      ['Settings', 'Resume'],
-      ['Resume', 'Resume text'],
-      ['Resume text', 'Build prompt'],
+      ['Settings', 'Build prompt'],
       ['Build prompt', 'Claude?'],
       ['Claude?', 'Claude', 0],
       ['Claude?', 'Gemini', 1],
@@ -1196,6 +1286,14 @@ const workflows = {
       ['Gemini', 'Parse verdict'],
       ['Parse verdict', 'Format card'],
       ['Parse verdict', 'Quiet skips'],
+      ['Parse verdict', 'First save'],
+      ['First save', 'Save first'],
+      ['Called by W1', 'First next'],
+      ['Manual', 'First next'],
+      ['First next', 'First again?'],
+      ['First again?', 'Score again', 0],
+      ['First next', 'First done?'],
+      ['First done?', 'Quiet off', 0],
       ['Quiet skips', 'Save quiet skips'],
       ['Format card', 'Send card'],
       ['Send card', 'Card sent'],
@@ -1220,10 +1318,15 @@ const workflows = {
         { updates: ['callback_query', 'message'], additionalFields: { chatIds: '={{ $env.TG_CHAT_ID }}' } },
         { webhookId: uuid('W3/telegram-trigger'), credentials: TELEGRAM_CREDENTIAL },
       ),
+      // Часовой пояс человека для дат в карточках (n8n/shared/time.js); таблица не ответила — кнопки всё равно работают
+      settingsNode('W3', [110, 150], { onError: 'continueRegularOutput' }),
       code('W3', 'Route', 'n8n/w3-telegram/route.js', [220, 0]),
       // Меню бота (кнопки под полем ввода, команды, кнопки панели) — в W7 Bot menu
       node('W3', 'Panel?', 'if', 2.3, [440, -400], ifTrue('W3', "={{ $json.action === 'panel' }}")),
       runWorkflow('W3', 'Menu', [660, -500], IDS.menu),
+      // Профиль (W11, 13.10.2026): резюме PDF, кнопки pf:*, ответы на вопросы профиля
+      node('W3', 'Profile?', 'if', 2.3, [330, -320], ifTrue('W3', "={{ $json.action === 'profile' }}")),
+      runWorkflow('W3', 'Profile', [550, -380], IDS.profile),
       // Робот-отклик (этап 6): 🚀, ⛔, ▶️, /go, ответ на фото капчи — всё решает W9 Robot (он и отвечает на нажатие)
       node('W3', 'Robot?', 'if', 2.3, [440, -250], ifTrue('W3', "={{ $json.action === 'robot' }}")),
       runWorkflow('W3', 'Robot', [660, -300], IDS.robot),
@@ -1524,10 +1627,13 @@ const workflows = {
       runWorkflow('W3', 'Write letter', [3080, 100], IDS.letter),
     ],
     [
-      ['Telegram Trigger', 'Route'],
+      ['Telegram Trigger', 'Settings'],
+      ['Settings', 'Route'],
       ['Route', 'Panel?'],
       ['Panel?', 'Menu', 0],
-      ['Panel?', 'Robot?', 1],
+      ['Panel?', 'Profile?', 1],
+      ['Profile?', 'Profile', 0],
+      ['Profile?', 'Robot?', 1],
       ['Robot?', 'Robot', 0],
       ['Robot?', 'Button?', 1],
       ['Button?', 'Vacancy', 0],
@@ -1627,38 +1733,8 @@ const workflows = {
         returnAll: false,
         limit: 1,
       }),
-      node(
-        'W5',
-        'Resume',
-        'readWriteFile',
-        1.1,
-        [880, 0],
-        { operation: 'read', fileSelector: '/home/node/.n8n-files/docs/resume.md', options: {} },
-        { executeOnce: true },
-      ),
-      node('W5', 'Resume text', 'extractFromFile', 1.1, [1100, 0], {
-        operation: 'text',
-        binaryPropertyName: 'data',
-        destinationKey: 'resume',
-        options: {},
-      }),
-      node(
-        'W5',
-        'Example',
-        'readWriteFile',
-        1.1,
-        [1320, 0],
-        { operation: 'read', fileSelector: '/home/node/.n8n-files/docs/letter-example.md', options: {} },
-        { executeOnce: true },
-      ),
-      node('W5', 'Example text', 'extractFromFile', 1.1, [1540, 0], {
-        operation: 'text',
-        binaryPropertyName: 'data',
-        destinationKey: 'example',
-        options: {},
-      }),
-      // Провайдер нейросети — из настроек бота (⚙️ → 🤖 Нейросеть)
-      settingsNode('W5', [770, 150]),
+      // Провайдер нейросети и профиль (резюме, подпись, образцы писем) — из настроек бота
+      settingsNode('W5', [1100, 0]),
       code('W5', 'Build letter', 'n8n/w5-letter/build-letter.js', [1760, 0]),
       node('W5', 'Claude?', 'if', 2.3, [1980, 0], ifTrue('W5', "={{ $json.provider === 'claude' }}")),
       node(
@@ -1753,11 +1829,7 @@ const workflows = {
       ['Approved', 'Jobs'],
       ['Jobs', 'Vacancy'],
       ['Vacancy', 'Settings'],
-      ['Settings', 'Resume'],
-      ['Resume', 'Resume text'],
-      ['Resume text', 'Example'],
-      ['Example', 'Example text'],
-      ['Example text', 'Build letter'],
+      ['Settings', 'Build letter'],
       ['Build letter', 'Claude?'],
       ['Claude?', 'Claude', 0],
       ['Claude?', 'Gemini', 1],
@@ -1780,11 +1852,8 @@ const workflows = {
     IDS.summary,
     'W6 Summary',
     [
-      node('W6', 'Schedule', 'scheduleTrigger', 1.4, [0, -100], {
-        // 06:00 МСК = 10:00 по Таиланду: итог прошедших суток
-        rule: { interval: [{ field: 'cronExpression', expression: '0 6 * * *' }] },
-        misfirePolicy: 'coalesce',
-      }),
+      // Запускают «часы» W8 в 10:00 по местному (13.10.2026): часовой пояс человека и сводка после сна Mac
+      node('W6', 'Called by W8', 'executeWorkflowTrigger', 1.1, [0, -100], { inputSource: 'passthrough' }),
       node('W6', 'Manual', 'manualTrigger', 1, [0, 100], {}),
       node('W6', 'All rows', 'dataTable', 1.1, [220, 0], {
         resource: 'row',
@@ -1973,7 +2042,7 @@ const workflows = {
       ),
     ],
     [
-      ['Schedule', 'All rows'],
+      ['Called by W8', 'All rows'],
       ['Manual', 'All rows'],
       ['All rows', 'Plan'],
       ['Plan', 'Expire rows'],
@@ -2217,12 +2286,17 @@ const workflows = {
       settingsNode('W8', [220, 0]),
       code('W8', 'Due', 'n8n/w8-clock/due.js', [440, 0]),
       runWorkflow('W8', 'Collect', [660, 0], IDS.collector),
+      // Утренняя сводка W6 — в 10:00 по местному, раз в день (13.10.2026)
+      code('W8', 'Summary due', 'n8n/w8-clock/summary-due.js', [440, 200]),
+      runWorkflow('W8', 'Summary', [660, 200], IDS.summary),
     ],
     [
       ['Schedule', 'Settings'],
       ['Manual', 'Settings'],
       ['Settings', 'Due'],
       ['Due', 'Collect'],
+      ['Settings', 'Summary due'],
+      ['Summary due', 'Summary'],
     ],
     // Тики без сбора не храним: 96 запусков в сутки. Static data (dispatchedAt) сохраняется и так
     { timezone: 'Europe/Moscow', errorWorkflow: IDS.errors, saveDataSuccessExecution: 'none' },
@@ -2352,7 +2426,7 @@ const workflows = {
           orderByColumn: 'apply_queued_at',
           orderByDirection: 'ASC',
         }),
-        // Живые отклики робота за «день» — с 09:00 по Таиланду (02:00 UTC)
+        // Живые отклики робота за двое суток: «день» робота (с 09:00 по местному) отсчитывает «Gate» (robotToday)
         node(
           'W9',
           'Today',
@@ -2370,7 +2444,7 @@ const workflows = {
                 {
                   keyName: 'applied_at',
                   condition: 'gte',
-                  keyValue: '={{ new Date(Math.floor((Date.now() - 7200000) / 86400000) * 86400000 + 7200000).toISOString() }}',
+                  keyValue: '={{ new Date(Date.now() - 2 * 86400000).toISOString() }}',
                 },
               ],
             },
@@ -2709,11 +2783,254 @@ const workflows = {
     );
   })(),
 
+  // Профиль (13.10.2026, docs/onboarding.md): резюме PDF → нейросеть → «Вот что я понял» → подпись, контакт, пояс →
+  // профиль в settings и первый сбор; потом ⚙️ → 👤 — правка полей, новое резюме, правка нейросетью.
+  'w11-profile': workflow(
+    IDS.profile,
+    'W11 Profile',
+    [
+      // Вызов из W3: { action: 'profile', op, field, value, text, file, chatId, queryId, messageId, … }
+      node('W11', 'Called by W3', 'executeWorkflowTrigger', 1.1, [0, -100], { inputSource: 'passthrough' }),
+      // Ручной запуск — панель профиля
+      node('W11', 'Manual', 'manualTrigger', 1, [0, 100], {}),
+      code('W11', 'Job', 'n8n/w11-profile/job.js', [220, 0]),
+      // Нажатие кнопки — сразу ответ (убрать «часики»): разбор резюме идёт секунды
+      node('W11', 'Answer?', 'if', 2.3, [440, -250], ifTrue('W11', '={{ Boolean($json.queryId) }}')),
+      answerQuery('W11', 'Answer', [660, -250], "={{ $('Job').first().json.queryId }}", '', { onError: 'continueRegularOutput' }),
+      settingsNode('W11', [440, 0]),
+      code('W11', 'Plan', 'n8n/w11-profile/plan.js', [660, 0]),
+      node('W11', 'Route', 'switch', 3.4, [880, 0], {
+        mode: 'expression',
+        numberOutputs: 3,
+        output: "={{ ({ pdf: 0, llm: 1, step: 2 })[$json.route] }}",
+        options: {},
+      }),
+      // Резюме PDF: «Читаю…» (станет панелью) → файл из Telegram → текст
+      telegram('W11', 'Reading', [1100, -400], { text: '📄 Читаю резюме…', fields: { disable_notification: true } }),
+      node(
+        'W11',
+        'Get file',
+        'telegram',
+        1.2,
+        [1320, -400],
+        { resource: 'file', operation: 'get', fileId: "={{ $('Job').first().json.file.id }}", download: true, additionalFields: {} },
+        { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
+      ),
+      node(
+        'W11',
+        'Extract PDF',
+        'extractFromFile',
+        1.1,
+        [1540, -400],
+        { operation: 'pdf', binaryPropertyName: 'data', options: { joinPages: true, maxPages: 10 } },
+        { onError: 'continueRegularOutput' },
+      ),
+      code('W11', 'PDF text', 'n8n/w11-profile/pdf-text.js', [1760, -400]),
+      node('W11', 'To LLM?', 'if', 2.3, [1980, -400], ifTrue('W11', '={{ $json.toLlm }}')),
+      // Нейросеть: разбор резюме или правка профиля по пожеланию — тот же провайдер, что для оценки
+      code('W11', 'Build extract', 'n8n/w11-profile/build-extract.js', [2200, -200]),
+      node('W11', 'Claude?', 'if', 2.3, [2420, -200], ifTrue('W11', "={{ $json.provider === 'claude' }}")),
+      node(
+        'W11',
+        'Claude',
+        'httpRequest',
+        4.5,
+        [2640, -300],
+        llmRequest({
+          url: 'https://api.anthropic.com/v1/messages',
+          credential: 'anthropicApi',
+          headers: [['anthropic-version', '2023-06-01']],
+          interval: 1000,
+        }),
+        { credentials: { anthropicApi: { id: IDS.claudeCredential, name: 'Claude' } }, onError: 'continueRegularOutput' },
+      ),
+      node(
+        'W11',
+        'Gemini',
+        'httpRequest',
+        4.5,
+        [2640, -100],
+        llmRequest({
+          url: '=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.model }}:generateContent',
+          credential: 'googlePalmApi',
+          interval: 1000,
+        }),
+        { credentials: { googlePalmApi: { id: IDS.geminiCredential, name: 'Gemini' } }, onError: 'continueRegularOutput' },
+      ),
+      code('W11', 'Parse profile', 'n8n/w11-profile/parse-profile.js', [2860, -200]),
+      node('W11', 'Parsed?', 'if', 2.3, [3080, -200], ifTrue('W11', '={{ $json.ok }}')),
+      // Офис или гибрид — город из резюме → регион hh (автоподсказка hh.ru)
+      node(
+        'W11',
+        'Area?',
+        'if',
+        2.3,
+        [3300, -300],
+        ifTrue('W11', "={{ $json.draft.facts.formats.some((f) => f !== 'REMOTE') && Boolean($json.draft.facts.city) && $json.draft.search.area?.name !== $json.draft.facts.city }}"),
+      ),
+      node(
+        'W11',
+        'Area lookup',
+        'httpRequest',
+        4.5,
+        [3520, -400],
+        {
+          method: 'GET',
+          url: 'https://hh.ru/autosuggest/multiprefix/v2',
+          sendQuery: true,
+          specifyQuery: 'keypair',
+          queryParameters: pairs([
+            ['d', 'areas_RU'],
+            ['q', '={{ $json.draft.facts.city }}'],
+          ]),
+          sendHeaders: true,
+          specifyHeaders: 'keypair',
+          headerParameters: pairs([BROWSER_HEADERS[0], ['Accept', 'application/json']]),
+          options: { timeout: 15000 },
+        },
+        { onError: 'continueRegularOutput' },
+      ),
+      code('W11', 'Area', 'n8n/w11-profile/area.js', [3740, -400]),
+      // Сколько вакансий за период найдёт hh по черновику — для «Вот что я понял»
+      code('W11', 'Estimate plan', 'n8n/w11-profile/estimate-plan.js', [3960, -300]),
+      node('W11', 'Estimate?', 'if', 2.3, [4180, -300], ifTrue('W11', '={{ !$json.none }}')),
+      node(
+        'W11',
+        'Estimate',
+        'httpRequest',
+        4.5,
+        [4400, -400],
+        hhRequest({ url: '={{ $json.url }}', headers: [...BROWSER_HEADERS, ['Referer', 'https://hh.ru/']], batching: true }),
+        { onError: 'continueRegularOutput' },
+      ),
+      code('W11', 'Estimate parse', 'n8n/w11-profile/estimate.js', [4620, -300]),
+      // Шаг: что показать, что сохранить, запускать ли первый сбор
+      code('W11', 'Step', 'n8n/w11-profile/step.js', [4840, 0]),
+      // Ветки «Step» по порядку (execution order v1, сверху вниз): сохранить → первый сбор → панель → вопрос → удалить
+      node('W11', 'Save?', 'if', 2.3, [5060, -500], ifTrue('W11', '={{ Boolean($json.save) }}')),
+      code('W11', 'Save rows', 'n8n/w11-profile/save-rows.js', [5280, -500]),
+      node('W11', 'Save profile', 'dataTable', 1.1, [5500, -500], {
+        resource: 'row',
+        operation: 'upsert',
+        dataTableId: SETTINGS_TABLE,
+        matchType: 'allConditions',
+        filters: { conditions: [{ keyName: 'name', keyValue: '={{ $json.name }}' }] },
+        columns: setColumns({ name: '={{ $json.name }}', value_json: '={{ $json.value_json }}' }),
+        options: {},
+      }),
+      code('W11', 'Collect job', 'n8n/w11-profile/collect-job.js', [5060, -350]),
+      runWorkflow('W11', 'Run W1', [5280, -350], IDS.collector),
+      // Сводка «Вот что я понял» остаётся в чате без кнопок, шаги — новой панелью (14.10.2026)
+      node('W11', 'Freeze?', 'if', 2.3, [5060, -150], ifTrue('W11', '={{ Boolean($json.freeze) }}')),
+      editMessage(
+        'Freeze summary',
+        [5280, -150],
+        { chatId: "={{ $('Job').first().json.chatId }}", messageId: '={{ $json.freeze.messageId }}', text: '={{ $json.freeze.text }}', rows: null },
+        'W11',
+        { onError: 'continueRegularOutput' },
+      ),
+      code('W11', 'Render', 'n8n/w11-profile/render.js', [5060, 0]),
+      node('W11', 'Layout', 'switch', 3.4, [5280, 0], {
+        mode: 'expression',
+        numberOutputs: PROFILE_LAYOUTS.length * 2,
+        output: '={{ $json.route }}',
+        options: {},
+      }),
+      ...PROFILE_LAYOUTS.flatMap(([layout, rows], i) => [
+        telegram('W11', `New: ${layout}`, [5500, -900 + i * 300], {
+          fields: { disable_notification: true },
+          ...(rows && { markup: { replyMarkup: 'inlineKeyboard', inlineKeyboard: keyboard(rows) } }),
+        }),
+        // Правка панели: «message is not modified» (нажали то же самое) — не ошибка
+        editMessage(
+          `Edit: ${layout}`,
+          [5500, -750 + i * 300],
+          { chatId: '={{ $json.chatId }}', messageId: '={{ $json.messageId }}', text: '={{ $json.text }}', rows },
+          'W11',
+          { onError: 'continueRegularOutput' },
+        ),
+      ]),
+      code('W11', 'Remember', 'n8n/w11-profile/remember.js', [5720, 0]),
+      node('W11', 'Prompt?', 'if', 2.3, [5060, 300], ifTrue('W11', '={{ Boolean($json.prompt) }}')),
+      telegram('W11', 'Prompt', [5280, 300], {
+        text: '={{ $json.prompt }}',
+        fields: { disable_notification: true },
+        markup: { replyMarkup: 'forceReply', forceReply: { force_reply: true } },
+      }),
+      code('W11', 'Delete ids', 'n8n/w11-profile/delete-ids.js', [5060, 500]),
+      node(
+        'W11',
+        'Delete',
+        'telegram',
+        1.2,
+        [5280, 500],
+        { resource: 'message', operation: 'deleteMessage', chatId: '={{ $json.chatId }}', messageId: '={{ $json.messageId }}' },
+        { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
+      ),
+    ],
+    [
+      ['Called by W3', 'Job'],
+      ['Manual', 'Job'],
+      ['Job', 'Answer?'],
+      ['Answer?', 'Answer', 0],
+      ['Job', 'Settings'],
+      ['Settings', 'Plan'],
+      ['Plan', 'Route'],
+      ['Route', 'Reading', 0],
+      ['Route', 'Build extract', 1],
+      ['Route', 'Step', 2],
+      ['Reading', 'Get file'],
+      ['Get file', 'Extract PDF'],
+      ['Extract PDF', 'PDF text'],
+      ['PDF text', 'To LLM?'],
+      ['To LLM?', 'Build extract', 0],
+      ['To LLM?', 'Step', 1],
+      ['Build extract', 'Claude?'],
+      ['Claude?', 'Claude', 0],
+      ['Claude?', 'Gemini', 1],
+      ['Claude', 'Parse profile'],
+      ['Gemini', 'Parse profile'],
+      ['Parse profile', 'Parsed?'],
+      ['Parsed?', 'Area?', 0],
+      ['Parsed?', 'Step', 1],
+      ['Area?', 'Area lookup', 0],
+      ['Area?', 'Estimate plan', 1],
+      ['Area lookup', 'Area'],
+      ['Area', 'Estimate plan'],
+      ['Estimate plan', 'Estimate?'],
+      ['Estimate?', 'Estimate', 0],
+      ['Estimate?', 'Estimate parse', 1],
+      ['Estimate', 'Estimate parse'],
+      ['Estimate parse', 'Step'],
+      ['Step', 'Save?'],
+      ['Save?', 'Save rows', 0],
+      ['Save rows', 'Save profile'],
+      ['Step', 'Collect job'],
+      ['Collect job', 'Run W1'],
+      ['Step', 'Freeze?'],
+      ['Freeze?', 'Freeze summary', 0],
+      ['Step', 'Render'],
+      ['Render', 'Layout'],
+      ...PROFILE_LAYOUTS.flatMap(([layout], i) => [
+        ['Layout', `New: ${layout}`, i * 2],
+        ['Layout', `Edit: ${layout}`, i * 2 + 1],
+        [`New: ${layout}`, 'Remember'],
+      ]),
+      ['Step', 'Prompt?'],
+      ['Prompt?', 'Prompt', 0],
+      ['Step', 'Delete ids'],
+      ['Delete ids', 'Delete'],
+    ],
+    { errorWorkflow: IDS.errors },
+  ),
+
   'w4-errors': workflow(
     IDS.errors,
     'W4 Errors',
     [
       node('W4', 'Error Trigger', 'errorTrigger', 1, [0, 0], {}),
+      // Часовой пояс человека для времени в тревогах; таблица не ответила — тревога всё равно уходит
+      settingsNode('W4', [110, 150], { onError: 'continueRegularOutput' }),
       code('W4', 'Format error', 'n8n/w4-errors/format-error.js', [220, 0]),
       // Открытая тревога с тем же ключом — повтор той же проблемы (07.10.2026). Таблица не ответила —
       // тревога уходит как новая: лучше лишняя тревога, чем потерянная
@@ -2792,7 +3109,8 @@ const workflows = {
       ),
     ],
     [
-      ['Error Trigger', 'Format error'],
+      ['Error Trigger', 'Settings'],
+      ['Settings', 'Format error'],
       ['Format error', 'Find alert'],
       ['Find alert', 'Alert plan'],
       ['Alert plan', 'Repeat?'],
@@ -2804,8 +3122,8 @@ const workflows = {
   ),
 };
 
-mkdirSync(`${ROOT}n8n/workflows`, { recursive: true });
+mkdirSync(join(ROOT, 'n8n/workflows'), { recursive: true });
 for (const [file, wf] of Object.entries(workflows)) {
-  writeFileSync(`${ROOT}n8n/workflows/${file}.json`, `${JSON.stringify(wf, null, 2)}\n`);
+  writeFileSync(join(ROOT, `n8n/workflows/${file}.json`), `${JSON.stringify(wf, null, 2)}\n`);
   console.log(`n8n/workflows/${file}.json  ${wf.name} (${wf.nodes.length} нод)`);
 }
