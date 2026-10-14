@@ -12,7 +12,10 @@
 
 // @include n8n/shared/settings.js
 
-const shadow = loadSettings($('Settings').all())['llm.shadow'];
+const settings = loadSettings($('Settings').all());
+const shadow = settings['llm.shadow'];
+// Первый поиск после онбординга — без карточек (W2 «First save» сохранит оценки, «Summary» пришлёт итог)
+if (settings['profile.first_quiet']) return [];
 
 const silent = quietHours();
 

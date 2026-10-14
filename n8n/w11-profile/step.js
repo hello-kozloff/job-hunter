@@ -42,7 +42,7 @@ const ran = (name) => {
   }
 };
 
-const out = { save: null, collect: false, view: null, prompt: null, deleteIds: [], toast: '' };
+const out = { save: null, collect: false, view: null, prompt: null, deleteIds: [], toast: '', freeze: null };
 // Панель — сообщение с нажатой кнопкой; новый PDF — «📄 Читаю резюме…»; ответ на вопрос — панель из static data
 const panelId = job.messageId || ran('Reading')?.result?.message_id || state.panelId || 0;
 const show = (layout, text, b = {}) => {
@@ -60,17 +60,9 @@ const signatureNow = () => state.signature ?? facts().first_name ?? '';
 const contactNow = () => state.contact ?? defaultContact(facts(), job.username);
 const tzNow = () => state.tz ?? TZ;
 
+const summaryText = () => ['📄 <b>Вот что я понял из резюме</b>', '', profileSummary(state.draft, state.estimate ?? [])].join('\n');
 function summaryView(note = '') {
-  show(
-    'pf summary',
-    [
-      '📄 <b>Вот что я понял из резюме</b>',
-      '',
-      profileSummary(state.draft, state.estimate ?? []),
-      '',
-      note || 'Всё верно? Если нет — «✏️ Поправить» и напиши словами, что не так.',
-    ].join('\n'),
-  );
+  show('pf summary', `${summaryText()}\n\n${note || 'Всё верно? Если нет — «✏️ Поправить» и напиши словами, что не так.'}`);
 }
 function genderView() {
   show('pf gender', 'В резюме пол не указан, а письма пишутся от первого лица. Как писать о себе: «делал» или «делала»?');
@@ -148,7 +140,15 @@ function showStep() {
   ({ summary: summaryView, gender: genderView, signature: signatureView, contact: contactView, tz: tzView })[state.step]?.();
 }
 function nextStep() {
-  if (state.step === 'summary') state.step = state.draft.facts.gender ? 'signature' : 'gender';
+  // Сводка остаётся в чате (14.10.2026: иначе её затирали следующие шаги и предупреждения было не видно) — без кнопок,
+  // а шаги идут новой панелью
+  if (state.step === 'summary') {
+    out.freeze = { messageId: panelId, text: `${summaryText()}\n\n✅ Подтверждено` };
+    state.step = state.draft.facts.gender ? 'signature' : 'gender';
+    showStep();
+    out.view.messageId = 0;
+    return;
+  }
   else if (state.step === 'gender') state.step = 'signature';
   else if (state.step === 'signature') state.step = 'contact';
   else if (state.step === 'contact') state.step = 'tz';
@@ -160,15 +160,19 @@ function finish() {
   out.save = {
     ...profileRows(state.draft, { resume: state.text, signature: signatureNow(), contact: contactNow(), tz }),
     'profile.ready': true,
+    // Первый поиск — без карточек, одним итогом (W2)
+    'profile.first_quiet': true,
   };
   out.collect = true;
   clear();
   plain(
     [
-      '✅ <b>Готово!</b> Профиль сохранён, первый сбор уже идёт — карточки вакансий придут сюда.',
+      '✅ <b>Готово!</b> Профиль сохранён.',
       '',
-      'Под карточкой: ✅ откликнусь (бот напишет письмо) · 🤔 возможно · ❌ мимо. Если не согласен с нейросетью, бот спросит «Почему?» — так правила становятся точнее.',
-      'Меню — кнопки под полем ввода. Профиль, поиск и правила — ⚙️ Настройки → 👤 Профиль.',
+      '⏳ <b>Идёт первый поиск</b> — обычно 5–15 минут: открываю страницы вакансий и оцениваю их нейросетью. Карточки по одной слать не буду — пришлю одно сообщение с итогом, а вакансии будут в 📋 Вакансии.',
+      '',
+      'Дальше новые вакансии приходят карточками: ✅ откликнусь (бот напишет письмо) · 🤔 возможно · ❌ мимо. Если не согласен с нейросетью, бот спросит «Почему?» — так правила становятся точнее.',
+      'Профиль, поиск и правила — ⚙️ Настройки → 👤 Профиль.',
     ].join('\n'),
   );
 }

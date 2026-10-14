@@ -29,7 +29,14 @@ const flag = (name) => {
   return i >= 0 ? args[i + 1] : undefined;
 };
 const rl = createInterface({ input: stdin, output: stdout });
-const ask = async (q) => (await rl.question(q)).trim();
+// Ввод закрыт (ответы пришли через pipe и кончились) — считаем ответом «Enter», а не падаем
+const ask = async (q) => {
+  try {
+    return (await rl.question(q)).trim();
+  } catch {
+    return '';
+  }
+};
 const say = (s = '') => console.log(s);
 const step = (n, title) => say(`\n${n}. ${title}`);
 const fail = (msg) => {
@@ -173,6 +180,13 @@ try {
   execFileSync('docker', ['compose', 'up', '-d', '--wait', 'n8n'], { cwd: ROOT, stdio: 'inherit' });
 } catch {
   fail('n8n не запустился — смотри вывод docker compose выше');
+}
+// Контейнер «здоров» раньше, чем n8n принимает запросы (миграции при первом старте) — ждём /healthz
+for (let i = 0; ; i++) {
+  const ok = await fetch(`http://127.0.0.1:${n8nPort}/healthz`).then((r) => r.status === 200, () => false);
+  if (ok) break;
+  if (i > 90) fail('n8n не отвечает на /healthz 3 минуты — смотри docker compose logs n8n');
+  await sleep(2000);
 }
 if (!env.N8N_OWNER_PASSWORD) {
   const email = (await ask('   Почта для входа в интерфейс n8n (Enter — owner@example.com): ')) || 'owner@example.com';
