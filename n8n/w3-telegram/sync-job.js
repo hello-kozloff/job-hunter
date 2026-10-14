@@ -1,6 +1,6 @@
 // W3 · Sync job — обновить панель меню (W7 Bot menu), если на ней открыта эта вакансия:
-//   решение на карточке в ленте («Apply choice», не из панели) или «📨 Отправил» / «↩️ Отменить» под письмом
-//   («Apply sent») — кнопки решения на панели должны совпадать с карточкой в ленте.
+//   решение на карточке в ленте («Apply choice», не из панели), «📨 Отправил» / «↩️ Отменить» под письмом
+//   («Apply sent») или «↩️ Отменить отклик» («Apply cancel») — кнопки решения на панели должны совпадать с карточкой в ленте.
 // Нода: Code, режим «Run Once for All Items». Открыта другая вакансия или список — W7 ничего не делает.
 // Выход: { action: 'panel', view: 'sync', id, choose, … } → «Panel sync» (Execute Workflow, без ожидания).
 
@@ -11,9 +11,10 @@ const from = (name) => {
     return null; // нода не выполнялась в этом запуске
   }
 };
-const sent = from('Apply sent');
-const choice = sent ? null : from('Apply choice');
-const s = sent ?? choice;
+const cancel = from('Apply cancel');
+const sent = cancel ? null : from('Apply sent');
+const choice = cancel || sent ? null : from('Apply choice');
+const s = cancel ?? sent ?? choice;
 
 return [
   {
