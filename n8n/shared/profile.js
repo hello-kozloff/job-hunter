@@ -27,6 +27,9 @@ const COMMON_TOPIC = /офис|гибрид|удал[её]н|английск|з
 const LEVEL_WORD = /^(главн|ведущ|старш|младш|senior|lead|junior|middle|head|стажер|стажёр|intern)/i;
 // Слова поиска: длинные фразы не обрезаем (обрывок испортил бы запрос hh), а отбрасываем — WORD_RE: до 30 знаков
 const words = (a, n) => list(a, 30, 200).filter((w) => WORD_RE.test(w)).slice(0, n);
+// Слишком общие слова сами по себе (14.10.2026: «менеджер» в названии дал 963 вакансии за сутки) — во фразах их можно
+// («менеджер по работе с клиентами»), отдельным словом — нет
+const GENERIC_WORD = /^(менеджер|manager|специалист|specialist|сотрудник|работник|employee|эксперт|expert|консультант|оператор|начальник|руководитель|директор|инженер|engineer)$/i;
 
 // Ответ нейросети (схема n8n/w11-profile/build-extract.js) → черновик. Что не прошло проверку — пусто + предупреждение
 function draftFromAnswer(answer, previous = {}) {
@@ -59,8 +62,12 @@ function draftFromAnswer(answer, previous = {}) {
   if (!formats.length) warnings.push('формат работы не понял — ищу удалёнку');
   const roles = list(answer?.search?.roles, 5, 6).filter((id) => /^\d+$/.test(id) && HH_ROLES[id]).slice(0, 3);
   if (!roles.length) warnings.push('профессию в справочнике hh не нашёл — ищу по словам без роли');
-  const inName = words(answer?.search?.in_name, 15);
-  const stop = words(answer?.search?.stop_words, 10).filter((w) => !LEVEL_WORD.test(w));
+  const inName = words(answer?.search?.in_name, 15).filter((w) => !GENERIC_WORD.test(w.trim()));
+  // Стоп-слово не должно резать выбранные роли (роль «Менеджер по продажам» и стоп-слово «продаж» спорили)
+  const roleText = roles.map((id) => HH_ROLES[id]).join(' ').toLowerCase();
+  const stop = words(answer?.search?.stop_words, 10).filter((w) => !LEVEL_WORD.test(w) && !roleText.includes(w.replace(/\*$/, '').toLowerCase()));
+  // «Везде в тексте» шире названия в разы — только если слов для названия мало
+  const anywhere = inName.length >= 3 ? [] : words(answer?.search?.anywhere, 3);
   const rules = Object.fromEntries(
     ['skip', 'maybe', 'apply', 'ignore'].map((k) => [k, list(answer?.rules?.[k], 8, 300).map(ruleLine).filter((l) => l && !COMMON_TOPIC.test(l))]),
   );
@@ -70,7 +77,7 @@ function draftFromAnswer(answer, previous = {}) {
     search: {
       roles,
       in_name: inName,
-      anywhere: words(answer?.search?.anywhere, 3),
+      anywhere,
       stop_words: stop,
       area: previous.search?.area ?? null,
     },
@@ -180,7 +187,11 @@ function profileSummary(draft, estimate = []) {
   const f = draft.facts;
   const formats = f.formats.map((x) => FORMAT_NAMES[x]).join(', ');
   const office = f.formats.some((x) => x !== 'REMOTE');
+  const wide = estimate.reduce((n, e) => n + (e.total ?? 0), 0);
   const lines = [
+    wide > 150
+      ? `⚠️ <b>Широкий поиск: ~${wide} вакансий за сутки.</b> Нейросети придётся оценивать много, и мусора будет много. Лучше сузить: «✏️ Поправить» → например «ищи только в названии: координатор, ассистент руководителя».\n`
+      : null,
     `👤 <b>${esc(f.name || 'Без имени')}</b> · ${esc(f.position || '—')} · ${LEVEL_NAMES[f.level]}${f.years ? `, ${f.years} г.` : ''}`,
     f.skills.length ? `🧰 ${esc(f.skills.slice(0, 8).join(', '))}` : null,
     `📍 ${esc([f.city, f.country].filter(Boolean).join(', ') || 'город не указан')} · ${esc(formats)}${office && !draft.search.area ? ' · ⚠️ город для офиса на hh не нашёл — офис не ищу' : ''}`,
@@ -192,7 +203,6 @@ function profileSummary(draft, estimate = []) {
     draft.search.anywhere.length ? `• везде в тексте: ${esc(draft.search.anywhere.join(' · '))}` : null,
     draft.search.stop_words.length ? `• мимо, если в названии: ${esc(draft.search.stop_words.join(' · '))}` : null,
     estimate.length ? `• за сутки на hh: ${estimate.map((e) => `${esc(e.label)} — ${e.total ?? '?'}`).join(' · ')}` : null,
-    estimate.some((e) => e.total > 150) ? '⚠️ Вакансий много: оценка займёт много запросов к нейросети. Можно сузить: ✏️ «ищи только …»' : null,
     '',
     '📜 <b>Правила оценки</b>',
     draft.rules.apply.length ? `🟢 ${esc(draft.rules.apply.join('; '))}` : null,

@@ -79,6 +79,9 @@ const SETTINGS = {
   // или импорт (node scripts/n8n-api.mjs profile-import). Умолчания — поведение до онбординга: онбординг
   // записывает все свои строки явно. Пресет frontend — откалиброванные правила владельца в коде (W2, W5)
   'profile.ready': { default: false, options: [false, true] },
+  // Первый поиск после онбординга — без карточек: W2 копит оценки и шлёт одно итоговое сообщение (14.10.2026,
+  // решение пользователя). Ставит W11, снимает W2, когда оценивать больше нечего
+  'profile.first_quiet': { default: false, options: [false, true] },
   'profile.preset': { default: 'generic', options: ['generic', 'frontend'] },
   'profile.resume': { default: '', text: 30000 },
   'profile.extra': { default: '', text: 4000 },
