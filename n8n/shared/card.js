@@ -73,7 +73,9 @@ function cardText(r) {
   const who = r.apply_by === 'robot' ? '🚀 Отклик отправлен роботом' : r.apply_by === 'hh' ? '📨 Отклик есть на hh' : '📨 Отклик отправлен';
   const sent =
     r.status === 'applied' && r.my_decision !== 'earlier' ? `${who}${r.applied_at ? ` ${localDate(r.applied_at)}` : ''}` : '';
-  return [`<a href="${r.url}"><b>${esc(r.title)}</b></a>`, meta, flags, verdict, mine, sent, FINAL[r.status] ?? '']
+  // Несколько резюме (docs/resumes.md): вакансия не основного резюме — его название (пишет W1)
+  const resume = r.resume_id && r.resume_name ? `📄 ${esc(r.resume_name)}` : '';
+  return [`<a href="${r.url}"><b>${esc(r.title)}</b></a>`, meta, resume, flags, verdict, mine, sent, FINAL[r.status] ?? '']
     .filter(Boolean)
     .join('\n');
 }

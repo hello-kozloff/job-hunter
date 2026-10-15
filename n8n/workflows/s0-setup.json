@@ -243,6 +243,10 @@
             {
               "name": "resume_id",
               "type": "string"
+            },
+            {
+              "name": "resume_name",
+              "type": "string"
             }
           ]
         },
