@@ -563,6 +563,10 @@ const RESUME_LAYOUTS = [
         ['⬆️ Upgrade резюме', 'rs:up'],
       ],
       [
+        ['💼 Опыт работы', 'rx:view'],
+        ['🧰 Навыки hh', 'rk:view'],
+      ],
+      [
         ['📄 Резюме файлом', 'rs:file'],
         ['↩️ Откатить', 'rs:undo'],
       ],
@@ -679,6 +683,54 @@ const RESUME_LAYOUTS = [
       ],
     ],
   ],
+  // Разделы резюме (часть D, docs/recommendations.md → «Разделы резюме»): робот не прочитал hh, сверка раздела,
+  // место только на hh, ключевые навыки hh (8 галочек на страницу), опыт работы
+  [
+    'rc retry',
+    [
+      [
+        ['🔄 Повторить', panelButton('retry')],
+        ['➡️ Без hh', panelButton('nohh')],
+      ],
+      [['❌ Отмена', panelButton('x')]],
+    ],
+  ],
+  [
+    'rc field',
+    [
+      [
+        ['🤖 Оставить как в боте', panelButton('bot')],
+        ['🌐 Взять с hh', panelButton('hh')],
+      ],
+      [['❌ Отмена', panelButton('x')]],
+    ],
+  ],
+  [
+    'rc place',
+    [
+      [
+        ['➕ Добавить в бота', panelButton('add')],
+        ['⏭ Не добавлять', panelButton('skip')],
+      ],
+      [['❌ Отмена', panelButton('x')]],
+    ],
+  ],
+  [
+    'rk skills8',
+    [
+      ...[0, 2, 4, 6].map((i) => [
+        [panelButton(`o${i}.text`), panelButton(`o${i}.cb`)],
+        [panelButton(`o${i + 1}.text`), panelButton(`o${i + 1}.cb`)],
+      ]),
+      [
+        [panelButton('prev.text'), panelButton('prev.cb')],
+        [panelButton('done.text'), panelButton('done.cb')],
+        [panelButton('next.text'), panelButton('next.cb')],
+      ],
+      [['❌ Отмена', panelButton('x')]],
+    ],
+  ],
+  ['rx exp', [[['⬆️ Улучшить опыт', 'rx:up']], [['⬅️ Рекомендации', 'rs:view']]]],
 ];
 
 // W3: состояние после нажатия кнопки, которое посчитали ноды «Apply choice», «Apply sent» и «Apply cancel»
@@ -3270,10 +3322,33 @@ const workflows = {
       code('W13', 'Rows count', 'n8n/w13-resume/rows-count.js', [1320, -100]),
       node('W13', 'Route', 'switch', 3.4, [1540, 0], {
         mode: 'expression',
-        numberOutputs: 3,
-        output: "={{ ({ llm: 0, file: 1, step: 2 })[$('Plan').first().json.route] }}",
+        numberOutputs: 4,
+        output: "={{ ({ llm: 0, file: 1, step: 2, robot: 3 })[$('Plan').first().json.route] }}",
         options: {},
       }),
+      // Разделы резюме (часть D): робот читает резюме hh (только GET) → нейросеть раскладывает текст бота. Робота нет —
+      // раскладка без hh; занят, капча, не вошёл — «Step» покажет причину
+      editMessage(
+        'Wait hh',
+        [1760, -700],
+        {
+          chatId: "={{ $('Job').first().json.chatId }}",
+          messageId: "={{ $('Plan').first().json.wait.messageId }}",
+          text: "={{ $('Plan').first().json.wait.text }}",
+          rows: null,
+        },
+        'W13',
+        { onError: 'continueRegularOutput' },
+      ),
+      applierNode('W13', 'Read hh', [1980, -700], {
+        method: 'POST',
+        path: '/resume/read',
+        body: "={{ JSON.stringify({ hash: $('Plan').first().json.hhHash || '' }) }}",
+        timeout: 120000,
+        full: true,
+      }),
+      code('W13', 'Hh', 'n8n/w13-resume/hh.js', [2200, -700]),
+      node('W13', 'Hh ok?', 'if', 2.3, [2420, -700], ifTrue('W13', "={{ $json.next === 'llm' }}")),
       // Нейросеть: «⏳ …» на панели → запрос → разбор. Тот же провайдер, что для оценки (модель — как у W11)
       editMessage(
         'Wait',
@@ -3403,6 +3478,12 @@ const workflows = {
       ['Route', 'Wait', 0],
       ['Route', 'Resume file', 1],
       ['Route', 'Step', 2],
+      ['Route', 'Wait hh', 3],
+      ['Wait hh', 'Read hh'],
+      ['Read hh', 'Hh'],
+      ['Hh', 'Hh ok?'],
+      ['Hh ok?', 'Build', 0],
+      ['Hh ok?', 'Step', 1],
       ['Wait', 'Build'],
       ['Build', 'Claude?'],
       ['Claude?', 'Claude', 0],
