@@ -3429,7 +3429,9 @@ const workflows = {
       ['Step', 'Delete ids'],
       ['Delete ids', 'Delete'],
     ],
-    { errorWorkflow: IDS.errors },
+    // Панель и анализ читают всю таблицу вакансий (~1 МБ с описаниями) — успешные запуски не храним, как у W7.
+    // Сессия правки — в static data, она сохраняется и без этого; ошибки сохраняются и идут в W4
+    { errorWorkflow: IDS.errors, saveDataSuccessExecution: 'none' },
   ),
 
   'w4-errors': workflow(
