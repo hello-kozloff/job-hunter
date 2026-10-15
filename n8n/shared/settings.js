@@ -105,6 +105,13 @@ const SETTINGS = {
   // Разделы резюме (W13, n8n/shared/cv.js): разметка поверх profile.resume — должность, «О себе», ключевые навыки hh
   // и места работы (общие для всех резюме). null — резюме ещё не раскладывали. Пишет только W13
   cv: { default: null, cv: true },
+  // Несколько резюме (16.10.2026, docs/resumes.md): список { id, name, active, hh } и данные резюме r2–r5.
+  // Основное резюме r1 — глобальные ключи profile.*, llm.*, search.*; пустой список — одно основное (n8n/shared/resumes.js)
+  resumes: { default: [], resumes: true },
+  'resume.r2': { default: null, resumeData: true },
+  'resume.r3': { default: null, resumeData: true },
+  'resume.r4': { default: null, resumeData: true },
+  'resume.r5': { default: null, resumeData: true },
 };
 
 // Встроенные спорные случаи промпта W2: как узнать их в списке пользователя, решение по умолчанию
@@ -195,6 +202,8 @@ function validSetting(spec, value) {
   if (spec.lines) return validLines(value, spec.lines);
   if (spec.history) return validHistory(value, spec.history);
   if (spec.cv) return validCv(value);
+  if (spec.resumes) return validResumes(value);
+  if (spec.resumeData) return validResumeData(value);
   if (spec.object) return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
   if (spec.rules) {
     return (
@@ -270,6 +279,49 @@ function validCv(v) {
     )
   );
 }
+
+// Поля резюме r2–r5 (resume.<id>) → ключи настроек, которые они подменяют у основного резюме. Проверка значения — по
+// спецификации ключа; поле, которого нет, берётся по умолчанию ключа
+const RESUME_FIELDS = {
+  resume: 'profile.resume',
+  extra: 'profile.extra',
+  facts: 'profile.facts',
+  about: 'profile.about',
+  rules: 'llm.rules',
+  cases: 'llm.cases',
+  roles: 'search.roles',
+  in_name: 'search.in_name',
+  anywhere: 'search.anywhere',
+  formats: 'search.formats',
+  area: 'search.area',
+  education: 'search.education',
+};
+
+// Данные резюме: null (нет) или объект только из известных полей с допустимыми значениями
+const validResumeData = (v) =>
+  v === null ||
+  (Boolean(v) &&
+    typeof v === 'object' &&
+    !Array.isArray(v) &&
+    Object.entries(v).every(([field, value]) => field in RESUME_FIELDS && validSetting(SETTINGS[RESUME_FIELDS[field]], value)));
+
+// Список резюме: 1–5 записей, r1 обязателен, id уникальны (r1–r5), у привязки к hh — hash и название
+const validResumes = (list) =>
+  Array.isArray(list) &&
+  (list.length === 0 ||
+    (list.length <= 5 &&
+      list.some((r) => r?.id === 'r1') &&
+      new Set(list.map((r) => r?.id)).size === list.length &&
+      list.every(
+        (r) =>
+          /^r[1-5]$/.test(r?.id ?? '') &&
+          typeof r.name === 'string' &&
+          r.name.trim().length > 0 &&
+          r.name.length <= 60 &&
+          typeof r.active === 'boolean' &&
+          (r.hh === null ||
+            (Boolean(r.hh) && typeof r.hh.hash === 'string' && r.hh.hash.length <= 64 && typeof r.hh.title === 'string' && r.hh.title.length <= 200)),
+      )));
 
 // Текст резюме для промптов W2 и W5: резюме и «Дополнительно» (то, что человек дописал сам) — своим разделом
 function resumeText(s) {
