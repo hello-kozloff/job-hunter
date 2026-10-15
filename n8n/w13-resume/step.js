@@ -82,6 +82,7 @@ function rootView(note = '') {
     coverageLine(st),
     st?.missing.length ? `    нет в резюме: ${esc(st.missing.slice(0, 5).map((x) => x.name).join(' · '))}` : null,
     '',
+    '🔍 <b>Анализ</b> — посмотрю резюме глазами ATS и роботов hh, задам до 8 вопросов кнопками и предложу правки.',
     '⬆️ <b>Upgrade</b> — напиши, что добавить или поменять: покажу, куда впишу, и спрошу про каждую правку.',
     '📄 <b>Файлом</b> — резюме бота целиком. ↩️ <b>Откатить</b> — вернуть версию до последней правки.',
     note ? `\n${note}` : null,
@@ -111,6 +112,24 @@ function planView(note = '', messageId = panelId) {
   sess.planMsg = messageId;
   const cb = (v) => `ru:${sess.sid}:${v}`;
   show('ru plan', `${sess.planText}\n\n${note ? `${note}\n` : ''}Верно понял?`, { yes: cb('y'), edit: cb('e'), no: cb('n') }, messageId);
+}
+
+// Отчёт анализа: главное и сколько вопросов. После «▶️ Начать» остаётся в чате, вопросы — новой панелью
+function reportView(messageId = panelId) {
+  const sess = state.session;
+  const n = sess.questions.length;
+  sess.planText = ['🔍 <b>Резюме глазами ATS и роботов hh</b>', coverageLine(sess.report.stats), '', ...sess.report.summary.map((x) => `• ${esc(x)}`)].join('\n');
+  sess.planMsg = messageId;
+  if (!n) {
+    state.session = null;
+    return show('rs back', `${sess.planText}\n\nВопросов к тебе нет: по этим правилам резюме в порядке.`, { back: BACK_RECS }, messageId);
+  }
+  show(
+    'rs report',
+    `${sess.planText}\n\nЗадам ${n} ${plural(n, 'вопрос', 'вопроса', 'вопросов')}: по ответам предложу правки, каждую покажу отдельно. «⏹ Хватит» — в любой момент.`,
+    { go: `rq:${sess.sid}:go`, no: `rq:${sess.sid}:x` },
+    messageId,
+  );
 }
 
 function questionView(messageId = panelId, note = '') {
@@ -154,15 +173,27 @@ function patchView(messageId = panelId, note = '') {
 }
 
 // Вопросы и правки идут новой панелью под планом: план остаётся в чате без кнопок
-function moveOn() {
+function moveOn(mark = '✅ Верно') {
   const sess = state.session;
   if (sess.moved) return panelId;
   sess.moved = true;
-  if (sess.planMsg && sess.planText) out.freeze = { messageId: sess.planMsg, text: `${sess.planText}\n\n✅ Верно` };
+  if (sess.planMsg && sess.planText) out.freeze = { messageId: sess.planMsg, text: `${sess.planText}\n\n${mark}` };
   return 0;
 }
 
 // Итог сессии: сохранить черновик (если резюме не поменялось за это время), версию — в историю для отката
+// Подсказки анализа про фильтры hh, на которые человек ответил «поменяю» или своими словами
+function tipsText(sess) {
+  const tips = sess.questions
+    .map((q, i) => ({ q, a: sess.answers[i] }))
+    .filter(({ q, a }) => q.hint && a && !a.skipped && (a.text || a.picked?.[0] === q.options[0]));
+  if (!tips.length) return null;
+  return [
+    '\n📝 <b>На hh поменяй сам</b> (<a href="https://hh.ru/applicant/resumes">Мои резюме</a>), эти поля бот не трогает:',
+    ...tips.map(({ q, a }) => `• ${esc(q.tip)}${a.text ? ` (ты: «${esc(oneLine(a.text, 120))}»)` : ''}`),
+  ].join('\n');
+}
+
 function finish() {
   const sess = state.session;
   state.session = null;
@@ -170,8 +201,12 @@ function finish() {
   const failNote = failed.length
     ? `⚠️ Не применил: ${esc(failed.map((p) => `${p.where} (${p.note})`).join('; '))}`
     : null;
+  const tips = tipsText(sess);
   const changed = sess.draft.resume !== sess.original.resume || sess.draft.extra !== sess.original.extra;
-  if (!changed) return show('rs back', ['Ничего не поменял — резюме прежнее.', failNote].filter(Boolean).join('\n'), { back: BACK_RECS });
+  if (!changed) {
+    const head = sess.patches.length || sess.kind === 'upgrade' ? 'Ничего не поменял — резюме прежнее.' : 'Правок в резюме бота нет.';
+    return show('rs back', [head, failNote, tips].filter(Boolean).join('\n'), { back: BACK_RECS });
+  }
   if (resumeHash(resumeDraft(s)) !== sess.base) {
     return show('rs back', '⚠️ Пока шла правка, резюме поменялось (новый PDF?). Правки не сохранил — начни заново.', { back: BACK_RECS });
   }
@@ -189,6 +224,7 @@ function finish() {
     before?.coverage != null ? `🎯 Навыки твоих вакансий в резюме: ${percent(before.coverage)} → <b>${percent(after.coverage)}</b>` : null,
     'Новое резюме уже работает в оценке вакансий и в письмах.',
     failNote,
+    tips,
   ];
   show('rs done', lines.filter(Boolean).join('\n'));
 }
@@ -218,7 +254,9 @@ function undo() {
 function current() {
   const sess = state.session;
   if (!sess) return rootView();
+  if (sess.done) return finish();
   if (sess.patches.length) return sess.pi < sess.patches.length ? patchView() : finish();
+  if (sess.kind === 'analyze' && !sess.started) return sess.report ? reportView() : rootView();
   if (sess.plan && !sess.planOk) return planView();
   if (sess.qi < sess.questions.length) return questionView();
   return rootView();
@@ -235,6 +273,12 @@ if (plan.stale) {
 } else if (plan.route === 'llm') {
   if (!parsed?.ok) {
     show('rs retry', `⚠️ Не вышло: ${esc(parsed?.problem ?? 'нейросеть не ответила')}.`, { retry: sess ? `rr:${sess.sid}` : 'rs:view' }, plan.wait?.messageId || panelId);
+  } else if (plan.mode === 'analyze') {
+    sess.report = { summary: parsed.summary, stats: ran('Build')?.stats ?? null };
+    sess.questions = parsed.questions;
+    sess.qi = 0;
+    sess.answers = [];
+    reportView(plan.wait?.messageId || panelId);
   } else if (plan.mode === 'plan') {
     sess.plan = parsed.plan;
     sess.questions = parsed.questions;
@@ -266,7 +310,11 @@ if (plan.stale) {
     patchView(panelId, plan.keep && p.kind === 'add' ? '➕ Переписал: старый текст остаётся.' : '✏️ Переделал правку.');
   }
 } else if (job.op === 'view' || job.op === 'analyze') {
-  rootView(job.op === 'analyze' ? '🔍 Анализ резюме появится следующим обновлением.' : '');
+  // analyze сюда — только без профиля: иначе Plan отправил к нейросети
+  rootView();
+} else if (job.op === 'start' && sess?.started) {
+  // Анализ: отчёт остаётся в чате, первый вопрос — новой панелью под ним
+  questionView(moveOn('▶️ Начали'));
 } else if (job.op === 'upgrade') {
   if (!s['profile.ready'] || !resumeDraft(s).resume) rootView();
   else {
@@ -292,7 +340,7 @@ if (plan.stale) {
   ask('plan', 'Например: «PHP не в компании, а в пет-проектах» или «в навыки не добавляй».');
 } else if (job.op === 'plan' && job.value === 'n') {
   rootView('Отменил — резюме прежнее.');
-} else if (job.op === 'stop' && !state.session) {
+} else if (job.op === 'stop' && !state.session && !plan.stale) {
   rootView('Отменил — резюме прежнее.');
 } else if (job.op === 'answer' && job.value === 't' && sess && sess.qi < sess.questions.length) {
   questionView(panelId, '✍️ Напиши ответ ответом на сообщение ниже.');

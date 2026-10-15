@@ -274,3 +274,15 @@ function skillStats(rows, text, top = 30) {
 }
 
 const percent = (x) => `${Math.round((x ?? 0) * 100)}%`;
+
+// Частые слова в названиях подходящих вакансий (анализ: как называть должность) → [{ word, freq }]
+const TITLE_STOP = new Set(['в', 'на', 'и', 'с', 'по', 'для', 'к', 'из', 'от', 'до', 'или', 'the', 'of', 'and', 'to', 'in', 'for', 'a']);
+function titleWords(rows, top = 12) {
+  const list = (rows ?? []).filter(isTargetRow);
+  const counts = new Map();
+  for (const r of list.length >= 10 ? list : (rows ?? []).filter((x) => !['rejected', 'seen'].includes(x?.status))) {
+    const words = new Set(String(r?.title ?? '').toLowerCase().replace(/ё/g, 'е').match(/[\p{L}\p{N}][\p{L}\p{N}.+#-]*/gu) ?? []);
+    for (const w of words) if (!TITLE_STOP.has(w) && w.length > 1) counts.set(w, (counts.get(w) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, top).map(([word, freq]) => ({ word, freq }));
+}
