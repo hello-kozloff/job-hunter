@@ -287,3 +287,68 @@ function cvMatchPlaces(cv, hhPlaces) {
   }
   return { pairs, onlyHh: free };
 }
+
+// ---------- Выгрузка на hh (часть D, E2/E3) ----------
+
+// Навыки: что убрать и что добавить, без разницы в регистре (как у робота: applier/src/hh/resume.mjs → skillsDiff)
+function cvSkillsDiff(current, target) {
+  const key = (s) => String(s ?? '').trim().toLowerCase();
+  const cur = new Set(current.map(key));
+  const tgt = new Set(target.map(key));
+  return { remove: current.filter((s) => !tgt.has(key(s))), add: target.filter((s) => !cur.has(key(s))) };
+}
+
+// Разделы бота, которые на hh другие → [{ key: title | about | skills | place, bot, hh, … }]. Должность — без точки
+// в конце (в тексте бота она бывает строкой с точкой); места — только связанные с hh (hhId)
+function cvExportItems(cv, hh) {
+  const r = cv.resumes[0];
+  const items = [];
+  const title = r.title.trim().replace(/\.$/, '');
+  if (title && !cvSame(title, hh.title)) items.push({ key: 'title', bot: title, hh: hh.title, warn: title.length > 100 ? 'длиннее 100 знаков: hh не примет' : '' });
+  if (r.about && !cvSame(r.about, hh.about)) items.push({ key: 'about', bot: r.about, hh: hh.about });
+  const d = cvSkillsDiff(hh.keySkills, r.keySkills);
+  if (r.keySkills.length && (d.add.length || d.remove.length)) items.push({ key: 'skills', bot: r.keySkills, hh: hh.keySkills });
+  for (const p of cv.places) {
+    const h = p.hhId ? hh.places.find((x) => x.hhId === p.hhId) : null;
+    if (!h) continue;
+    const pos = !cvSame(p.position, h.position);
+    const desc = !cvSame(p.description, h.description);
+    if (!pos && !desc) continue;
+    items.push({
+      key: 'place',
+      hhId: p.hhId,
+      id: p.id,
+      company: p.company || h.company,
+      ...(pos && { botPosition: p.position, hhPosition: h.position }),
+      ...(desc && { botDescription: p.description, hhDescription: h.description }),
+    });
+  }
+  return items;
+}
+
+// Изменения для робота (POST /resume/write) — разделы, которые человек отправил на hh (choice p)
+const cvExportChanges = (items) =>
+  items
+    .filter((x) => x.choice === 'p' && !x.warn)
+    .map((x) =>
+      x.key === 'title' || x.key === 'about'
+        ? { kind: x.key, value: x.bot }
+        : x.key === 'skills'
+          ? { kind: 'skills', skills: x.bot }
+          : {
+              kind: 'place',
+              hhId: x.hhId,
+              ...(x.botPosition !== undefined && { position: x.botPosition }),
+              ...(x.botDescription !== undefined && { description: x.botDescription }),
+            },
+    );
+
+// «⬅️ Взять с hh в бота» — раздел бота становится как на hh
+function cvTakeFromHh(cv, x) {
+  if (x.key === 'title' || x.key === 'about') cvSet(cv, x.key, x.hh);
+  else if (x.key === 'skills') cv.resumes[0].keySkills = x.hh.slice(0, KEY_SKILLS_MAX);
+  else {
+    if (x.hhPosition !== undefined) cvSet(cv, `p:${x.id}`, x.hhPosition);
+    if (x.hhDescription !== undefined) cvSet(cv, `d:${x.id}`, x.hhDescription);
+  }
+}

@@ -1,12 +1,14 @@
 // W13 · Plan — событие человека → сессия правки → куда дальше (15.10.2026, docs/recommendations.md).
 // Нода: Code, режим «Run Once for All Items». Вход: «Job», «Settings», static data (сессия).
-// Выход: { route: llm | file | step | robot, mode, rows, wait, comment, keep, stale, hhHash }
+// Выход: { route: llm | file | step | robot | write, mode, rows, wait, comment, keep, stale, hhHash, writeBody }
 //   llm  — спросить нейросеть: mode analyze (анализ: отчёт и вопросы) | plan (план Upgrade) | patch (правки) | rework
 //          (переделать одну правку, comment — пожелание, keep — «➕ Не заменять, дописать»); wait — { messageId, text }:
 //          что показать, пока нейросеть думает;
 //   file — резюме файлом;
 //   step — остальное: «Step» покажет, что теперь в сессии;
-//   robot — разделы резюме: робот читает резюме hh (hhHash — какое, '' — видимое работодателям), потом нейросеть;
+//   robot — разделы резюме: робот читает резюме hh (hhHash — какое, '' — видимое работодателям), потом нейросеть
+//          (раскладка) или сразу «Step» (выгрузка: сравнить с hh);
+//   write — выгрузка на hh: робот пишет разделы (writeBody — тело POST /resume/write: { hash, changes, dry });
 //   rows — нужны строки вакансий (покрытие навыков: панель и итог); stale — кнопка от прошлой сессии.
 // Здесь — переходы по кнопкам и ответам человека; ответы нейросети разбирает «Step».
 //
@@ -21,6 +23,9 @@
 //   problems, fields — разделы, которые на hh другие: { kind: title | about | position | description | place, … },
 //   fi, skills: { list: [{ name, freq, hh }], picked, page }, back } → разложить, сверить, выбрать навыки, сохранить;
 //   kind skills — только ключевые навыки hh; у Upgrade — scope experience (из «💼 Опыт работы»: правки только опыта).
+// Выгрузка на hh (часть D, E2/E3): сессия kind export — { cv — копия разметки (для «взять с hh»), hh, live — включена
+//   ли запись (RESUME_LIVE), items — разделы, которые на hh другие (n8n/shared/cv.js → cvExportItems), ii, dry,
+//   results, after, writeError }.
 // panelId (static data) — сообщение-панель, которую правим.
 
 // @include n8n/shared/time.js
@@ -39,7 +44,7 @@ const job = $('Job').first().json;
 const s = loadSettings($('Settings').all());
 const state = $getWorkflowStaticData('global');
 const sess = state.session ?? null;
-const out = { route: 'step', mode: '', rows: false, wait: null, comment: '', keep: false, stale: false, hhHash: '' };
+const out = { route: 'step', mode: '', rows: false, wait: null, comment: '', keep: false, stale: false, hhHash: '', writeBody: null };
 const panel = job.messageId || state.panelId || 0;
 // «➕ Не заменять, дописать» — то же, что пожелание к правке
 const KEEP_OLD = 'Ничего не убирай из старого текста этого места, только допиши новое.';
@@ -198,6 +203,52 @@ if (job.op === 'split') {
 } else if (job.op === 'exp') {
   // 💼 Опыт работы: разметки нет или устарела — сначала разложить
   if (!cvFresh(s)) splitStart(true, 'exp');
+} else if (job.op === 'export') {
+  // 📤 Обновить на hh: разметка живая и связана с резюме hh — сначала свежее чтение hh, потом сравнение («Step»)
+  if (cvFresh(s) && s.cv.resumes[0].hh) {
+    state.session = {
+      ...newSession('export', resumeDraft(s)),
+      cv: JSON.parse(JSON.stringify(s.cv)),
+      hh: null,
+      hhError: '',
+      live: false,
+      items: [],
+      ii: 0,
+      dry: true,
+      results: null,
+      after: null,
+      writeError: '',
+    };
+    out.route = 'robot';
+    out.hhHash = s.cv.resumes[0].hh.hash;
+    out.wait = panel ? { messageId: panel, text: '⏳ Читаю резюме на hh, чтобы сравнить с ботом…' } : null;
+  }
+} else if (job.op === 'item') {
+  if (!live || sess.kind !== 'export' || !sess.hh || sess.results) stale();
+  else if (job.index === sess.ii) {
+    const x = sess.items[sess.ii];
+    x.choice = job.value;
+    if (job.value === 'h') cvTakeFromHh(sess.cv, x);
+    sess.ii++;
+  }
+} else if (job.op === 'write') {
+  if (!live || sess.kind !== 'export' || !sess.hh) stale();
+  else if (job.value === 'x') {
+    state.session = null;
+    out.rows = true;
+  } else if (job.value === 'live' && !sess.live) stale();
+  else {
+    const changes = cvExportChanges(sess.items);
+    if (changes.length) {
+      sess.dry = job.value !== 'live';
+      sess.results = null;
+      sess.after = null;
+      sess.writeError = '';
+      out.route = 'write';
+      out.writeBody = { hash: sess.hh.hash, changes, dry: sess.dry };
+      out.wait = panel ? { messageId: panel, text: sess.dry ? '⏳ Робот заполняет формы hh (без сохранения)… Это 1–2 минуты.' : '⏳ Робот сохраняет разделы на hh и сверяет… Это 1–2 минуты.' } : null;
+    }
+  }
 } else if (job.op === 'input' && job.field === 'exp') {
   // Upgrade опыта работы: как обычный Upgrade, но правки — только в местах работы (scope)
   const d = resumeDraft(s);
