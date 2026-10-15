@@ -24,6 +24,11 @@ const LAYOUTS = [
   'rc place',
   'rk skills8',
   'rx exp',
+  // Выгрузка на hh (часть D, E2/E3)
+  're item',
+  're sum',
+  're sumdry',
+  're dry',
 ];
 const step = $('Step').first().json;
 const job = $('Job').first().json;

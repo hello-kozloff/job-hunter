@@ -566,6 +566,7 @@ const RESUME_LAYOUTS = [
         ['💼 Опыт работы', 'rx:view'],
         ['🧰 Навыки hh', 'rk:view'],
       ],
+      [['📤 Обновить на hh', 're:go']],
       [
         ['📄 Резюме файлом', 'rs:file'],
         ['↩️ Откатить', 'rs:undo'],
@@ -647,6 +648,7 @@ const RESUME_LAYOUTS = [
   [
     'rs done',
     [
+      [['📤 Обновить на hh', 're:go']],
       [
         ['📄 Резюме файлом', 'rs:file'],
         ['↩️ Откатить', 'rs:undo'],
@@ -730,7 +732,45 @@ const RESUME_LAYOUTS = [
       [['❌ Отмена', panelButton('x')]],
     ],
   ],
-  ['rx exp', [[['⬆️ Улучшить опыт', 'rx:up']], [['⬅️ Рекомендации', 'rs:view']]]],
+  ['rx exp', [[['⬆️ Улучшить опыт', 'rx:up']], [['📤 Обновить на hh', 're:go']], [['⬅️ Рекомендации', 'rs:view']]]],
+  // Выгрузка на hh (часть D, E2/E3): раздел по одному, итог, после сухого прогона
+  [
+    're item',
+    [
+      [
+        ['➡️ На hh', panelButton('push')],
+        ['⏭ Не трогать', panelButton('skip')],
+      ],
+      [
+        ['⬅️ Взять с hh в бота', panelButton('take')],
+        ['❌ Отмена', panelButton('x')],
+      ],
+    ],
+  ],
+  [
+    're sum',
+    [
+      [
+        ['🧪 Сухой прогон', panelButton('dry')],
+        ['✅ Записать на hh', panelButton('live')],
+      ],
+      [['❌ Отмена', panelButton('x')]],
+    ],
+  ],
+  [
+    're sumdry',
+    [
+      [['🧪 Сухой прогон', panelButton('dry')]],
+      [['❌ Отмена', panelButton('x')]],
+    ],
+  ],
+  [
+    're dry',
+    [
+      [['✅ Записать на hh', panelButton('live')]],
+      [['⬅️ Рекомендации', 'rs:view']],
+    ],
+  ],
 ];
 
 // W3: состояние после нажатия кнопки, которое посчитали ноды «Apply choice», «Apply sent» и «Apply cancel»
@@ -3322,8 +3362,8 @@ const workflows = {
       code('W13', 'Rows count', 'n8n/w13-resume/rows-count.js', [1320, -100]),
       node('W13', 'Route', 'switch', 3.4, [1540, 0], {
         mode: 'expression',
-        numberOutputs: 4,
-        output: "={{ ({ llm: 0, file: 1, step: 2, robot: 3 })[$('Plan').first().json.route] }}",
+        numberOutputs: 5,
+        output: "={{ ({ llm: 0, file: 1, step: 2, robot: 3, write: 4 })[$('Plan').first().json.route] }}",
         options: {},
       }),
       // Разделы резюме (часть D): робот читает резюме hh (только GET) → нейросеть раскладывает текст бота. Робота нет —
@@ -3349,6 +3389,34 @@ const workflows = {
       }),
       code('W13', 'Hh', 'n8n/w13-resume/hh.js', [2200, -700]),
       node('W13', 'Hh ok?', 'if', 2.3, [2420, -700], ifTrue('W13', "={{ $json.next === 'llm' }}")),
+      // Выгрузка на hh (часть D, E2/E3): робот пишет разделы формами hh — сухой прогон или запись (RESUME_LIVE)
+      editMessage(
+        'Wait write',
+        [1760, -900],
+        {
+          chatId: "={{ $('Job').first().json.chatId }}",
+          messageId: "={{ $('Plan').first().json.wait.messageId }}",
+          text: "={{ $('Plan').first().json.wait.text }}",
+          rows: null,
+        },
+        'W13',
+        { onError: 'continueRegularOutput' },
+      ),
+      applierNode('W13', 'Write hh', [1980, -900], {
+        method: 'POST',
+        path: '/resume/write',
+        body: "={{ JSON.stringify($('Plan').first().json.writeBody) }}",
+        timeout: 300000,
+        full: true,
+      }),
+      code('W13', 'Written', 'n8n/w13-resume/written.js', [2200, -900]),
+      // Снимки сухого прогона — до новой панели с итогом (execution order v1: ветки «Step» сверху вниз)
+      code('W13', 'Photos', 'n8n/w13-resume/photos.js', [3080, -900]),
+      applierNode('W13', 'Get shot', [3300, -900], { path: '/shots/{{ $json.shot }}', timeout: 15000, file: true }),
+      sendPhoto('W13', 'Send shot', [3520, -1050], {
+        caption: "={{ $('Photos').item.json.caption }}",
+        fields: { disable_notification: true },
+      }),
       // Нейросеть: «⏳ …» на панели → запрос → разбор. Тот же провайдер, что для оценки (модель — как у W11)
       editMessage(
         'Wait',
@@ -3484,6 +3552,13 @@ const workflows = {
       ['Hh', 'Hh ok?'],
       ['Hh ok?', 'Build', 0],
       ['Hh ok?', 'Step', 1],
+      ['Route', 'Wait write', 4],
+      ['Wait write', 'Write hh'],
+      ['Write hh', 'Written'],
+      ['Written', 'Step'],
+      ['Step', 'Photos'],
+      ['Photos', 'Get shot'],
+      ['Get shot', 'Send shot'],
       ['Wait', 'Build'],
       ['Build', 'Claude?'],
       ['Claude?', 'Claude', 0],

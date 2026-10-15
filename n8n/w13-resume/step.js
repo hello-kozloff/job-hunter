@@ -7,7 +7,8 @@
 //   save — строки settings (upsert): profile.resume, profile.extra, resume.history, cv (разделы резюме);
 //   view — панель: messageId — правим это сообщение, 0 — новое (вопросы и правки идут новой панелью под планом);
 //   freeze — план остаётся в чате без кнопок (урок 14.10.2026: затёртую сводку онбординга не видели);
-//   prompt — вопрос ForceReply (ответ придёт в W13 как op input).
+//   prompt — вопрос ForceReply (ответ придёт в W13 как op input);
+//   photos — снимки робота [{ shot, caption }] (сухой прогон выгрузки на hh): «Photos» → «Get shot» → «Send shot».
 
 // @include n8n/shared/time.js
 
@@ -45,14 +46,14 @@ const rows = (() => {
   }
 })();
 
-const out = { save: null, view: null, freeze: null, prompt: null, deleteIds: [] };
+const out = { save: null, view: null, freeze: null, prompt: null, deleteIds: [], photos: [] };
 const panelId = job.messageId || state.panelId || 0;
 if (job.op === 'input') out.deleteIds = [job.userMessageId, job.promptId].filter(Boolean);
 const show = (layout, text, b = {}, messageId = panelId) => {
   out.view = { layout, text, b, messageId };
 };
 const BACK_RECS = { text: '⬅️ Рекомендации', cb: 'rs:view' };
-const BY = { upgrade: 'Upgrade', analyze: 'анализ', undo: 'откат', split: 'разделы', skills: 'навыки hh' };
+const BY = { upgrade: 'Upgrade', analyze: 'анализ', undo: 'откат', split: 'разделы', skills: 'навыки hh', export: 'с hh' };
 const when = (iso) => (Date.parse(iso) ? `${localDM(Date.parse(iso))} ${localHM(Date.parse(iso))}` : '');
 const num = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 const plural = (n, one, few, many) => (n % 10 === 1 && n % 100 !== 11 ? one : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? few : many);
@@ -86,9 +87,11 @@ const HH_ERRORS = {
   not_found: 'резюме, связанного с ботом, на hh больше нет',
   down: 'робот не отвечает',
 };
+const hhWhy = (error) =>
+  HH_ERRORS[error] ?? (String(error).startsWith('blocked') ? `робот на паузе (${String(error).slice(8) || 'блок'}): сними блок в ⚙️ → 🚀 Робот` : `ошибка робота (${error})`);
 function hhErrorView(error, messageId = panelId) {
   const sess = state.session;
-  const why = HH_ERRORS[error] ?? (String(error).startsWith('blocked') ? `робот на паузе (${String(error).slice(8) || 'блок'}): сними блок в ⚙️ → 🚀 Робот` : `ошибка робота (${error})`);
+  const why = hhWhy(error);
   show(
     'rc retry',
     ['🧩 <b>Разделы резюме</b>', `⚠️ Резюме на hh не прочитал: ${esc(why)}.`, 'Можно повторить или разложить только резюме бота: сверка с hh будет при выгрузке.'].join('\n'),
@@ -208,6 +211,154 @@ function expView(note = '', messageId = panelId) {
   show('rx exp', lines.filter((l) => l !== null).join('\n'), {}, messageId);
 }
 
+// ---------- Выгрузка на hh (часть D, E2/E3) ----------
+
+const itemName = (x) =>
+  ({ title: 'должность', about: '«О себе»', skills: 'ключевые навыки' })[x.key] ?? `${x.company} (опыт)`;
+function resultName(r) {
+  if (r.kind !== 'place') return { title: 'Должность', about: '«О себе»', skills: 'Ключевые навыки' }[r.kind] ?? r.kind;
+  const x = state.session?.items.find((i) => i.key === 'place' && i.hhId === r.hhId);
+  return `💼 ${x?.company || 'Место работы'}`;
+}
+
+// После чтения hh: разделы, которые на hh другие; нет — «уже как в боте»
+function exportAfterRead(messageId) {
+  const sess = state.session;
+  if (sess.hhError || !sess.hh) {
+    state.session = null;
+    return show('rs retry', `📤 <b>Обновить на hh</b>\n⚠️ Резюме на hh не прочитал: ${esc(hhWhy(sess.hhError || 'down'))}.`, { retry: 're:go' }, messageId);
+  }
+  sess.items = cvExportItems(sess.cv, sess.hh);
+  sess.ii = 0;
+  if (!sess.items.length) {
+    state.session = null;
+    return show('rs back', '📤 ✅ На hh уже как в боте: должность, «О себе», ключевые навыки и опыт совпадают.', { back: BACK_RECS }, messageId);
+  }
+  itemView(messageId);
+}
+
+function itemView(messageId = panelId) {
+  const sess = state.session;
+  const x = sess.items[sess.ii];
+  const cb = (v) => `re:${sess.sid}:${sess.ii}:${v}`;
+  const legend = '<s>Зачёркнуто</s> — сейчас на hh, уйдёт; <b>жирным</b> — из бота, появится на hh.';
+  let body;
+  if (x.key === 'skills') {
+    const d = cvSkillsDiff(x.hh, x.bot);
+    body = [
+      '🧰 <b>Ключевые навыки</b>',
+      d.add.length ? `➕ Добавлю: ${esc(d.add.join(', '))}` : null,
+      d.remove.length ? `➖ Уберу: ${esc(d.remove.join(', '))}` : null,
+    ];
+  } else if (x.key === 'place') {
+    body = [
+      `💼 <b>${esc(x.company)}</b>`,
+      '⚠️ Опыт работы общий: на hh поменяется во всех резюме, где отмечено это место.',
+      legend,
+      x.botPosition !== undefined ? `<i>Должность:</i> ${wordDiff(x.hhPosition, x.botPosition)}` : null,
+      x.botDescription !== undefined ? `<i>Описание:</i> ${wordDiff(x.hhDescription, x.botDescription, 6, 2200)}` : null,
+    ];
+  } else {
+    body = [`<b>${x.key === 'title' ? '📄 Должность' : '📄 «О себе»'}</b>`, x.warn ? `⚠️ ${x.warn} — пропущу.` : null, legend, wordDiff(x.hh, x.bot, 6, 2500)];
+  }
+  const lines = [`📤 <b>Обновить на hh</b> · ${sess.ii + 1} из ${sess.items.length}`, ...body];
+  show('re item', lines.filter(Boolean).join('\n'), { push: cb('p'), skip: cb('k'), take: cb('h'), x: `re:${sess.sid}:x` }, messageId);
+}
+
+// «⬅️ Взять с hh в бота» — сохраняется сразу после выбора по разделам: выгрузка на hh от этого не зависит
+function saveBotChanges() {
+  const sess = state.session;
+  if (sess.botSaved) return sess.botNote ?? '';
+  sess.botSaved = true;
+  const took = sess.items.filter((x) => x.choice === 'h');
+  if (!took.length) return '';
+  const text = cvRender(sess.cv);
+  if (resumeHash(resumeDraft(s)) !== sess.base) sess.botNote = '⚠️ Пока сравнивал, резюме бота поменялось — взятое с hh не сохранил.';
+  else if (text.length > SETTINGS['profile.resume'].text) sess.botNote = '⚠️ Резюме бота вышло бы длиннее 30 000 знаков — взятое с hh не сохранил.';
+  else {
+    out.save = { cv: sess.cv, 'resume.history': [version('export', 'взято с hh', sess.original), ...s['resume.history']].slice(0, 5) };
+    if (text !== sess.original.resume) out.save['profile.resume'] = text;
+    Object.assign(s, out.save);
+    sess.botNote = `⬅️ В бота взял с hh: ${esc(took.map(itemName).join('; '))}.`;
+  }
+  return sess.botNote;
+}
+
+function summaryView(messageId = panelId) {
+  const sess = state.session;
+  const note = saveBotChanges();
+  const push = sess.items.filter((x) => x.choice === 'p' && !x.warn);
+  if (!push.length) {
+    state.session = null;
+    return rootView([note, '📤 На hh ничего не меняю.'].filter(Boolean).join('\n'));
+  }
+  const lines = [
+    '📤 <b>Обновить на hh</b>',
+    `На hh уйдёт: ${esc(push.map(itemName).join('; '))}.`,
+    push.some((x) => x.key === 'place') ? '⚠️ Опыт работы общий: на hh поменяется во всех резюме, где отмечены эти места.' : null,
+    note || null,
+    '',
+    '🧪 <b>Сухой прогон</b> — робот заполнит формы hh, пришлёт снимки и ничего не сохранит.',
+    sess.live ? '✅ <b>Записать на hh</b> — робот сохранит разделы на hh и сверит, прочитав резюме заново.' : 'Записывать на hh робот начнёт после проверки сухого прогона (в .env — RESUME_LIVE=1).',
+  ];
+  show(sess.live ? 're sum' : 're sumdry', lines.filter((l) => l !== null).join('\n'), { dry: `re:${sess.sid}:dry`, live: `re:${sess.sid}:live`, x: `re:${sess.sid}:x` }, messageId);
+}
+
+const RESULT_TEXT = { dry: 'заполнено', saved: 'сохранено', same: 'на hh уже так' };
+const resultLine = (r) =>
+  r.outcome === 'error' ? `⚠️ ${esc(resultName(r))}: ${esc(r.note || 'ошибка')}` : `${r.outcome === 'same' ? '⏭' : '✅'} ${esc(resultName(r))}: ${RESULT_TEXT[r.outcome] ?? r.outcome}`;
+
+// Сверка живой записи: что hh показывает после — то же, что отправили
+function verified(r, after) {
+  const x = state.session.items.find((i) => (r.kind === 'place' ? i.key === 'place' && i.hhId === r.hhId : i.key === r.kind));
+  if (!after || !x) return false;
+  if (r.kind === 'title' || r.kind === 'about') return cvSame(r.kind === 'title' ? after.title : after.about, x.bot);
+  if (r.kind === 'skills') {
+    const d = cvSkillsDiff(after.keySkills, x.bot);
+    return !d.add.length && !d.remove.length;
+  }
+  const p = after.places.find((h) => h.hhId === r.hhId);
+  return Boolean(p) && (x.botPosition === undefined || cvSame(p.position, x.botPosition)) && (x.botDescription === undefined || cvSame(p.description, x.botDescription));
+}
+
+function writeView() {
+  const sess = state.session;
+  const messageId = plan.wait?.messageId || panelId;
+  if (sess.writeError) {
+    return show(
+      'rs retry',
+      `📤 <b>Обновить на hh</b>\n⚠️ Робот не ${sess.dry ? 'заполнил формы' : 'записал разделы'}: ${esc(hhWhy(sess.writeError))}.`,
+      { retry: `re:${sess.sid}:${sess.dry ? 'dry' : 'live'}` },
+      messageId,
+    );
+  }
+  const lines = sess.results.map(resultLine);
+  if (!sess.wroteLive) {
+    // Сухой прогон: снимки — новыми сообщениями, итог — новой панелью под ними (старая остаётся без кнопок)
+    out.photos = sess.results
+      .filter((r) => r.shot)
+      .map((r) => ({ shot: r.shot, caption: `🧪 ${esc(resultName(r))}: так будет на hh (не сохранено)` }));
+    out.freeze = { messageId, text: '📤 Обновить на hh: сухой прогон — снимки ниже.' };
+    const text = [
+      '🧪 <b>Сухой прогон</b>: робот заполнил формы hh и ничего не сохранил.',
+      ...lines,
+      sess.live ? '\nВсё верно на снимках — «✅ Записать на hh».' : '\nЗаписывать на hh робот начнёт, когда в .env будет RESUME_LIVE=1 (scripts/deploy.sh --applier).',
+    ].join('\n');
+    if (!sess.live) state.session = null;
+    return show(sess.live ? 're dry' : 'rs back', text, { live: `re:${sess.sid}:live`, back: BACK_RECS }, 0);
+  }
+  // Живая запись: сверка чтением (сессия закрывается после: подписи разделов берутся из неё)
+  const saved = sess.results.filter((r) => r.outcome === 'saved');
+  const checks = saved.map((r) => (verified(r, sess.after) ? `✅ ${esc(resultName(r))}: на hh так` : `⚠️ ${esc(resultName(r))}: сохранено, но при чтении hh отличается`));
+  state.session = null;
+  const text = [
+    saved.length ? '✅ <b>Резюме на hh обновлено.</b>' : '⚠️ <b>На hh ничего не сохранилось.</b>',
+    ...lines,
+    sess.after ? (checks.length ? `\n<i>Сверка чтением:</i>\n${checks.join('\n')}` : null) : '⚠️ Сверить не вышло: резюме hh после записи не прочитал.',
+  ];
+  show('rs done', text.filter(Boolean).join('\n'), {}, messageId);
+}
+
 // Конец раскладки (или выбора навыков): разметка, текст (если что-то взято с hh), версия для отката
 function finishSplit() {
   const sess = state.session;
@@ -273,6 +424,7 @@ function rootView(note = '') {
     '🔍 <b>Анализ</b> — посмотрю резюме глазами ATS и роботов hh, задам до 8 вопросов кнопками и предложу правки.',
     '⬆️ <b>Upgrade</b> — напиши, что добавить или поменять: покажу, куда впишу, и спрошу про каждую правку.',
     '💼 <b>Опыт работы</b> — места работы, общие для всех резюме. 🧰 <b>Навыки hh</b> — выбрать 30 ключевых навыков.',
+    '📤 <b>Обновить на hh</b> — сравню резюме бота с hh, покажу разницу по разделам и выгружу роботом.',
     '📄 <b>Файлом</b> — резюме бота целиком. ↩️ <b>Откатить</b> — вернуть версию до последней правки.',
     note ? `\n${note}` : null,
   ];
@@ -416,6 +568,7 @@ function finish() {
     `✅ <b>Резюме обновлено</b>: ${sess.applied} из ${n} ${plural(n, 'правки', 'правок', 'правок')}.`,
     before?.coverage != null ? `🎯 Навыки твоих вакансий в резюме: ${percent(before.coverage)} → <b>${percent(after.coverage)}</b>` : null,
     'Новое резюме уже работает в оценке вакансий и в письмах.',
+    s.cv?.resumes?.[0]?.hh ? '🌐 На hh резюме пока прежнее: 📤 <b>Обновить на hh</b> покажет разницу и выгрузит.' : null,
     failNote,
     tips,
   ];
@@ -453,6 +606,10 @@ function undo() {
 function current() {
   const sess = state.session;
   if (!sess) return rootView();
+  if (sess.kind === 'export') {
+    if (!sess.hh) return rootView();
+    return sess.ii < sess.items.length ? itemView() : summaryView();
+  }
   if (sess.kind === 'split' || sess.kind === 'skills') {
     if (!sess.cv) return rootView();
     if (sess.done) return finishSplit();
@@ -476,6 +633,10 @@ const parsed = plan.route === 'llm' || plan.route === 'robot' ? ran('Parse') : n
 if (plan.stale) {
   // Кнопка от прошлой сессии: старое сообщение — без кнопок; ответ на старый вопрос — просто удалить
   if (job.messageId) show('rs back', '⌛ Эти кнопки устарели: правка уже закончилась.', { back: BACK_RECS }, job.messageId);
+} else if (plan.route === 'robot' && sess?.kind === 'export' && !sess.items.length) {
+  exportAfterRead(plan.wait?.messageId || panelId);
+} else if (plan.route === 'write' && sess?.kind === 'export') {
+  writeView();
 } else if (plan.route === 'robot' && !parsed) {
   // Робот не прочитал резюме hh (нейросеть не спрашивали): причина и «🔄 Повторить» / «➡️ Без hh»
   const hh = ran('Hh');
@@ -556,6 +717,9 @@ if (plan.stale) {
     expView('⬆️ Напиши ответом на сообщение ниже, что добавить или поменять в опыте работы.');
     ask('exp', 'Например: «В Руб Икс допиши, что делал админку на PHP» или «Сократи описание WillSkill».');
   } else expView();
+} else if (job.op === 'export' && !state.session) {
+  // 📤 без живой разметки, связанной с hh: сначала разложить резюме вместе с резюме hh
+  rootView(cvFresh(s) ? '🤖 Резюме бота не связано с резюме на hh: 💼 разложит его заново вместе с hh (нужен робот).' : '📝 Сначала разложи резюме по разделам: нажми 💼.');
 } else if (job.op === 'input' && job.field === 'exp') {
   // Сюда — только если сессию не начали: нет разметки или ответ пустой
   rootView(cvFresh(s) ? '' : '📝 Сначала разложи резюме по разделам: нажми 💼.');
