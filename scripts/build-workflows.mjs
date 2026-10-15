@@ -3313,6 +3313,7 @@ const workflows = {
         fields: { disable_notification: true },
         markup: { replyMarkup: 'forceReply', forceReply: { force_reply: true } },
       }),
+      code('W11', 'Remember prompt', 'n8n/w11-profile/remember-prompt.js', [5500, 300]),
       code('W11', 'Delete ids', 'n8n/w11-profile/delete-ids.js', [5060, 500]),
       node(
         'W11',
@@ -3374,6 +3375,7 @@ const workflows = {
       ]),
       ['Step', 'Prompt?'],
       ['Prompt?', 'Prompt', 0],
+      ['Prompt', 'Remember prompt'],
       ['Step', 'Delete ids'],
       ['Delete ids', 'Delete'],
     ],

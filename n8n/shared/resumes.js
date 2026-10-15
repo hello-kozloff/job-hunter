@@ -12,13 +12,15 @@ const MAX_SEARCH_RESUMES = 3;
 // название из должности в профиле, привязка к hh — из разметки W13
 function resumeList(s) {
   const list = Array.isArray(s.resumes) ? s.resumes : [];
-  if (list.length) return list;
+  // Привязка основного резюме к hh — из разметки W13 (cv): её обновляет 💼, копия в списке устарела бы
+  const mainHh = s.cv?.resumes?.[0]?.hh ?? null;
+  if (list.length) return list.map((r) => (r.id === 'r1' ? { ...r, hh: mainHh ?? r.hh ?? null } : r));
   return [
     {
       id: 'r1',
       name: String(s['profile.facts']?.position || '').trim().slice(0, 60) || 'Основное',
       active: true,
-      hh: s.cv?.resumes?.[0]?.hh ?? null,
+      hh: mainHh,
     },
   ];
 }

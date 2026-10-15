@@ -36,6 +36,11 @@ if (s['profile.ready']) {
   // Ждали PDF: «➕ Новое резюме» (create) или «📄 Заменить текст» у резюме из списка (replace, id) — 30 минут
   const wait = state.await && Date.now() - state.await.at < 30 * 60 * 1000 ? state.await : null;
   delete state.await;
+  // Панель «Пришли PDF» и вопрос к ней больше не нужны: «Step» удалит их (state.cleanup)
+  if (wait) {
+    state.cleanup = { panel: wait.panel ?? 0, prompt: wait.kind === 'create' ? (state.promptId ?? 0) : 0 };
+    delete state.promptId;
+  }
   if (wait?.kind === 'create') {
     if (!nextResumeId(s)) return [{ json: { toLlm: false, problem: `уже ${MAX_RESUMES} резюме — это предел. Удали ненужное: ⚙️ → 📄 Резюме` } }];
     state.text = text;

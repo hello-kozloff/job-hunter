@@ -190,6 +190,47 @@ test('PDF after ➕ goes straight to the model as a new resume; without ➕ it a
   assert.match(out.view.text, /Как новое резюме/);
 });
 
+test('PDF after ➕: the wait panel and the question are cleaned up, the flag is spent', async () => {
+  const w = world(main());
+  let out = await w.step({ op: 'rm', field: 'new', messageId: 55 });
+  assert.equal(out.awaitPrompt, true);
+  assert.equal(w.state.await.panel, 55);
+  w.state.promptId = 66; // «Remember prompt» запомнил вопрос
+  const pdfJob = w.jobOf({ op: 'pdf', file: { id: 'f', name: 'cv.pdf', size: 1000 }, messageId: 0 });
+  const pdf = await w.run('n8n/w11-profile/pdf-text.js', { job: pdfJob, input: { text: RESUME } });
+  assert.deepEqual(w.state.cleanup, { panel: 55, prompt: 66 });
+  assert.equal(w.state.promptId, undefined);
+  const plan = { route: 'pdf' };
+  const parsed = await parseDraft(w, pdf);
+  out = await w.run('n8n/w11-profile/step.js', { job: pdfJob, plan, nodes: { 'PDF text': pdf, 'Parse profile': parsed, 'Build extract': { mode: 'extract' } } });
+  assert.deepEqual(out.deleteIds.sort(), [55, 66]);
+  assert.equal(w.state.cleanup, undefined);
+  assert.equal(out.view.layout, 'pf review');
+});
+
+test('leaving the wait panel removes the question and the flag; a second ➕ replaces the question', async () => {
+  const w = world(main());
+  await w.step({ op: 'rm', field: 'new', messageId: 55 });
+  w.state.promptId = 66;
+  let out = await w.step({ op: 'rm', field: 'list', messageId: 55 });
+  assert.deepEqual(out.deleteIds, [66]);
+  assert.equal(w.state.await, undefined);
+  assert.equal(w.state.promptId, undefined);
+  await w.step({ op: 'rm', field: 'new', messageId: 55 });
+  w.state.promptId = 77;
+  out = await w.step({ op: 'rm', field: 'new', messageId: 55 });
+  assert.deepEqual(out.deleteIds, [77], 'the old question is removed when a new one is asked');
+});
+
+test('new text for a resume: the wait panel is removed once the PDF arrives', async () => {
+  const w = await withSecond();
+  await w.step({ op: 'rm', field: 'txt', value: 'r2', messageId: 55 });
+  const pdfJob = w.jobOf({ op: 'pdf', file: { id: 'f', name: 'cv.pdf', size: 1000 }, messageId: 0 });
+  const pdf = await w.run('n8n/w11-profile/pdf-text.js', { job: pdfJob, input: { text: RESUME } });
+  const out = await w.run('n8n/w11-profile/step.js', { job: pdfJob, nodes: { 'PDF text': pdf } });
+  assert.deepEqual(out.deleteIds, [55]);
+});
+
 test('expired ➕ flag is ignored', async () => {
   const w = world(main());
   w.state.await = { kind: 'create', at: Date.now() - 31 * 60 * 1000 };

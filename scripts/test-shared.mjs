@@ -39,6 +39,18 @@ test('main resume takes hh link from cv markup', () => {
   assert.deepEqual(lib.resumeList(s)[0].hh, hh);
 });
 
+test('main resume hh link follows the cv markup even when the list is saved', () => {
+  const hh = { hash: 'b'.repeat(32), title: 'Frontend' };
+  const cv = { v: 1, places: [], resumes: [{ id: 'r1', hh, template: '', title: '', about: '', keySkills: [] }] };
+  const s = lib.loadSettings(
+    rows({ cv, resumes: [{ id: 'r1', name: 'A', active: true, hh: { hash: 'old', title: 'old' } }, { id: 'r2', name: 'B', active: true, hh: null }] }),
+  );
+  assert.deepEqual(lib.resumeList(s)[0].hh, hh);
+  assert.equal(lib.resumeList(s)[1].hh, null);
+  const s2 = lib.loadSettings(rows({ resumes: [{ id: 'r1', name: 'A', active: true, hh: { hash: 'kept', title: 't' } }] }));
+  assert.deepEqual(lib.resumeList(s2)[0].hh, { hash: 'kept', title: 't' }, 'no cv markup: the saved link stays');
+});
+
 test('r2 overlays its own fields, falls back to neutral values, leaves the base alone', () => {
   const s = lib.loadSettings(
     rows({

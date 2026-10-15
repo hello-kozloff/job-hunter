@@ -54,7 +54,7 @@ const ran = (name) => {
   }
 };
 
-const out = { save: null, collect: false, view: null, prompt: null, deleteIds: [], toast: '', freeze: null };
+const out = { save: null, collect: false, view: null, prompt: null, awaitPrompt: false, deleteIds: [], toast: '', freeze: null };
 // Панель — сообщение с нажатой кнопкой; новый PDF — «📄 Читаю резюме…»; ответ на вопрос — панель из static data
 const panelId = job.messageId || ran('Reading')?.result?.message_id || state.panelId || 0;
 const show = (layout, text, b = {}) => {
@@ -341,6 +341,13 @@ function saveResumeEdit(id) {
 }
 
 // rm:<действие>[:<id>[:<y|l>]] — W3 «Route» кладёт действие в job.field, остальное в job.value
+// Ушли с панели ожидания PDF: вопрос «➕ Новое резюме» без ответа не нужен, и PDF больше не ждём
+function dropPrompt() {
+  if (state.promptId) out.deleteIds.push(state.promptId);
+  delete state.promptId;
+  delete state.await;
+}
+
 function rmOp() {
   const [id = '', arg = ''] = job.value.split(':');
   const list = resumeList(s);
@@ -349,12 +356,12 @@ function rmOp() {
   state.panelId = panelId;
   switch (job.field) {
     case 'list':
-      delete state.await;
+      dropPrompt();
       delete state.target;
       return listView();
     case 'o':
       if (!known) return listView('⚠️ Такого резюме нет');
-      delete state.await;
+      dropPrompt();
       if (id === 'r1') {
         delete state.target;
         return profileView();
@@ -375,7 +382,11 @@ function rmOp() {
     }
     case 'new':
       if (!nextResumeId(s)) return listView(limitNote);
-      state.await = { kind: 'create', at: now };
+      // Прежний вопрос «➕ Новое резюме» (если не ответили) убираем: останется один
+      if (state.promptId) out.deleteIds.push(state.promptId);
+      delete state.promptId;
+      state.await = { kind: 'create', at: now, panel: panelId };
+      out.awaitPrompt = true;
       show(
         'rm wait',
         '➕ <b>Новое резюме</b>\nПришли PDF файлом или вставь текст ответом на вопрос ниже. У него будут свой поиск и свои правила оценки; подпись, контакт и пояс — общие. Пол, город и имя возьму из основного резюме, если в новом их нет.',
@@ -413,7 +424,7 @@ function rmOp() {
     case 'txt':
       if (!known || id === 'r1') return listView('⚠️ Такого резюме нет');
       state.target = id;
-      state.await = { kind: 'replace', id, at: now };
+      state.await = { kind: 'replace', id, at: now, panel: panelId };
       return show('rm wait', `📄 <b>Новый текст для «${esc(name)}»</b>\nПришли PDF файлом. Потом спрошу: заново собрать поиск и правила или заменить только текст.`);
     default:
       return listView();
@@ -567,6 +578,12 @@ if (plan.problem) {
   }
 } else {
   home();
+}
+
+// PDF для нового резюме или нового текста пришёл: панель «Пришли PDF» и вопрос к ней убираем из чата
+if (pdf && state.cleanup) {
+  out.deleteIds.push(...Object.values(state.cleanup).filter(Boolean));
+  delete state.cleanup;
 }
 
 return [{ json: out }];
