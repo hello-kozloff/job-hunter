@@ -4,17 +4,17 @@
 // Выход: те же вакансии со status = new | rejected и причиной в reasons.
 // Правила — решения пользователя от 07.10.2026 (CLAUDE.md §7). Из настроек бота (⚙️ → 🧹 Фильтр): какие правила
 // выключены (filter.rules_off), порог откликов (filter.max_responses, 0 — не отсекать) и стоп-слова (filter.stop_words).
+// Несколько резюме (docs/resumes.md): пресет, выключенные правила и стоп-слова — свои у каждого резюме (вакансия несёт
+// resume_id), порог откликов и чёрный список общие.
 
 // @include n8n/shared/ai.js
 
 // @include n8n/shared/settings.js
 
+// @include n8n/shared/resumes.js
+
 const settings = loadSettings($('Settings').all());
-// Правила фронтенда (Angular, чужой стек, бэкенд) — только у пресета frontend (13.10.2026)
-const rules = filterRulesFor(settings['profile.preset']);
-const off = new Set(settings['filter.rules_off']);
 const maxResponses = settings['filter.max_responses'];
-const stopWords = wordsRegex(settings['filter.stop_words']);
 const rows = $('Is new').all().map((i) => i.json);
 
 // Чёрный список: в колонке company — точное название компании, как на hh (без учёта регистра
@@ -34,8 +34,8 @@ const inBlacklist = (r) => blacklist.has(norm(r.company)) || blacklist.has(Strin
 // \b и \w в JS не работают с кириллицей — границы слова и окончания задаём явно
 const ru = (word) => new RegExp(`(^|[^а-яё])${word}([^а-яё]|$)`, 'i');
 
-// [id (n8n/shared/settings.js → FILTER_RULES), причина в reasons, проверка]
-const RULES = [
+// [id (n8n/shared/settings.js → FILTER_RULES), причина в reasons, проверка]; стоп-слова — свои у резюме
+const ruleList = (stopWords) => [
   ['no_exp', 'без опыта', (r) => r.experience === 'noExperience'],
   [
     'junior',
@@ -80,9 +80,28 @@ const RULES = [
   ],
   ['responses', `> ${maxResponses} откликов`, (r) => maxResponses > 0 && (r.responses ?? 0) > maxResponses],
   ['blacklist', 'чёрный список', inBlacklist],
-].filter(([id]) => id === 'responses' || (id in rules && !off.has(id)));
+];
+
+// Правила резюме (resume_id пусто — основное): правила фронтенда (Angular, чужой стек, бэкенд) — только у пресета
+// frontend (13.10.2026); выключенные в настройках не работают
+const rulesByResume = new Map();
+function rulesFor(resumeId) {
+  const id = resumeId && resumeById(settings, resumeId) ? resumeId : 'r1';
+  if (!rulesByResume.has(id)) {
+    const rs = resumeSettings(settings, id);
+    const enabled = filterRulesFor(rs['profile.preset']);
+    const off = new Set(rs['filter.rules_off']);
+    rulesByResume.set(
+      id,
+      ruleList(wordsRegex(rs['filter.stop_words'])).filter(([rule]) => rule === 'responses' || (rule in enabled && !off.has(rule))),
+    );
+  }
+  return rulesByResume.get(id);
+}
 
 return rows.map((r) => {
-  const failed = RULES.filter(([, , test]) => test(r)).map(([, name]) => name);
+  const failed = rulesFor(r.resume_id)
+    .filter(([, , test]) => test(r))
+    .map(([, name]) => name);
   return { json: { ...r, status: failed.length ? 'rejected' : 'new', reasons: failed.join(', ') } };
 });

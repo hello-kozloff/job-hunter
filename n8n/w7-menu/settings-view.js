@@ -57,17 +57,24 @@ function changeNotes() {
   return notes;
 }
 
+// Несколько резюме (docs/resumes.md): поиск, фильтр и спорные случаи в этих разделах — основного резюме
+const severalResumes = resumeList(settings).length > 1;
+const mainResumeNote = severalResumes
+  ? '📄 Это настройки основного резюме. У остальных поиск, стоп-слова и спорные случаи свои: ⚙️ → 📄 Резюме.'
+  : '';
+
 function settingsRootView(note) {
   const sch = collectSchedule;
   const lines = [
     '⚙️ <b>Настройки</b>',
     '',
+    severalResumes ? `📄 <b>Резюме</b>: ${resumeList(settings).length} · ищут ${activeResumes(settings).length}` : null,
     `🕐 <b>Сбор</b>: ${describeSchedule(sch)} · ${collectsPerDay(sch)} в сутки${sch.paused ? ' · ⏸ <b>пауза</b>' : ''}`,
     `🔎 <b>Поиск</b>: ${periodText(settings['search.period'])} · везде — ${settings['search.anywhere'].length} сл., в названии — ${settings['search.in_name'].length}`,
     `🧹 <b>Фильтр</b>: правил ${rulesOn().length} из ${presetRules().length} · отклики — ${responsesText(settings['filter.max_responses'])} · стоп-слов ${settings['filter.stop_words'].length} · ЧС ${blacklist.length}`,
     `🤖 <b>Нейросеть</b>: ${providerText(settings['llm.provider'])} · теневой режим ${settings['llm.shadow'] ? 'вкл' : 'выкл'} · спорных случаев ${settings['llm.cases'].length}`,
     `🚀 <b>Робот</b>: ${settings['apply.enabled'] ? 'вкл' : 'выкл'}${settings['apply.paused'] ? ' · ⏸ пауза' : ''} · сегодня ${robotToday(rows, now)}/${settings['apply.daily_limit']} · ${robotState().short}`,
-  ];
+  ].filter((line) => line !== null);
   if (note) lines.push('', note);
   return {
     layout: 'settings',
@@ -136,7 +143,8 @@ function settingsSearchView() {
     filters[0].toUpperCase() + filters.slice(1),
     '',
     'Слова везде в тексте ищутся в названии, описании и навыках; в названии — только в названии. ✏️ — прислать новый список.',
-  ];
+    mainResumeNote ? `\n${mainResumeNote}` : null,
+  ].filter((line) => line !== null);
   const notes = changeNotes();
   if (notes.length) lines.push('', ...notes);
   return {
@@ -160,7 +168,8 @@ function settingsFilterView() {
     `Отклики: ${responsesText(settings['filter.max_responses'])}`,
     `Стоп-слова в названии: ${esc(settings['filter.stop_words'].join(', '))}`,
     `Чёрный список: ${companies(blacklist.length)}`,
-  ];
+    mainResumeNote ? `\n${mainResumeNote}` : null,
+  ].filter((line) => line !== null);
   const notes = changeNotes();
   if (notes.length) lines.push('', ...notes);
   return {
@@ -238,6 +247,7 @@ function settingsLlmView() {
   if (provider === 'claude') {
     lines.push('', '⚠️ Для Claude нужен ключ ANTHROPIC_API_KEY в .env и деплой — без него оценка встанет с ошибкой.');
   }
+  if (mainResumeNote) lines.push('', 'Модель и теневой режим — общие для всех резюме; спорные случаи ниже — основного.', mainResumeNote);
   const notes = changeNotes();
   if (notes.length) lines.push('', ...notes);
   return {

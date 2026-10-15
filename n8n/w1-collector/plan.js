@@ -23,6 +23,8 @@ const seen = new Set();
 const items = [];
 for (const r of activeResumes(s).slice(0, MAX_SEARCH_RESUMES)) {
   const rs = resumeSettings(s, r.id);
+  // Без слов для поиска искать нечего (у основного резюме слова есть всегда)
+  if (!resumeSearchable(rs)) continue;
   for (const q of searchQueries(rs)) {
     const url = searchUrl(0, rs, q.params);
     if (seen.has(url)) continue;

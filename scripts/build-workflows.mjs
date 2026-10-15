@@ -354,8 +354,9 @@ const PANEL_LAYOUTS = [
       // 15.10.2026): Upgrade, откат, резюме файлом
       [
         ['👤 Профиль', 'pf:view'],
-        ['💡 Рекомендации', 'rs:view'],
+        ['📄 Резюме', 'rm:list'],
       ],
+      [['💡 Рекомендации', 'rs:view']],
       [
         ['🕐 Сбор', panelButton('collect.cb')],
         ['🔎 Поиск', panelButton('search.cb')],
@@ -525,10 +526,14 @@ const PROFILE_LAYOUTS = [
         ['🔄 Всё заново', 'pf:new:all'],
         ['📄 Только текст', 'pf:new:text'],
       ],
+      [['➕ Как новое резюме', 'pf:new:add']],
       [['❌ Отмена', 'pf:new:no']],
     ],
   ],
-  ['pf replace text', [[['📄 Обновить текст резюме', 'pf:new:text']], [['❌ Отмена', 'pf:new:no']]]],
+  [
+    'pf replace text',
+    [[['📄 Обновить текст резюме', 'pf:new:text']], [['➕ Как новое резюме', 'pf:new:add']], [['❌ Отмена', 'pf:new:no']]],
+  ],
   [
     'pf profile',
     [
@@ -544,10 +549,61 @@ const PROFILE_LAYOUTS = [
         ['🕐 Пояс', 'pf:e:tz'],
         ['✉️ Образцы писем', 'pf:e:examples'],
       ],
-      [['⬅️ Настройки', 's:root']],
+      [
+        ['📄 Резюме', 'rm:list'],
+        ['⬅️ Настройки', 's:root'],
+      ],
     ],
   ],
   ['pf plain', null],
+  // Несколько резюме (docs/resumes.md): список (по числу резюме: у каждого — название и ⏸/▶️), карточка, удаление,
+  // ожидание файла. Подписи и callback_data считает «Step» ($json.b)
+  ...[1, 2, 3, 4, 5].map((n) => [
+    `rm list${n}`,
+    [
+      ...Array.from({ length: n }, (_, i) => [
+        [panelButton(`r${i}.text`), panelButton(`r${i}.cb`)],
+        [panelButton(`t${i}.text`), panelButton(`t${i}.cb`)],
+      ]),
+      [
+        ['➕ Новое резюме', 'rm:new'],
+        ['📋 Копия основного', 'rm:clone:r1'],
+      ],
+      [['⬅️ Профиль', 'pf:view']],
+    ],
+  ]),
+  [
+    'rm card',
+    [
+      [
+        [panelButton('toggle.text'), panelButton('toggle.cb')],
+        ['✏️ Название', panelButton('ren')],
+      ],
+      [
+        ['✏️ Поправить', 'pf:e:profile'],
+        ['➕ Дополнить', 'pf:e:extra'],
+      ],
+      [
+        ['📄 Новый текст', panelButton('txt')],
+        ['✉️ Образцы писем', 'pf:e:examples'],
+      ],
+      [
+        ['📋 Копия', panelButton('clone')],
+        ['🗑 Удалить', panelButton('del')],
+      ],
+      [['⬅️ Резюме', 'rm:list']],
+    ],
+  ],
+  [
+    'rm delete',
+    [
+      [
+        ['🗑 Да, удалить', panelButton('yes')],
+        ['❌ Нет', panelButton('no')],
+      ],
+    ],
+  ],
+  ['rm wait', [[['❌ Отмена', 'rm:list']]]],
 ];
 
 // W13: раскладки панели рекомендаций по резюме (15.10.2026, docs/recommendations.md). Порядок = LAYOUTS в
@@ -3257,6 +3313,7 @@ const workflows = {
         fields: { disable_notification: true },
         markup: { replyMarkup: 'forceReply', forceReply: { force_reply: true } },
       }),
+      code('W11', 'Remember prompt', 'n8n/w11-profile/remember-prompt.js', [5500, 300]),
       code('W11', 'Delete ids', 'n8n/w11-profile/delete-ids.js', [5060, 500]),
       node(
         'W11',
@@ -3318,6 +3375,7 @@ const workflows = {
       ]),
       ['Step', 'Prompt?'],
       ['Prompt?', 'Prompt', 0],
+      ['Prompt', 'Remember prompt'],
       ['Step', 'Delete ids'],
       ['Delete ids', 'Delete'],
     ],

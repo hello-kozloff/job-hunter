@@ -24,4 +24,15 @@ const got = llmJson($input.first().json, req.provider, 'пришли PDF ещё 
 if (got.problem) return [{ json: { ok: false, problem: got.problem } }];
 const draft = draftFromAnswer(got.answer, plan.draft ?? {});
 if (draft.problem) return [{ json: { ok: false, problem: draft.problem } }];
+// Новое резюме (docs/resumes.md): пол, город и имя — факты о человеке, в резюме про другую профессию их может не быть.
+// Задание — от «PDF text» (PDF прислали) или «Plan» (текст ответом, правка)
+const task = (() => {
+  try {
+    const pdf = $('PDF text').first().json;
+    return pdf?.toLlm ? pdf : plan;
+  } catch {
+    return plan; // PDF в этом запуске не присылали
+  }
+})();
+if (task.inherit) draft.facts = inheritPerson(draft.facts, task.inherit);
 return [{ json: { ok: true, draft } }];

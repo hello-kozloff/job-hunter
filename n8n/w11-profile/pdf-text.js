@@ -2,10 +2,13 @@
 // Нода: Code, режим «Run Once for All Items». Вход: «Extract PDF» ({ text, numpages }; ошибка — { error }), «Job»,
 //       «Settings» (готов ли профиль), static data.
 // Выход: { toLlm, text, problem } → «To LLM?»: онбординг — к нейросети; профиль уже есть — новое резюме ждёт выбора
-// (pending в static data, «Step» спросит «Всё заново / Только текст»); проблема — «Step» покажет её.
+// (pending в static data, «Step» спросит «Всё заново / Только текст / Как новое резюме»); проблема — «Step» покажет её.
+// Если перед этим нажали «➕ Новое резюме» (state.await) — сразу к нейросети как новое резюме (create).
 // pdf.js отдаёт текст hh в правильном порядке (проверено на выгрузке hh 13.10.2026); убираем только подвалы страниц.
 
 // @include n8n/shared/settings.js
+
+// @include n8n/shared/resumes.js
 
 const job = $('Job').first().json;
 const s = loadSettings($('Settings').all());
@@ -30,7 +33,20 @@ else if (text.length < 400) problem = 'в PDF почти нет текста (с
 
 if (problem) return [{ json: { toLlm: false, problem } }];
 if (s['profile.ready']) {
-  state.pending = { text, fileName: job.file?.name ?? '' };
+  // Ждали PDF: «➕ Новое резюме» (create) или «📄 Заменить текст» у резюме из списка (replace, id) — 30 минут
+  const wait = state.await && Date.now() - state.await.at < 30 * 60 * 1000 ? state.await : null;
+  delete state.await;
+  // Панель «Пришли PDF» и вопрос к ней больше не нужны: «Step» удалит их (state.cleanup)
+  if (wait) {
+    state.cleanup = { panel: wait.panel ?? 0, prompt: wait.kind === 'create' ? (state.promptId ?? 0) : 0 };
+    delete state.promptId;
+  }
+  if (wait?.kind === 'create') {
+    if (!nextResumeId(s)) return [{ json: { toLlm: false, problem: `уже ${MAX_RESUMES} резюме — это предел. Удали ненужное: ⚙️ → 📄 Резюме` } }];
+    state.text = text;
+    return [{ json: { toLlm: true, mode: 'extract', text, create: true, inherit: s['profile.facts'] } }];
+  }
+  state.pending = { text, fileName: job.file?.name ?? '', ...(wait?.kind === 'replace' && resumeById(s, wait.id) && { target: wait.id }) };
   return [{ json: { toLlm: false, text, replace: true } }];
 }
 state.text = text;
