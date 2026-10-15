@@ -3,7 +3,7 @@
 // Выход: { route, text, b, chatId, messageId } или [] — показывать нечего (только вопрос, сохранение или удаление).
 // Порядок раскладок = RESUME_LAYOUTS в scripts/build-workflows.mjs: выход 2·i — новое сообщение, 2·i + 1 — правка.
 
-const LAYOUTS = ['rs root', 'ru plan', 'rq one2', 'rq one3', 'rq one4', 'rq many8', 'rq text', 'rp add', 'rp replace', 'rs done', 'rs undo', 'rs back', 'rs retry'];
+const LAYOUTS = ['rs root', 'ru plan', 'rq one2', 'rq one3', 'rq one4', 'rq many8', 'rq text', 'rp add', 'rp replace', 'rs done', 'rs undo', 'rs back', 'rs retry', 'rs report'];
 const step = $('Step').first().json;
 const job = $('Job').first().json;
 const v = step.view;

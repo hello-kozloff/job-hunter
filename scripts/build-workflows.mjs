@@ -558,7 +558,10 @@ const RESUME_LAYOUTS = [
   [
     'rs root',
     [
-      [['⬆️ Upgrade резюме', 'rs:up']],
+      [
+        ['🔍 Анализ резюме', 'rs:an'],
+        ['⬆️ Upgrade резюме', 'rs:up'],
+      ],
       [
         ['📄 Резюме файлом', 'rs:file'],
         ['↩️ Откатить', 'rs:undo'],
@@ -663,6 +666,16 @@ const RESUME_LAYOUTS = [
       [
         ['🔄 Повторить', panelButton('retry')],
         ['⬅️ Рекомендации', 'rs:view'],
+      ],
+    ],
+  ],
+  // Отчёт анализа (часть C): вопросы — новой панелью под ним
+  [
+    'rs report',
+    [
+      [
+        ['▶️ Начать', panelButton('go')],
+        ['❌ Отмена', panelButton('no')],
       ],
     ],
   ],
