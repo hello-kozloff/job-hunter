@@ -21,6 +21,8 @@
 
 // @include n8n/shared/resume.js
 
+// @include n8n/shared/cv.js
+
 const job = $('Job').first().json;
 const plan = $('Plan').first().json;
 const s = loadSettings($('Settings').all());
@@ -212,10 +214,12 @@ function finish() {
   }
   const note = sess.kind === 'upgrade' ? `«${oneLine(sess.instruction, 80)}»` : 'анализ';
   out.save = {
-    'resume.history': [{ at: new Date().toISOString(), by: sess.kind, note, resume: sess.original.resume, extra: sess.original.extra }, ...s['resume.history']].slice(0, 5),
+    'resume.history': [version(sess.kind, note, sess.original), ...s['resume.history']].slice(0, 5),
   };
   if (sess.draft.resume !== sess.original.resume) out.save['profile.resume'] = sess.draft.resume;
   if (sess.draft.extra !== sess.original.extra) out.save['profile.extra'] = sess.draft.extra;
+  // Разметка правится вместе с текстом (n8n/shared/cv.js): рендер новой разметки и есть новый profile.resume
+  if (sess.draft.cv && JSON.stringify(sess.draft.cv) !== JSON.stringify(sess.original.cv)) out.save.cv = sess.draft.cv;
   const before = rows ? skillStats(rows, resumeJoin(sess.original)) : null;
   const after = rows ? skillStats(rows, resumeJoin(sess.draft)) : null;
   const n = sess.patches.length;
@@ -237,14 +241,20 @@ function undoView() {
     `↩️ Вернуть резюме, каким оно было до правки ${when(h.at)} (${BY[h.by] ?? h.by}${h.note ? `: ${esc(h.note)}` : ''})?\nТекущая версия сохранится — передумаешь, откатишь обратно.`,
   );
 }
+// Версия для resume.history: текст, «Дополнительно» и разметка (если была живой)
+function version(by, note, d) {
+  return { at: new Date().toISOString(), by, note, resume: d.resume, extra: d.extra, ...(d.cv && { cv: d.cv }) };
+}
 function undo() {
   const [h, ...rest] = s['resume.history'];
   if (!h) return rootView('↩️ Откатывать нечего.');
   const cur = resumeDraft(s);
+  // Версия без разметки (до неё) — разметку не трогаем: она станет неживой, а при откате обратно оживёт
   out.save = {
     'profile.resume': h.resume,
     'profile.extra': h.extra ?? '',
-    'resume.history': [{ at: new Date().toISOString(), by: 'undo', note: `до правки ${when(h.at)}`, resume: cur.resume, extra: cur.extra }, ...rest].slice(0, 5),
+    ...(h.cv && { cv: h.cv }),
+    'resume.history': [version('undo', `до правки ${when(h.at)}`, cur), ...rest].slice(0, 5),
   };
   Object.assign(s, out.save);
   rootView(`✅ Откатил: резюме — как до правки ${when(h.at)}.`);

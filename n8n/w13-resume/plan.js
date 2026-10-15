@@ -28,6 +28,8 @@
 
 // @include n8n/shared/resume.js
 
+// @include n8n/shared/cv.js
+
 const job = $('Job').first().json;
 const s = loadSettings($('Settings').all());
 const state = $getWorkflowStaticData('global');

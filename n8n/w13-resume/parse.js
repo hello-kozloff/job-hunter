@@ -16,6 +16,8 @@
 
 // @include n8n/shared/resume.js
 
+// @include n8n/shared/cv.js
+
 // @include n8n/shared/llm.js
 
 const req = $('Build').first().json;

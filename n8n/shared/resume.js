@@ -1,15 +1,21 @@
 // Рекомендации по резюме (W13, 15.10.2026, docs/recommendations.md): правки резюме и навыки вакансий.
 // Общий код W13: строка «// @include n8n/shared/resume.js» после n8n/shared/card.js (esc), n8n/shared/settings.js
-// (SETTINGS) и n8n/shared/skills.js (skillVariants).
+// (SETTINGS) и n8n/shared/skills.js (skillVariants), сразу за ней — n8n/shared/cv.js (разделы резюме).
 //
 // Резюме бота — profile.resume и profile.extra (что человек дописал сам). Нейросеть видит их одним текстом, как W2 и W5
 // (resumeText): резюме, «## Дополнительно», extra. Правка — { where, old, new, why }: old — кусок этого текста дословно.
 // Код находит его ровно один раз, сам решает, добавление это или замена, и применяет к черновику.
+// Есть разметка (cv, n8n/shared/cv.js) — правка меняет поле своего раздела, текст резюме собирается рендером.
 
 const EXTRA_HEAD = '\n\n## Дополнительно\n';
 
-// Черновик из настроек: { resume, extra } без пробелов по краям — так их видит resumeText
-const resumeDraft = (s) => ({ resume: String(s['profile.resume'] ?? '').trim(), extra: String(s['profile.extra'] ?? '').trim() });
+// Черновик из настроек: { resume, extra } без пробелов по краям — так их видит resumeText; cv — разметка, если она
+// совпадает с текстом (иначе null: правки — по тексту, как без разметки)
+const resumeDraft = (s) => ({
+  resume: String(s['profile.resume'] ?? '').trim(),
+  extra: String(s['profile.extra'] ?? '').trim(),
+  cv: cvFresh(s) ? s.cv : null,
+});
 // Один текст — как resumeText(s): его видит нейросеть, в нём ищутся правки
 const resumeJoin = (d) => (d.extra ? `${d.resume}${EXTRA_HEAD}${d.extra}` : d.resume);
 // Отпечаток версии: резюме поменялось за время сессии (новый PDF в W11) — правки не сохраняем
@@ -104,28 +110,42 @@ const PATCH_ERRORS = {
   same: 'правка ничего не меняет',
   long: 'слишком длинная правка',
   edge: 'правка задевает и резюме, и «Дополнительно»',
+  cross: 'правка задевает два раздела резюме',
+  scope: 'правка не про опыт работы',
+  mark: 'в правке служебные знаки ⟦ ⟧',
   limit: 'резюме вышло бы длиннее предела',
   overlap: 'то же место уже правит другая правка',
 };
 
-// Правка нейросети → { where, old, new, why, kind: add | replace, start, end } (old — точный кусок исходника) или { error }.
-// Пустой old и where «Дополнительно» — новая строка в конец profile.extra (append): у человека, который «Дополнительно»
-// ещё не писал, свои проекты больше некуда вписать
-function checkPatch(d, p) {
+// Правка нейросети → { where, old, new, why, kind: add | replace, section, start, end } (old — точный кусок исходника)
+// или { error }. section — раздел (n8n/shared/cv.js: title, about, p:e1, d:e1) или text, extra. Пустой old и where
+// «Дополнительно» — новая строка в конец profile.extra (append): у человека, который «Дополнительно» ещё не писал, свои
+// проекты больше некуда вписать. scope experience — только правки опыта работы (Upgrade из «💼 Опыт работы»)
+function checkPatch(d, p, scope = '') {
   const old = String(p?.old ?? '');
   const next = String(p?.new ?? '').trim();
   const where = oneLine(p?.where, 60) || 'Резюме';
+  if (CV_BAD.test(next)) return { error: 'mark' };
   if (!old.trim()) {
     if (!/дополнительно/i.test(where) || !next) return { error: 'none' };
     if (next.length > PATCH_MAX) return { error: 'long' };
-    return { where, old: '', new: next, why: oneLine(p?.why, 200), kind: 'add', append: 'extra', start: -1, end: -1 };
+    if (scope === 'experience') return { error: 'scope' };
+    return { where, old: '', new: next, why: oneLine(p?.why, 200), kind: 'add', section: 'extra', append: 'extra', start: -1, end: -1 };
   }
   if (normMap(old).out === normMap(next).out) return { error: 'same' };
   if (next.length > PATCH_MAX || old.length > PATCH_MAX * 2) return { error: 'long' };
   const text = resumeJoin(d);
   const at = locateSnippet(text, old);
   if (at.error) return { error: at.error };
-  if (!partOf(d, at)) return { error: 'edge' };
+  const part = partOf(d, at);
+  if (!part) return { error: 'edge' };
+  let section = part === 'extra' ? 'extra' : 'text';
+  if (part === 'resume' && d.cv) {
+    const c = cvPartAt(d.cv, at);
+    if (!c) return { error: 'cross' };
+    section = c.key;
+  }
+  if (scope === 'experience' && !cvShared(section)) return { error: 'scope' };
   // old — точный кусок исходника: нейросеть могла поменять в нём пробелы или кавычки, применять будем к исходнику
   const exact = text.slice(at.start, at.end);
   return {
@@ -134,17 +154,18 @@ function checkPatch(d, p) {
     new: next,
     why: oneLine(p?.why, 200),
     kind: isAddition(exact, next) ? 'add' : 'replace',
+    section,
     start: at.start,
     end: at.end,
   };
 }
 
 // Правки нейросети → { patches, dropped: [{ where, error }] }: проверенные, без пересечений, не больше max
-function checkPatches(d, list, max = 8) {
+function checkPatches(d, list, max = 8, scope = '') {
   const patches = [];
   const dropped = [];
   for (const p of (Array.isArray(list) ? list : []).slice(0, max * 2)) {
-    const c = checkPatch(d, p);
+    const c = checkPatch(d, p, scope);
     if (c.error) dropped.push({ where: oneLine(p?.where, 60) || 'Резюме', error: c.error });
     else if (!c.append && patches.some((x) => c.start < x.end && x.start < c.end)) dropped.push({ where: c.where, error: 'overlap' });
     else if (patches.length < max) patches.push(c);
@@ -162,6 +183,13 @@ function applyPatch(d, p) {
   if (at.error) return { error: at.error };
   const part = partOf(d, at);
   if (!part) return { error: 'edge' };
+  if (part === 'resume' && d.cv) {
+    // Разметка: правится поле раздела (или текст вокруг меток), текст резюме — рендер
+    const r = cvApply(d.cv, at, p.new);
+    if (r.error) return r;
+    const resume = cvRender(r.cv);
+    return resume.length > SETTINGS['profile.resume'].text ? { error: 'limit' } : { draft: { ...d, resume, cv: r.cv } };
+  }
   const offset = part === 'resume' ? 0 : d.resume.length + EXTRA_HEAD.length;
   const src = d[part];
   const value = src.slice(0, at.start - offset) + p.new + src.slice(at.end - offset);

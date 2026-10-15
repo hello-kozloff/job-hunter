@@ -12,6 +12,8 @@
 
 // @include n8n/shared/resume.js
 
+// @include n8n/shared/cv.js
+
 const s = loadSettings($('Settings').all());
 const text = resumeJoin(resumeDraft(s));
 const h = s['resume.history'][0];

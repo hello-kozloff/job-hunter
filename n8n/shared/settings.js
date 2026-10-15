@@ -102,6 +102,9 @@ const SETTINGS = {
   // Рекомендации по резюме (W13, 15.10.2026, docs/recommendations.md): прежние версии резюме для «↩️ Откатить» —
   // до 5 { at, by, note, resume, extra }, новые сверху. Пишет только W13
   'resume.history': { default: [], history: 5 },
+  // Разделы резюме (W13, n8n/shared/cv.js): разметка поверх profile.resume — должность, «О себе», ключевые навыки hh
+  // и места работы (общие для всех резюме). null — резюме ещё не раскладывали. Пишет только W13
+  cv: { default: null, cv: true },
 };
 
 // Встроенные спорные случаи промпта W2: как узнать их в списке пользователя, решение по умолчанию
@@ -191,6 +194,7 @@ function validSetting(spec, value) {
   }
   if (spec.lines) return validLines(value, spec.lines);
   if (spec.history) return validHistory(value, spec.history);
+  if (spec.cv) return validCv(value);
   if (spec.object) return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
   if (spec.rules) {
     return (
@@ -224,8 +228,48 @@ const validHistory = (list, max) =>
       typeof v.resume === 'string' &&
       v.resume.length <= SETTINGS['profile.resume'].text &&
       typeof (v.extra ?? '') === 'string' &&
-      String(v.extra ?? '').length <= SETTINGS['profile.extra'].text,
+      String(v.extra ?? '').length <= SETTINGS['profile.extra'].text &&
+      (v.cv === undefined || v.cv === null || validCv(v.cv)),
   );
+
+// Разметка резюме (cv): места работы с уникальными id, 1–5 резюме, ключевые навыки — не больше 30 (предел hh)
+function validCv(v) {
+  if (v === null) return true;
+  const str = (x, max) => typeof x === 'string' && x.length <= max;
+  const max = SETTINGS['profile.resume'].text;
+  const places = Array.isArray(v?.places) ? v.places : null;
+  return (
+    Boolean(v) &&
+    typeof v === 'object' &&
+    v.v === 1 &&
+    Boolean(places) &&
+    places.length <= 30 &&
+    new Set(places.map((p) => p?.id)).size === places.length &&
+    places.every(
+      (p) =>
+        /^e\d{1,3}$/.test(p?.id ?? '') &&
+        (p.hhId === null || Number.isFinite(p.hhId)) &&
+        str(p.company, 512) &&
+        str(p.period, 200) &&
+        str(p.position, 512) &&
+        str(p.description, max),
+    ) &&
+    Array.isArray(v.resumes) &&
+    v.resumes.length >= 1 &&
+    v.resumes.length <= 5 &&
+    v.resumes.every(
+      (r) =>
+        /^r\d$/.test(r?.id ?? '') &&
+        (r.hh === null || (Boolean(r.hh) && str(r.hh.hash, 64) && str(r.hh.title, 200))) &&
+        str(r.template, max + 2000) &&
+        str(r.title, 200) &&
+        str(r.about, max) &&
+        Array.isArray(r.keySkills) &&
+        r.keySkills.length <= 30 &&
+        r.keySkills.every((k) => typeof k === 'string' && k.length > 0 && k.length <= 100),
+    )
+  );
+}
 
 // Текст резюме для промптов W2 и W5: резюме и «Дополнительно» (то, что человек дописал сам) — своим разделом
 function resumeText(s) {
