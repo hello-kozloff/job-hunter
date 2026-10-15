@@ -22,6 +22,8 @@
 
 // @include n8n/shared/settings.js
 
+// @include n8n/shared/skills.js
+
 const jobs = $('Jobs').all().map((i) => i.json);
 const rows = new Map($('Vacancy').all().map((i) => [i.json.id, i.json]));
 const settings = loadSettings($('Settings').all());
@@ -119,28 +121,8 @@ const mainProfile = mainLines.filter((line) => !PET_LINE.test(line)).join('\n').
 const extraProfile = [...mainLines.filter((line) => PET_LINE.test(line)), extraAt >= 0 ? profile.slice(extraAt) : '']
   .join('\n')
   .toLowerCase();
-const mentions = (text, skill) =>
-  new RegExp(`(^|[^a-zа-яё0-9])${skill.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-zа-яё0-9]|$)`).test(text);
 // Базовое для senior-фронтендера (пресет frontend) — в резюме не перечисляют, но это коммерческий опыт
 const IMPLIED = new Set(frontend ? ['html', 'html5', 'css', 'css3', 'ui', 'ux', 'ui/ux', 'frontend', 'spa', 'git', 'верстка', 'вёрстка', 'адаптивная верстка', 'кроссбраузерная верстка'] : []);
-// Другие названия того же: «React.js» = React, SQL ⊂ PostgreSQL, руководство ≈ technical leadership / mentoring
-const ALIASES = {
-  sql: ['postgresql'],
-  postgres: ['postgresql'],
-  kuber: ['kubernetes'],
-  k8s: ['kubernetes'],
-  'руководство коллективом': ['technical leadership', 'mentoring'],
-  'управление командой': ['technical leadership', 'mentoring'],
-  наставничество: ['mentoring'],
-  'английский язык': ['английский'],
-};
-// «SASS/SCSS», «UI/UX» — и каждое название отдельно (14.10.2026: при SCSS в резюме письмо писало
-// «готов разобраться в SASS/SCSS»)
-const variants = (skill) => {
-  const s = skill.toLowerCase();
-  const names = [s, ...(s.includes('/') ? s.split('/').map((p) => p.trim()).filter((p) => p.length > 1) : [])];
-  return [...new Set([...names.flatMap((n) => [n, n.replace(/\.?js$/, '')]), ...(ALIASES[s] ?? [])])].filter(Boolean);
-};
 // Не технологии: «готов погрузиться в white label» звучит странно — такие навыки модели не показываем
 const NOT_TECH = new Set(['white label', 'white-label', 'saas', 'b2b', 'b2c', 'crm', 'erp', 'agile', 'scrum', 'kanban', 'jira', 'confluence', 'английский язык', 'english', 'документация', 'работа в команде', 'коммуникабельность', 'аналитическое мышление', 'обучаемость', 'ответственность']);
 // wishes — пожелания кандидата: навык, которого нет в профиле, но о котором кандидат пишет сам («я знаю PHP»),
@@ -149,10 +131,10 @@ function skillGroups(skills, wishes = '') {
   const wished = String(wishes).toLowerCase();
   const groups = { commercial: [], pet: [], said: [], missing: [] };
   for (const skill of String(skills ?? '').split(',').map((s) => s.trim()).filter((s) => s && !NOT_TECH.has(s.toLowerCase()))) {
-    const names = variants(skill);
-    if (IMPLIED.has(skill.toLowerCase()) || names.some((n) => mentions(mainProfile, n))) groups.commercial.push(skill);
-    else if (names.some((n) => mentions(extraProfile, n))) groups.pet.push(skill);
-    else if (wished && names.some((n) => mentions(wished, n))) groups.said.push(skill);
+    const names = skillVariants(skill);
+    if (IMPLIED.has(skill.toLowerCase()) || names.some((n) => mentionsSkill(mainProfile, n))) groups.commercial.push(skill);
+    else if (names.some((n) => mentionsSkill(extraProfile, n))) groups.pet.push(skill);
+    else if (wished && names.some((n) => mentionsSkill(wished, n))) groups.said.push(skill);
     else groups.missing.push(skill);
   }
   return groups;
