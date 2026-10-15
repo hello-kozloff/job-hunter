@@ -8,6 +8,8 @@
 //   node scripts/applier.mjs recon --inbox           разведка «Откликов» и чатов (чаты не открываются)
 //   node scripts/applier.mjs recon --resume          разведка резюме: «Мои резюме», резюме, страницы правки по ссылкам —
 //                                                    без кликов, рвётся любой не-GET к hh (часть D, E0); бэкап резюме hh
+//   node scripts/applier.mjs cv [hash]               прочитать резюме hh (только GET): должность, навыки, «О себе», опыт
+//                                                    — сводка без личных данных; бэкап — /data/resume в томе робота
 //   node scripts/applier.mjs record start|stop       запись: вы откликаетесь сами в окне робота, он смотрит
 //   node scripts/applier.mjs paste                   во время записи: буфер обмена Mac (pbpaste) → туда, где курсор
 //                                                    в окне робота (VNC передаёт только латиницу, письмо — русское)
@@ -163,6 +165,19 @@ const commands = {
       }
       console.log(`  порвано не-GET к hh: ${cv.blocked}${cv.blockedPaths?.length ? `\n    ${cv.blockedPaths.join('\n    ')}` : ''}`);
     }
+  },
+
+  async cv(args) {
+    const hash = args.find((a) => /^[0-9a-f]{32,64}$/.test(a)) ?? '';
+    console.log('Читаю резюме на hh (только чтение)…');
+    const r = await api('POST', '/resume/read', { hash });
+    if (!r.ok) throw new Error(`резюме не прочитал: ${r.error}`);
+    for (const x of r.resumes) console.log(`  ${x.hash === r.resume.hash ? '→' : ' '} ${x.hash.slice(0, 8)}… «${x.title}» · ${x.access || '—'} · ${x.status}`);
+    const v = r.resume;
+    console.log(`должность: «${v.title}» (до ${v.limits.title} знаков)`);
+    console.log(`«О себе»: ${v.about.length} знаков · ключевых навыков: ${v.keySkills.length} из ${v.limits.keySkills}`);
+    for (const p of v.places) console.log(`💼 ${p.company} — ${p.position} (${p.start || '?'} — ${p.end || 'сейчас'}): ${p.description.length} знаков`);
+    if (r.backup) console.log(`бэкап: /data/resume/${r.backup}`);
   },
 
   async record(args) {

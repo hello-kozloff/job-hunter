@@ -8,6 +8,7 @@ import { deflateSync } from 'node:zlib';
 import { config } from './config.mjs';
 import { log } from './log.mjs';
 import { store } from './store.mjs';
+import { RESUME_LIMITS } from './hh/resume.mjs';
 import { GROUP } from './hh/state.mjs';
 import { sleep, stamp } from './util.mjs';
 
@@ -175,4 +176,23 @@ export function fakeResume() {
   if (store.blocked) store.unblock('фейк: продолжить');
   store.resetStreak();
   return { ok: true, loggedIn: true, blocked: null };
+}
+
+// POST /resume/read в фейке (часть D, S2): синтетическое резюме — W13 проверяет сверку с hh без hh
+export function fakeResumeRead() {
+  const hash = 'fa4e00000000000000000000000000000000001';
+  const updated = new Date().toISOString();
+  const resume = {
+    hash,
+    title: 'Frontend-разработчик (фейк)',
+    about: 'Фейковое резюме робота: проверка W13 без hh.',
+    keySkills: ['React', 'TypeScript', 'Next.js'],
+    places: [{ hhId: 1001, company: 'Фейк Компания', position: 'Frontend Developer', description: 'Делал интерфейсы на React.', start: '2023-01-01', end: '' }],
+    access: 'clients',
+    status: 'published',
+    updated,
+    limits: { ...RESUME_LIMITS, titleNotIn: [] },
+  };
+  log('fake.resume_read', {});
+  return { ok: true, resumes: [{ hash, title: resume.title, access: 'clients', status: 'published', updated }], resume, backup: '' };
 }

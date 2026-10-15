@@ -110,9 +110,11 @@ export const WATCH = {
 };
 
 // Сетевой предохранитель: в сухом прогоне и разведке рвём всё, что может изменить аккаунт —
-// не-GET запросы к /applicant/… и /shards/applicant/… (отклик, правки) и любые не-GET в chatik (сообщения,
-// «прочитано»). Переход документом на /applicant/vacancy_response (адрес кнопки «Откликнуться») — только в журнал
-export const GUARD_URL = /^https:\/\/(?:[a-z0-9-]+\.)*hh\.ru\/(?:applicant|shards\/applicant)\/|^https:\/\/chatik\.hh\.ru\//;
+// не-GET запросы к /applicant/… и /shards/applicant/… (отклик, правки резюме), любые не-GET в chatik (сообщения,
+// «прочитано») и в resume-profile-front (сохранение опыта работы — общего для всех резюме, E0 15.10.2026).
+// Переход документом на /applicant/vacancy_response (адрес кнопки «Откликнуться») — только в журнал
+export const GUARD_URL =
+  /^https:\/\/(?:[a-z0-9-]+\.)*hh\.ru\/(?:applicant|shards\/applicant)\/|^https:\/\/chatik\.hh\.ru\/|^https:\/\/resume-profile-front\.hh\.ru\//;
 export const RESPONSE_PAGE = /\/applicant\/vacancy_response(?!\/popup)/;
 // Клик по «Откликнуться» у вакансии «в один клик» — это GET /applicant/vacancy_response → 302 на
 // /vacancy/<id>?forceQuickResponse=true, и страница сама шлёт POST отклика (запись 10.10.2026).
@@ -125,17 +127,23 @@ export const FORCE_QUICK_URL = /^https:\/\/(?:[a-z0-9-]+\.)*hh\.ru\/vacancy\/\d+
 //   respond   POST /applicant/vacancy_response/popup — сам отклик (окно «Откликнуться» и отклик в один клик)
 //   letter    POST /applicant/vacancy_response/edit_ajax — «Приложить сопроводительное письмо» после отклика
 //   chat      POST chatik/api/save — письмо в сообщение отклика в чате; notify_chat_opened — чат открыт
+//   resume    POST /applicant/resume/edit?resume=<hash> — сохранение формы резюме: должность, навыки, «О себе» (E0)
+//   profile   POST resume-profile-front…/profile/shards/profile/update — сохранение опыта работы (профиль, E0)
 // quick — не адрес, а разрешение перехода на /vacancy/<id>?forceQuickResponse=true (FORCE_QUICK выше)
 export const ACTION_URL = {
   respond: /^https:\/\/(?:[a-z0-9-]+\.)*hh\.ru\/applicant\/vacancy_response\/popup(?:[?#]|$)/,
   letter: /^https:\/\/(?:[a-z0-9-]+\.)*hh\.ru\/applicant\/vacancy_response\/edit_ajax(?:[?#]|$)/,
   chat: /^https:\/\/chatik\.hh\.ru\/chatik\/api\/save(?:[?#]|$)/,
   chatOpened: /^https:\/\/chatik\.hh\.ru\/chatik\/api\/notify_chat_opened(?:[?#]|$)/,
+  resume: /^https:\/\/(?:[a-z0-9-]+\.)*hh\.ru\/applicant\/resume\/edit(?:[?#]|$)/,
+  profile: /^https:\/\/resume-profile-front\.hh\.ru\/profile\/shards\/profile\/update(?:[?#]|$)/,
 };
 export const GUARD_ALLOW = {
   respond: [ACTION_URL.respond],
   letter: [ACTION_URL.letter],
   chat: [ACTION_URL.chat, ACTION_URL.chatOpened],
+  resume: [ACTION_URL.resume],
+  profile: [ACTION_URL.profile],
 };
 // Кадр чата отклика (iframe виджета чатов на странице вакансии или отдельная вкладка)
 export const CHAT_FRAME = /^https:\/\/chatik\.hh\.ru\/chat\/\d+/;

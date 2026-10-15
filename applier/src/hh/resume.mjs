@@ -69,3 +69,68 @@ export function limitsOf(state, max = 200) {
 const RECORD_XHR = /vacancy_response|negotiations|chatik|\/applicant\//;
 export const recordWanted = (method, url) =>
   RECORD_XHR.test(url) || (HH_PAGE.test(url) && (method !== 'GET' || /resume/i.test(url)));
+
+// ---------- Чтение резюме (часть D, S2) ----------
+// InitialState страницы /resume/<hash> → applicantResume (E0, docs/recommendations.md → «Итог E0»): поля hh — массивы
+// [{ string }], опыт — experience[] { id, companyName, position, description, startDate, endDate }, пределы — _conditions.
+// Список «Моих резюме» — applicantResumes[] с теми же _attributes, title, accessType.
+
+// Пределы hh по умолчанию (E0, 15.10.2026) — если в _conditions их не нашлось
+export const RESUME_LIMITS = { title: 100, about: 32768, keySkills: 30, keySkill: 100, position: 512, description: 32768 };
+
+// Первая строка поля hh: [{ string }] → строка
+const one = (v) => String((Array.isArray(v) ? v[0]?.string : v?.string ?? v) ?? '').trim();
+const isoOf = (t) => (Number.isFinite(t) || /^\d{4}-/.test(String(t ?? '')) ? new Date(t).toISOString() : '');
+
+// «Мои резюме» → [{ hash, title, access, status, updated }]; access: clients — видно работодателям, no_one — никому
+export function resumeList(state) {
+  const list = Array.isArray(state?.applicantResumes) ? state.applicantResumes : [];
+  return list
+    .map((r) => ({
+      hash: String(r?._attributes?.hash ?? ''),
+      title: one(r?.title),
+      access: one(r?.accessType),
+      status: String(r?._attributes?.status ?? ''),
+      updated: isoOf(r?._attributes?.updated),
+    }))
+    .filter((r) => r.hash);
+}
+
+// Какое резюме читать: заданное по хешу, иначе первое видимое работодателям, иначе первое
+export const pickResume = (list, hash = '') =>
+  hash ? list.find((r) => r.hash === hash) ?? null : list.find((r) => r.access && r.access !== 'no_one') ?? list[0] ?? null;
+
+// applicantResume → поля для бота или null (не резюме). Места — в порядке hh (новые сверху)
+export function parseResume(r) {
+  if (!r || typeof r !== 'object' || !r._attributes?.hash) return null;
+  const c = r._conditions ?? {};
+  const part = (field, key) => c[field]?.parts?.find((p) => p?.[key])?.[key] ?? {};
+  const num = (v, d) => (Number.isFinite(v) && v > 0 ? v : d);
+  return {
+    hash: String(r._attributes.hash),
+    title: one(r.title),
+    about: one(r.skills),
+    keySkills: (Array.isArray(r.keySkills) ? r.keySkills : []).map((k) => one(k)).filter(Boolean),
+    places: (Array.isArray(r.experience) ? r.experience : []).map((e) => ({
+      hhId: Number.isFinite(Number(e?.id)) ? Number(e.id) : null,
+      company: String(e?.companyName ?? '').trim(),
+      position: String(e?.position ?? '').trim(),
+      description: String(e?.description ?? '').trim(),
+      start: String(e?.startDate ?? ''),
+      end: String(e?.endDate ?? ''),
+    })),
+    access: one(r.accessType),
+    status: String(r._attributes.status ?? ''),
+    updated: isoOf(r._attributes.updated),
+    limits: {
+      title: num(part('title', 'string').maxlength, RESUME_LIMITS.title),
+      about: num(part('skills', 'string').maxlength, RESUME_LIMITS.about),
+      keySkills: num(c.keySkills?.maxcount, RESUME_LIMITS.keySkills),
+      keySkill: num(part('keySkills', 'string').maxlength, RESUME_LIMITS.keySkill),
+      position: num(part('experience', 'position').maxlength, RESUME_LIMITS.position),
+      description: num(part('experience', 'description').maxlength, RESUME_LIMITS.description),
+      // Должность не может совпасть с должностью другого своего резюме
+      titleNotIn: Array.isArray(part('title', 'string').not_in) ? part('title', 'string').not_in.map(String) : [],
+    },
+  };
+}

@@ -11,6 +11,7 @@
 //   POST /captcha {text}           ответ на капчу-картинку (фото в Telegram): ввести и отправить
 //   POST /apply {vacancyId, letter, requestId, dry}   отклик; APPLY_LIVE=0 или dry: true — сухой прогон до кнопки
 //   POST /recon {vacancyIds?, inbox?, resume?}   разведка без кликов — фоновое задание, 202 (resume — резюме, E0)
+//   POST /resume/read {hash?}      резюме hh: поля из страницы резюме, только GET (часть D, S2); бэкап — /data/resume
 //   POST /record {on}              запись: пользователь откликается сам в окне робота
 //   POST /record/paste {text}      во время записи: вставить текст (письмо с Mac) туда, где курсор
 //   POST /shot                     скриншот окна сейчас
@@ -44,8 +45,9 @@ import { LOGIN_URL, SEL } from './hh/selectors.mjs';
 import { applyFlow } from './flows/apply.mjs';
 import { captchaKind, captchaShown, visible } from './flows/dom.mjs';
 import { reconInbox, reconResume, reconVacancies } from './flows/recon.mjs';
+import { readResume } from './flows/resume.mjs';
 import { recordStart, recordStop, recording } from './flows/record.mjs';
-import { FAKE_OUTCOMES, fakeApply, fakeCaptcha, fakePush, fakeQueue, fakeResume } from './fake.mjs';
+import { FAKE_OUTCOMES, fakeApply, fakeCaptcha, fakePush, fakeQueue, fakeResume, fakeResumeRead } from './fake.mjs';
 
 if (config.token.length < 16) {
   console.error('APPLIER_TOKEN не задан или короче 16 символов — без него API робота открыт, не стартую');
@@ -260,6 +262,13 @@ const routes = {
     return { status: 202, body: { ok: true, job: { kind: started.kind, state: started.state } } };
   },
 
+  // Резюме hh для W13 (разделы резюме, сверка бота с hh). Капча — блок 423 на следующих действиях, как у отклика
+  'POST /resume/read': async (body) => {
+    assertNotBlocked();
+    const hash = /^[0-9a-f]{32,64}$/.test(String(body.hash ?? '')) ? String(body.hash) : '';
+    return lock.run('resume-read', () => readResume({ hash }));
+  },
+
   'POST /record': async (body) => {
     if (body.on) {
       if (recording()) return { ok: true, recording: recording() };
@@ -358,6 +367,9 @@ async function fakeRoute(key, req) {
       return fakeCaptcha(body.text ?? '');
     case 'POST /resume':
       return { status: 200, body: fakeResume() };
+    case 'POST /resume/read':
+      if (store.blocked) return { status: 423, body: { blocked: store.blocked } };
+      return { status: 200, body: fakeResumeRead() };
     case 'POST /notice':
       return { status: 200, body: noticeAck(body) };
     case 'POST /fake': {
