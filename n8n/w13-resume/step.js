@@ -298,8 +298,11 @@ function summaryView(messageId = panelId) {
     push.some((x) => x.key === 'place') ? '⚠️ Опыт работы общий: на hh поменяется во всех резюме, где отмечены эти места.' : null,
     note || null,
     '',
-    '🧪 <b>Сухой прогон</b> — робот заполнит формы hh, пришлёт снимки и ничего не сохранит.',
-    sess.live ? '✅ <b>Записать на hh</b> — робот сохранит разделы на hh и сверит, прочитав резюме заново.' : 'Записывать на hh робот начнёт после проверки сухого прогона (в .env — RESUME_LIVE=1).',
+    // Запись включена — сразу «Записать» (сухой прогон владельцу не нужен, 15.10.2026); выключена — только сухой
+    // прогон: им проверяют робота перед включением RESUME_LIVE
+    sess.live
+      ? '✅ <b>Записать на hh</b> — робот сохранит разделы на hh и сверит, прочитав резюме заново. Копия резюме hh до записи остаётся у робота.'
+      : '🧪 <b>Сухой прогон</b> — робот заполнит формы hh, пришлёт снимки и ничего не сохранит. Записывать на hh он начнёт, когда в .env будет RESUME_LIVE=1.',
   ];
   show(sess.live ? 're sum' : 're sumdry', lines.filter((l) => l !== null).join('\n'), { dry: `re:${sess.sid}:dry`, live: `re:${sess.sid}:live`, x: `re:${sess.sid}:x` }, messageId);
 }
@@ -342,10 +345,10 @@ function writeView() {
     const text = [
       '🧪 <b>Сухой прогон</b>: робот заполнил формы hh и ничего не сохранил.',
       ...lines,
-      sess.live ? '\nВсё верно на снимках — «✅ Записать на hh».' : '\nЗаписывать на hh робот начнёт, когда в .env будет RESUME_LIVE=1 (scripts/deploy.sh --applier).',
+      '\nЗаписывать на hh робот начнёт, когда в .env будет RESUME_LIVE=1 (scripts/deploy.sh --applier).',
     ].join('\n');
-    if (!sess.live) state.session = null;
-    return show(sess.live ? 're dry' : 'rs back', text, { live: `re:${sess.sid}:live`, back: BACK_RECS }, 0);
+    state.session = null;
+    return show('rs back', text, { back: BACK_RECS }, 0);
   }
   // Живая запись: сверка чтением (сессия закрывается после: подписи разделов берутся из неё)
   const saved = sess.results.filter((r) => r.outcome === 'saved');

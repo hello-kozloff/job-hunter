@@ -28,7 +28,6 @@ const LAYOUTS = [
   're item',
   're sum',
   're sumdry',
-  're dry',
 ];
 const step = $('Step').first().json;
 const job = $('Job').first().json;
