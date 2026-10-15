@@ -11,6 +11,8 @@
 // списке W5 счёл бы коммерческим опытом.
 
 const CV_MARK = /⟦(title|about|[pd]:e\d{1,3})⟧/g;
+// Ключевых навыков на hh — не больше 30 (_conditions.keySkills.maxcount, E0)
+const KEY_SKILLS_MAX = 30;
 const CV_BAD = /[⟦⟧]/;
 
 // Значение поля по ключу метки
@@ -111,11 +113,21 @@ function cvLast(text, needle, lo, hi) {
   const i = text.lastIndexOf(String(needle), hi - String(needle).length);
   return i >= lo ? { start: i, end: i + String(needle).length } : cvFind(text, needle, lo, hi);
 }
+// Якорь целиком, иначе — его голова (head) или хвост (tail), от 3 слов. Длинный якорь нейросеть иногда путает с другого
+// края: 15.10.2026 Flash-Lite вернул конец «О себе» как «HTML5/CSS3, Storybook, …», а в тексте «SSR/SSG/CSR, Storybook, …»
+function cvFindPart(text, needle, lo, hi, side) {
+  const words = String(needle ?? '').trim().split(/\s+/);
+  for (let k = words.length; k >= Math.min(3, words.length); k--) {
+    const r = cvFind(text, (side === 'head' ? words.slice(0, k) : words.slice(-k)).join(' '), lo, hi);
+    if (!r.error) return r;
+  }
+  return { error: 'none' };
+}
 // Кусок from…to: начало from в [lo, hi), конец — первое to после него. → { start, end } или { error }
 function cvSpan(text, from, to, lo = 0, hi = text.length) {
-  const a = cvFind(text, from, lo, hi);
+  const a = cvFindPart(text, from, lo, hi, 'head');
   if (a.error) return a;
-  const b = cvFind(text, to, a.start, hi);
+  const b = cvFindPart(text, to, a.start, hi, 'tail');
   return b.error ? b : { start: a.start, end: b.end };
 }
 
@@ -198,4 +210,80 @@ function cvFromAnchors(text, a) {
     resumes: [{ id: 'r1', hh: null, template, title: field('title'), about: field('about'), keySkills: [] }],
   };
   return cvRender(cv) === text ? { cv, problems } : { error: 'lossy' };
+}
+
+// ---------- Сверка с hh (часть D, S3) ----------
+
+// Одинаковы ли куски для сверки: без разницы в пробелах, кавычках, тире, регистре и точке в конце
+function cvSame(a, b) {
+  const n = (s) => normMap(String(s ?? '')).out.toLowerCase().replace(/[.\s]+$/, '');
+  return n(a) === n(b);
+}
+// Чужой текст (с hh) без служебных знаков разметки
+const cvClean = (s) => String(s ?? '').replace(/[⟦⟧]/g, '').trim();
+
+// Поставить значение поля раздела. У должности и «О себе» без метки — новый раздел в конец текста резюме
+function cvSet(cv, key, value, i = 0) {
+  const v = cvClean(value);
+  const r = cv.resumes[i];
+  if (key === 'title' || key === 'about') {
+    if (!r.template.includes(`⟦${key}⟧`)) r.template += `\n\n## ${key === 'title' ? 'Желаемая должность' : 'О себе'}\n⟦${key}⟧`;
+    r[key] = v;
+    return;
+  }
+  const place = cv.places.find((p) => p.id === key.slice(2));
+  if (place) place[key[0] === 'p' ? 'position' : 'description'] = v;
+}
+
+// Даты hh (2025-08-01) → «авг 2025 — сен 2026»; без конца — «по настоящее время»
+const CV_MONTHS = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+function cvMonth(d) {
+  const m = String(d ?? '').match(/^(\d{4})-(\d{2})/);
+  return m ? `${CV_MONTHS[Number(m[2]) - 1]} ${m[1]}` : '';
+}
+const cvPeriod = (start, end) => [cvMonth(start), cvMonth(end) || 'по настоящее время'].filter(Boolean).join(' — ');
+
+// Место работы с hh — в бота: в конец блока опыта (после описания последнего места; мест нет — в конец текста).
+// Заголовок — как у мест владельца: «### Компания — должность (период)»
+function cvAddPlace(cv, h, i = 0) {
+  const id = `e${Math.max(0, ...cv.places.map((p) => Number(p.id.slice(1)))) + 1}`;
+  const company = cvClean(h.company);
+  const period = cvPeriod(h.start, h.end);
+  cv.places.push({ id, hhId: h.hhId ?? null, company, period, position: cvClean(h.position), description: cvClean(h.description) });
+  const r = cv.resumes[i];
+  const block = `\n\n### ${company} — ⟦p:${id}⟧${period ? ` (${period})` : ''}\n⟦d:${id}⟧`;
+  const last = [...r.template.matchAll(/⟦d:e\d{1,3}⟧/g)].at(-1);
+  const at = last ? last.index + last[0].length : r.template.length;
+  r.template = r.template.slice(0, at) + block + r.template.slice(at);
+  return id;
+}
+
+// Компания для сопоставления: без формы организации, кавычек и регистра
+const cvCompanyKey = (s) =>
+  String(s ?? '')
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/["«»“”„']/g, '')
+    .replace(/(^|\s)(ооо|оао|зао|пао|ао|ип|llc|ltd|inc|gmbh)(?=\s|$)/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+// Места бота ↔ места hh: та же компания (или одно название внутри другого); несколько — тот же год начала.
+// → { pairs: [{ place, hh }], onlyHh: места hh без пары }
+function cvMatchPlaces(cv, hhPlaces) {
+  const free = [...(hhPlaces ?? [])];
+  const pairs = [];
+  for (const place of cv.places) {
+    const k = cvCompanyKey(place.company);
+    const cands = free.filter((h) => {
+      const hk = cvCompanyKey(h.company);
+      return k && hk && (hk === k || (Math.min(k.length, hk.length) >= 3 && (hk.includes(k) || k.includes(hk))));
+    });
+    const year = (h) => String(h.start ?? '').slice(0, 4);
+    const h = cands.find((x) => year(x) && place.period.includes(year(x))) ?? cands[0];
+    if (!h) continue;
+    free.splice(free.indexOf(h), 1);
+    pairs.push({ place, hh: h });
+  }
+  return { pairs, onlyHh: free };
 }

@@ -25,7 +25,7 @@
 //      профиль (W11, 13.10.2026): документ в чате (op pdf | not_pdf, file = { id, name, size }), кнопки pf:* и ответы
 //      на вопросы профиля (PROFILE_PROMPTS, op input).
 //   { action: 'resume', data, op, field, text, chatId, queryId, messageId, userMessageId, promptId } — рекомендации по
-//      резюме (W13, 15.10.2026): кнопки rs: ru: rq: rp: rr: (data — как есть, разбирает W13 «Job») и ответы на вопросы
+//      резюме (W13, 15.10.2026): кнопки rs: ru: rq: rp: rr: rc: rk: rx: (data — как есть, разбирает W13 «Job») и ответы на вопросы
 //      RESUME_PROMPTS (op input).
 // Чужие чаты отсекает сам Telegram Trigger (Restrict to Chat IDs = TG_CHAT_ID); здесь — вторая проверка.
 
@@ -58,7 +58,7 @@ if (cb) {
   }
 
   // Рекомендации по резюме (W13): callback_data разбирает сам W13
-  if (/^(rs|ru|rq|rp|rr):/.test(data)) return [{ json: { action: 'resume', data, ...pressed } }];
+  if (/^(rs|ru|rq|rp|rr|rc|rk|rx):/.test(data)) return [{ json: { action: 'resume', data, ...pressed } }];
 
   const list = data.match(/^p:l:([a-z]+):(\d+)$/);
   if (list && TABS[list[1]]) return panel({ ...pressed, view: 'list', tab: list[1], page: Number(list[2]) });
