@@ -196,3 +196,16 @@ export function fakeResumeRead() {
   log('fake.resume_read', {});
   return { ok: true, resumes: [{ hash, title: resume.title, access: 'clients', status: 'published', updated }], resume, backup: '' };
 }
+
+// POST /resume/write в фейке: всегда сухой прогон, по снимку на раздел — W13 проверяет выгрузку без hh
+export function fakeResumeWrite(changes) {
+  const results = changes.map((c, i) => ({
+    kind: c.kind,
+    ...(c.hhId && { hhId: c.hhId }),
+    outcome: 'dry',
+    note: '',
+    shot: fakeShot(`cv-${c.kind}-${i}`, [70, 120, 200]),
+  }));
+  log('fake.resume_write', { changes: changes.length });
+  return { ok: true, live: false, results, after: null };
+}

@@ -3,6 +3,7 @@
 // что писать в запись. Как hh сохраняет поля, покажет запись правок владельца.
 import { HH, HH_PAGE } from './selectors.mjs';
 import { decodeEntities } from './state.mjs';
+import { errorCode } from './xhr.mjs';
 
 export const RESUMES_URL = `${HH}/applicant/resumes`;
 export const resumeUrl = (hash) => `${HH}/resume/${hash}`;
@@ -133,4 +134,71 @@ export function parseResume(r) {
       titleNotIn: Array.isArray(part('title', 'string').not_in) ? part('title', 'string').not_in.map(String) : [],
     },
   };
+}
+
+// ---------- Запись резюме (часть D, E2/E3) ----------
+// Поля пишутся через формы hh, как человек (в теле сохранения — отпечатки браузера, E0). Здесь — адреса форм, проверка
+// изменений и разбор ответа hh; сам сценарий — src/flows/resume.mjs → writeResume.
+
+// Форма раздела: должность, навыки, «О себе» — у резюме; место работы — в профиле (общее для всех резюме)
+export const cvFormUrl = (kind, hash, hhId) =>
+  kind === 'place'
+    ? `${HH}/profile/edit/experience/${hhId}?resumeFrom=${hash}`
+    : `${HH}/resume/edit/${hash}/${{ title: 'position', skills: 'keySkills', about: 'about' }[kind]}`;
+
+// Изменения для записи: [{ kind: title, value } | { kind: about, value } | { kind: skills, skills } |
+// { kind: place, hhId, position?, description? }] — в пределах hh (E0). → { changes } или { error }
+export function cleanChanges(list, limits = RESUME_LIMITS) {
+  if (!Array.isArray(list) || !list.length || list.length > 40) return { error: 'нужно от 1 до 40 изменений' };
+  const text = (v) => (typeof v === 'string' ? v.replace(/\r\n?/g, '\n').trim() : null);
+  const out = [];
+  for (const c of list) {
+    if (c?.kind === 'title' || c?.kind === 'about') {
+      const v = text(c.value);
+      const max = c.kind === 'title' ? limits.title : limits.about;
+      if (!v || v.length > max || (c.kind === 'title' && v.length < 2)) return { error: `${c.kind}: пусто или длиннее ${max}` };
+      out.push({ kind: c.kind, value: v });
+    } else if (c?.kind === 'skills') {
+      const seen = new Set();
+      const skills = (Array.isArray(c.skills) ? c.skills : []).map(text).filter((s) => s && !seen.has(s.toLowerCase()) && seen.add(s.toLowerCase()));
+      if (!skills.length || skills.length > limits.keySkills || skills.some((s) => s.length > limits.keySkill)) {
+        return { error: `skills: от 1 до ${limits.keySkills} навыков, каждый до ${limits.keySkill} знаков` };
+      }
+      out.push({ kind: 'skills', skills });
+    } else if (c?.kind === 'place') {
+      const hhId = Number(c.hhId);
+      const position = text(c.position);
+      const description = text(c.description);
+      if (!Number.isSafeInteger(hhId) || hhId <= 0) return { error: 'place: нужен hhId места' };
+      if (position === null && description === null) return { error: 'place: нечего менять' };
+      if (position !== null && (!position || position.length > limits.position)) return { error: `place: должность пустая или длиннее ${limits.position}` };
+      if (description !== null && (!description || description.length > limits.description)) {
+        return { error: `place: описание пустое или длиннее ${limits.description}` };
+      }
+      out.push({ kind: 'place', hhId, ...(position !== null && { position }), ...(description !== null && { description }) });
+    } else return { error: `неизвестный раздел: ${c?.kind}` };
+  }
+  return { changes: out };
+}
+
+// Навыки на hh → целевые: что убрать и что добавить (без разницы в регистре)
+export function skillsDiff(current, target) {
+  const key = (s) => String(s ?? '').trim().toLowerCase();
+  const cur = new Set(current.map(key));
+  const tgt = new Set(target.map(key));
+  return { remove: current.filter((s) => !tgt.has(key(s))), add: target.filter((s) => !cur.has(key(s))) };
+}
+
+// Ответ hh на сохранение формы. resume — POST /applicant/resume/edit: 2xx и резюме в ответе (hasErrors — предупреждение:
+// у резюме бывают незаполненные поля и кроме нашего); profile — сохранение опыта: 2xx, тело пустое (E0).
+// body null — тело не дочитали (страница ушла сразу после ответа): принято по коду, итог проверит чтение резюме
+export function writeResult(action, status, body) {
+  if (!(status >= 200 && status < 300)) return { ok: false, note: errorCode(body) || `HTTP ${status || 'нет ответа'}` };
+  if (action === 'resume' && body === null) return { ok: true, note: '' };
+  if (action === 'resume') {
+    const a = body?.resume?._attributes;
+    if (!a) return { ok: false, note: 'hh ответил без резюме' };
+    if (a.hasErrors) return { ok: true, note: 'hh пишет, что в резюме есть ошибки в полях' };
+  }
+  return { ok: true, note: '' };
 }

@@ -10,6 +10,9 @@
 //                                                    без кликов, рвётся любой не-GET к hh (часть D, E0); бэкап резюме hh
 //   node scripts/applier.mjs cv [hash]               прочитать резюме hh (только GET): должность, навыки, «О себе», опыт
 //                                                    — сводка без личных данных; бэкап — /data/resume в томе робота
+//   node scripts/applier.mjs cv-dry <файл.json>      сухой прогон записи резюме: робот заполняет формы hh и не сохраняет
+//                                                    (всегда dry: true); файл — { hash?, changes: [{ kind: title | about |
+//                                                    skills | place, … }] }; снимки форм — в fixtures/applier/
 //   node scripts/applier.mjs record start|stop       запись: вы откликаетесь сами в окне робота, он смотрит
 //   node scripts/applier.mjs paste                   во время записи: буфер обмена Mac (pbpaste) → туда, где курсор
 //                                                    в окне робота (VNC передаёт только латиницу, письмо — русское)
@@ -178,6 +181,30 @@ const commands = {
     console.log(`«О себе»: ${v.about.length} знаков · ключевых навыков: ${v.keySkills.length} из ${v.limits.keySkills}`);
     for (const p of v.places) console.log(`💼 ${p.company} — ${p.position} (${p.start || '?'} — ${p.end || 'сейчас'}): ${p.description.length} знаков`);
     if (r.backup) console.log(`бэкап: /data/resume/${r.backup}`);
+  },
+
+  async 'cv-dry'(args) {
+    if (!args[0]) throw new Error('cv-dry <файл.json> — { hash?, changes: [...] }');
+    const job = JSON.parse(readFileSync(args[0], 'utf8'));
+    let hash = job.hash;
+    if (!hash) {
+      const read = await api('POST', '/resume/read', {});
+      if (!read.ok) throw new Error(`резюме не прочитал: ${read.error}`);
+      hash = read.resume.hash;
+    }
+    console.log(`Сухой прогон записи: ${job.changes.length} разделов, резюме ${hash.slice(0, 8)}… (на hh ничего не сохраняется)`);
+    // CLI никогда не просит живую запись: правка резюме — только из W13, где человек подтверждает каждый раздел
+    const r = await api('POST', '/resume/write', { hash, changes: job.changes, dry: true });
+    const dir = new URL('../fixtures/applier/', import.meta.url);
+    mkdirSync(dir, { recursive: true });
+    for (const x of r.results) {
+      let saved = '';
+      if (x.shot) {
+        writeFileSync(new URL(x.shot, dir), await api('GET', `/shots/${x.shot}`));
+        saved = ` · fixtures/applier/${x.shot}`;
+      }
+      console.log(`  ${x.kind}${x.hhId ? ` ${x.hhId}` : ''}: ${x.outcome}${x.note ? ` — ${x.note}` : ''}${saved}`);
+    }
   },
 
   async record(args) {

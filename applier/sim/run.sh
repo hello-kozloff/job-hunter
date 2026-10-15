@@ -10,7 +10,7 @@ SIM=live
 if [ "${1:-}" = resume ]; then SIM=resume; shift; fi
 exec docker run --rm --init --network none --shm-size=1g \
   -v "$PWD/src:/app/src:ro" -v "$PWD/sim:/app/sim:ro" \
-  -e DATA_DIR=/tmp/sim -e APPLY_LIVE=1 -e APPLIER_FAKE=0 -e SIM="$SIM" \
+  -e DATA_DIR=/tmp/sim -e APPLY_LIVE=1 -e RESUME_LIVE=1 -e APPLIER_FAKE=0 -e SIM="$SIM" \
   --entrypoint bash job-hunter-applier -c '
     Xvfb :99 -screen 0 1600x1000x24 -nolisten tcp >/dev/null 2>&1 &
     for _ in $(seq 50); do [ -e /tmp/.X11-unix/X99 ] && break; sleep 0.1; done

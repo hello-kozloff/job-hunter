@@ -5,16 +5,22 @@ import { sleep } from '../util.mjs';
 
 const kindOf = (url) => Object.keys(ACTION_URL).find((k) => ACTION_URL[k].test(url)) ?? null;
 
-export function watchActions(context) {
+// bodyMs — сколько ждать тело ответа: страница может уйти сразу после ответа (форма резюме → страница резюме, 15.10.2026),
+// и тело тогда не дочитать никогда. 0 — без предела, как у отклика
+export function watchActions(context, { bodyMs = 0 } = {}) {
   const events = [];
   const pages = [];
+  // Ответ уже пришёл — обрыв после него (страница ушла, не дочитав тело) — не «нет ответа»
+  const answered = new WeakSet();
   const onResponse = async (response) => {
     const req = response.request();
     const kind = req.method() === 'GET' ? null : kindOf(response.url());
     if (!kind) return;
+    answered.add(req);
     let body = null;
     try {
-      body = JSON.parse(await response.text());
+      const text = bodyMs ? await Promise.race([response.text(), sleep(bodyMs).then(() => null)]) : await response.text();
+      body = text === null ? null : JSON.parse(text);
     } catch {
       // не JSON или тело недоступно — исход решит код ответа
     }
@@ -22,6 +28,7 @@ export function watchActions(context) {
   };
   // Запрос оборвался (сеть, предохранитель) — тоже исход: «нет ответа»
   const onFailed = (req) => {
+    if (answered.has(req)) return;
     const kind = req.method() === 'GET' ? null : kindOf(req.url());
     if (kind) events.push({ kind, status: 0, body: null, post: '', failure: req.failure()?.errorText ?? '', at: Date.now() });
   };
