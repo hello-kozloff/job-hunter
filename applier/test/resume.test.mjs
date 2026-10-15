@@ -150,3 +150,51 @@ test('предохранитель: сохранение опыта (resume-prof
   assert.deepEqual(GUARD_ALLOW.resume, [ACTION_URL.resume]);
   assert.deepEqual(GUARD_ALLOW.profile, [ACTION_URL.profile]);
 });
+
+// ---------- Запись резюме (часть D, E2/E3) ----------
+import { cleanChanges, cvFormUrl, skillsDiff, writeResult } from '../src/hh/resume.mjs';
+
+test('cvFormUrl: формы резюме и место работы в профиле', () => {
+  assert.equal(cvFormUrl('title', A), `https://hh.ru/resume/edit/${A}/position`);
+  assert.equal(cvFormUrl('skills', A), `https://hh.ru/resume/edit/${A}/keySkills`);
+  assert.equal(cvFormUrl('about', A), `https://hh.ru/resume/edit/${A}/about`);
+  assert.equal(cvFormUrl('place', A, 2092614619), `https://hh.ru/profile/edit/experience/2092614619?resumeFrom=${A}`);
+});
+
+test('cleanChanges: пределы hh, навыки без повторов, место — только то, что меняем', () => {
+  const ok = cleanChanges([
+    { kind: 'title', value: '  Frontend-разработчик  ' },
+    { kind: 'about', value: 'О себе\r\nстрока' },
+    { kind: 'skills', skills: ['React', ' react ', 'PHP', ''] },
+    { kind: 'place', hhId: '501', description: 'Описание' },
+  ]);
+  assert.deepEqual(ok.changes, [
+    { kind: 'title', value: 'Frontend-разработчик' },
+    { kind: 'about', value: 'О себе\nстрока' },
+    { kind: 'skills', skills: ['React', 'PHP'] },
+    { kind: 'place', hhId: 501, description: 'Описание' },
+  ]);
+  assert.ok(cleanChanges([]).error);
+  assert.ok(cleanChanges([{ kind: 'title', value: 'x' }]).error);
+  assert.ok(cleanChanges([{ kind: 'title', value: 'x'.repeat(101) }]).error);
+  assert.ok(cleanChanges([{ kind: 'skills', skills: Array.from({ length: 31 }, (_, i) => `s${i}`) }]).error);
+  assert.ok(cleanChanges([{ kind: 'place', hhId: 501 }]).error);
+  assert.ok(cleanChanges([{ kind: 'place', hhId: 'x', position: 'Dev' }]).error);
+  assert.ok(cleanChanges([{ kind: 'place', hhId: 1, position: '' }]).error);
+  assert.ok(cleanChanges([{ kind: 'contacts', value: '+7' }]).error);
+});
+
+test('skillsDiff: убрать и добавить без разницы в регистре', () => {
+  assert.deepEqual(skillsDiff(['React', 'TypeScript', 'CI/CD'], ['react', 'PHP', 'CI/CD']), { remove: ['TypeScript'], add: ['PHP'] });
+  assert.deepEqual(skillsDiff(['A'], ['a']), { remove: [], add: [] });
+});
+
+test('writeResult: сохранение формы резюме и опыта', () => {
+  assert.deepEqual(writeResult('resume', 200, { resume: { _attributes: { hash: A, hasErrors: false } } }), { ok: true, note: '' });
+  assert.equal(writeResult('resume', 200, { resume: { _attributes: { hasErrors: true } } }).ok, true);
+  assert.equal(writeResult('resume', 200, {}).ok, false);
+  assert.deepEqual(writeResult('resume', 200, null), { ok: true, note: '' });
+  assert.deepEqual(writeResult('resume', 400, { error: 'validation' }), { ok: false, note: 'validation' });
+  assert.deepEqual(writeResult('profile', 200, null), { ok: true, note: '' });
+  assert.deepEqual(writeResult('profile', 0, null), { ok: false, note: 'HTTP нет ответа' });
+});

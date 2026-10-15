@@ -49,6 +49,18 @@ export const SEL = {
   captchaImage: 'form[action*="/account/captcha"] img, img[src*="captcha"]',
   // Отклики
   negotiationsItem: '[data-qa="negotiations-item"]',
+  // Формы резюме (часть D, запись E0 15.10.2026): должность, ключевые навыки, «О себе» — /resume/edit/<hash>/…,
+  // место работы — /profile/edit/experience/<id> (профиль: общий для всех резюме, где место отмечено)
+  cvTitle: 'input[data-qa="resume-edit-title-suggest"]',
+  cvAbout: 'textarea[data-qa="resume-editor-about"]',
+  cvSkillInput: 'input[data-qa="chips-trigger-input"]',
+  cvSkillChip: '[data-qa^="chips-trigger-chip-"]',
+  cvSkillDelete: '[data-qa="chip-delete-action"]',
+  cvSkillUserItem: '[data-qa="suggest-item-user-input"]',
+  cvSave: '[data-qa="resume-partial-edit-save"]',
+  cvPlacePosition: 'input[name="position"]',
+  cvPlaceDescription: 'textarea[data-qa="resume-editor-experience-description-input"]',
+  cvPlaceSave: '[data-qa="profile-layout-save-button"]',
   dialog: '[role="dialog"], [role="alertdialog"]',
 };
 
