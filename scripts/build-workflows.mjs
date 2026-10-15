@@ -733,7 +733,7 @@ const RESUME_LAYOUTS = [
     ],
   ],
   ['rx exp', [[['⬆️ Улучшить опыт', 'rx:up']], [['📤 Обновить на hh', 're:go']], [['⬅️ Рекомендации', 'rs:view']]]],
-  // Выгрузка на hh (часть D, E2/E3): раздел по одному, итог, после сухого прогона
+  // Выгрузка на hh (часть D, E2/E3): раздел по одному; итог — «Записать» (RESUME_LIVE=1) или только сухой прогон
   [
     're item',
     [
@@ -751,10 +751,9 @@ const RESUME_LAYOUTS = [
     're sum',
     [
       [
-        ['🧪 Сухой прогон', panelButton('dry')],
         ['✅ Записать на hh', panelButton('live')],
+        ['❌ Отмена', panelButton('x')],
       ],
-      [['❌ Отмена', panelButton('x')]],
     ],
   ],
   [
@@ -762,13 +761,6 @@ const RESUME_LAYOUTS = [
     [
       [['🧪 Сухой прогон', panelButton('dry')]],
       [['❌ Отмена', panelButton('x')]],
-    ],
-  ],
-  [
-    're dry',
-    [
-      [['✅ Записать на hh', panelButton('live')]],
-      [['⬅️ Рекомендации', 'rs:view']],
     ],
   ],
 ];
