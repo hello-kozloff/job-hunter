@@ -16,7 +16,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { ROOT, readEnv, local } from './env.mjs';
 
-const ALWAYS = ['jobHunterW4Error', 'jobHunterW5Lettr', 'jobHunterW7Menu1', 'jobHunterW1Colle', 'jobHunterW2Score', 'jobHunterW9Robot', 'jobHunterW11Prof'];
+const ALWAYS = ['jobHunterW4Error', 'jobHunterW5Lettr', 'jobHunterW7Menu1', 'jobHunterW1Colle', 'jobHunterW2Score', 'jobHunterW9Robot', 'jobHunterW11Prof', 'jobHunterW13Resu'];
 const SCHEDULED = ['jobHunterW8Clock', 'jobHunterW6Summ1'];
 const TELEGRAM = 'jobHunterW3Teleg';
 
