@@ -14,8 +14,8 @@
   - `loadSettings($('Settings').all())` — значения с учётом таблицы; значение не из списка заменяется значением по умолчанию;
   - `nextSetting(name, value)` — следующее значение по кругу (кнопка «▸»);
   - `scheduleFrom(settings)` — расписание для `n8n/shared/schedule.js`.
-- **Чтение** — нода «Settings» (Data Table Get, все строки, один раз за запуск) в W1, W2, W5, W6, W7, W8, W9; хелпер `settingsNode` в `scripts/build-workflows.mjs`.
-- **Запись** — только W7: «Setting change» (следующее значение) → «Save setting» (upsert по `name`). Панель после нажатия показывает новое значение.
+- **Чтение** — нода «Settings» (Data Table Get, все строки, один раз за запуск) в W1, W2, W5, W6, W7, W8, W9, W11, W13; хелпер `settingsNode` в `scripts/build-workflows.mjs`.
+- **Запись** — W7: «Setting change» (следующее значение) → «Save setting» (upsert по `name`). Панель после нажатия показывает новое значение. Профиль пишут W11 (онбординг, ⚙️ → 👤) и W13 (резюме после правок, `resume.history`).
 
 ## Настройки
 
@@ -42,6 +42,7 @@
 | `apply.paused` | false | false · true | W9: очередь копится, робот не отправляет; сняли паузу — W9 `tick` |
 | `apply.daily_limit` | 25 | 10 · 15 · 25 · 40 | W9 «Gate»: живых откликов робота в «день» (с 09:00 по местному); сверху — потолок робота `APPLIER_DAILY_CAP=40` |
 | `profile.*`, `llm.rules`, `letters.*` | — | профиль человека: резюме, факты, подпись, контакт, правила, образцы писем | W2, W5 — подробно в `docs/onboarding.md` |
+| `resume.history` | пусто | до 5 прежних версий резюме `{ at, by, note, resume, extra }` для «↩️ Откатить» | W13 (⚙️ → 💡 Рекомендации, `docs/recommendations.md`); пишет только W13 |
 
 **Робот-отклик** (`apply.*`, этап 6, `docs/stages/stage-6.md`): раздел ⚙️ → 🚀 Робот — вкл/выкл, пауза, лимит в день и строка
 состояния робота (GET /health: на связи / ждёт капчу или вход / не вошёл / не отвечает; сухой прогон или боевой). Предохранитель

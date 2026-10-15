@@ -4,13 +4,16 @@
 //       пожелание человека (revise) } — из «PDF text» (резюме только что прислали) или «Plan» («🔄 Всё заново»,
 //       «✏️ Поправить»); «Settings» — провайдер нейросети.
 // Выход: { provider, model, body } → HTTP Request «Gemini» или «Claude» → «Parse profile».
-// Модель — $env.GEMINI_PROFILE_MODEL (разбор разовый, можно взять модель посильнее), иначе та же, что для оценки.
+// Модель — $env.GEMINI_PROFILE_MODEL (разбор разовый, можно взять модель посильнее), иначе та же, что для оценки
+// (n8n/shared/llm.js → llmModel).
 // Правила про страну, город, офис, английский, ночные часы и зарплату нейросеть не пишет — их добавляет код
 // (n8n/shared/profile.js → commonRules), чтобы у всех они были одинаковые и надёжные.
 
 // @include n8n/shared/settings.js
 
 // @include n8n/shared/hh-roles.js
+
+// @include n8n/shared/llm.js
 
 // Задание — от той ноды, что выполнилась: «PDF text» (новый PDF) или «Plan»
 function ran(name) {
@@ -23,10 +26,7 @@ function ran(name) {
 const plan = ran('PDF text')?.toLlm ? ran('PDF text') : $('Plan').first().json;
 const settings = loadSettings($('Settings').all());
 const provider = settings['llm.provider'];
-const model =
-  provider === 'claude'
-    ? $env.CLAUDE_MODEL || 'claude-haiku-4-5'
-    : $env.GEMINI_PROFILE_MODEL || $env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+const model = llmModel(provider);
 
 const roles = HH_ROLE_GROUPS.map((g) => `${g.name}: ${g.roles.map((id) => `${id} ${HH_ROLES[id]}`).join('; ')}`).join('\n');
 
@@ -108,48 +108,12 @@ const SCHEMA = {
   },
 };
 
-// Все поля обязательны: и Gemini, и Claude тогда возвращают полный объект
-function strict(schema) {
-  if (schema.type === 'object') {
-    const props = Object.fromEntries(Object.entries(schema.properties).map(([k, v]) => [k, strict(v)]));
-    return { ...schema, properties: props, required: Object.keys(props), additionalProperties: false };
-  }
-  if (schema.type === 'array') return { ...schema, items: strict(schema.items) };
-  return schema;
-}
-// Gemini: типы заглавными, без additionalProperties, порядок полей — как в схеме
-function gemini(schema) {
-  const out = { type: schema.type.toUpperCase() };
-  if (schema.enum) out.enum = schema.enum;
-  if (schema.type === 'object') {
-    out.properties = Object.fromEntries(Object.entries(schema.properties).map(([k, v]) => [k, gemini(v)]));
-    out.required = Object.keys(schema.properties);
-    out.propertyOrdering = Object.keys(schema.properties);
-  }
-  if (schema.type === 'array') out.items = gemini(schema.items);
-  return out;
-}
-
 const revise = plan.mode === 'revise';
 const system = revise ? SYSTEM + REVISE : SYSTEM;
 const user = revise
   ? `Текущий профиль:\n<profile>\n${JSON.stringify(plan.draft)}\n</profile>\n\nПожелание человека: ${plan.instruction}`
   : `<resume>\n${plan.text}\n</resume>`;
 
-const body =
-  provider === 'claude'
-    ? {
-        model,
-        max_tokens: 4096,
-        temperature: 0,
-        system,
-        messages: [{ role: 'user', content: user }],
-        output_config: { format: { type: 'json_schema', schema: strict(SCHEMA) } },
-      }
-    : {
-        systemInstruction: { parts: [{ text: system }] },
-        contents: [{ role: 'user', parts: [{ text: user }] }],
-        generationConfig: { temperature: 0, maxOutputTokens: 4096, responseMimeType: 'application/json', responseSchema: gemini(SCHEMA) },
-      };
+const body = llmBody({ provider, model, system, user, schema: SCHEMA });
 
 return [{ json: { provider, model, mode: plan.mode, body } }];

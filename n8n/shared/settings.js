@@ -99,6 +99,9 @@ const SETTINGS = {
   // Письма (W5): свои образцы и замена разделов промпта { intro, facts, style } (у владельца — из импорта)
   'letters.examples': { default: '', text: 4000 },
   'letters.prompt': { default: {}, object: true },
+  // Рекомендации по резюме (W13, 15.10.2026, docs/recommendations.md): прежние версии резюме для «↩️ Откатить» —
+  // до 5 { at, by, note, resume, extra }, новые сверху. Пишет только W13
+  'resume.history': { default: [], history: 5 },
 };
 
 // Встроенные спорные случаи промпта W2: как узнать их в списке пользователя, решение по умолчанию
@@ -187,6 +190,7 @@ function validSetting(spec, value) {
     }
   }
   if (spec.lines) return validLines(value, spec.lines);
+  if (spec.history) return validHistory(value, spec.history);
   if (spec.object) return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
   if (spec.rules) {
     return (
@@ -207,6 +211,21 @@ const EDUCATION = ['not_required_or_not_specified', 'special_secondary', 'higher
 const RULE_KEYS = ['skip', 'maybe', 'apply', 'ignore', 'notes'];
 const validLines = (lines, max) =>
   Array.isArray(lines) && lines.length <= 20 && lines.every((l) => typeof l === 'string' && l.length <= max);
+
+// Версии резюме (resume.history): текст резюме и «Дополнительно» — в пределах profile.resume и profile.extra
+const validHistory = (list, max) =>
+  Array.isArray(list) &&
+  list.length <= max &&
+  list.every(
+    (v) =>
+      Boolean(v) &&
+      typeof v === 'object' &&
+      typeof v.at === 'string' &&
+      typeof v.resume === 'string' &&
+      v.resume.length <= SETTINGS['profile.resume'].text &&
+      typeof (v.extra ?? '') === 'string' &&
+      String(v.extra ?? '').length <= SETTINGS['profile.extra'].text,
+  );
 
 // Текст резюме для промптов W2 и W5: резюме и «Дополнительно» (то, что человек дописал сам) — своим разделом
 function resumeText(s) {

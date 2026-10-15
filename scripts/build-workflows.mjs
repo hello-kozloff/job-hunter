@@ -33,6 +33,9 @@ const IDS = {
   robot: 'jobHunterW9Robot',
   // Профиль (13.10.2026, docs/onboarding.md): онбординг по резюме PDF, ⚙️ → 👤. W10 зарезервирован под Inbox (6.2)
   profile: 'jobHunterW11Prof',
+  // Рекомендации по резюме (15.10.2026, docs/recommendations.md): ⚙️ → 💡, Upgrade, откат, резюме файлом.
+  // W12 зарезервирован под вход в hh через бота
+  resume: 'jobHunterW13Resu',
   n8nApiCredential: 'jobHunterN8nApi1',
   // Ключ API healthchecks.io (HC_API_KEY в .env) — бот обновляет расписание стража (07.10.2026)
   hcCredential: 'jobHunterHcApi01',
@@ -347,8 +350,12 @@ const PANEL_LAYOUTS = [
   [
     'settings',
     [
-      // Профиль (W11, 13.10.2026): резюме, подпись, контакт, пояс, образцы писем
-      [['👤 Профиль', 'pf:view']],
+      // Профиль (W11, 13.10.2026): резюме, подпись, контакт, пояс, образцы писем. Рекомендации по резюме (W13,
+      // 15.10.2026): Upgrade, откат, резюме файлом
+      [
+        ['👤 Профиль', 'pf:view'],
+        ['💡 Рекомендации', 'rs:view'],
+      ],
       [
         ['🕐 Сбор', panelButton('collect.cb')],
         ['🔎 Поиск', panelButton('search.cb')],
@@ -541,6 +548,137 @@ const PROFILE_LAYOUTS = [
     ],
   ],
   ['pf plain', null],
+];
+
+// W13: раскладки панели рекомендаций по резюме (15.10.2026, docs/recommendations.md). Порядок = LAYOUTS в
+// n8n/w13-resume/render.js. Подписи и callback_data с номером сессии считает «Step» ($json.b): старые кнопки
+// после конца сессии не сработают. Одиночный выбор — 2, 3 или 4 варианта по одному в ряд (подписи длинные);
+// галочки — 8 мест, пустые — «·» (p:x)
+const RESUME_LAYOUTS = [
+  [
+    'rs root',
+    [
+      [
+        ['🔍 Анализ резюме', 'rs:an'],
+        ['⬆️ Upgrade резюме', 'rs:up'],
+      ],
+      [
+        ['📄 Резюме файлом', 'rs:file'],
+        ['↩️ Откатить', 'rs:undo'],
+      ],
+      [['⬅️ Настройки', 's:root']],
+    ],
+  ],
+  [
+    'ru plan',
+    [
+      [
+        ['✅ Верно', panelButton('yes')],
+        ['✏️ Не так', panelButton('edit')],
+      ],
+      [['❌ Отмена', panelButton('no')]],
+    ],
+  ],
+  ...[2, 3, 4].map((n) => [
+    `rq one${n}`,
+    [
+      ...Array.from({ length: n }, (_, i) => [[panelButton(`o${i}.text`), panelButton(`o${i}.cb`)]]),
+      [
+        ['✍️ Свой ответ', panelButton('t')],
+        ['⏭ Пропустить', panelButton('k')],
+      ],
+      [['⏹ Хватит', panelButton('x')]],
+    ],
+  ]),
+  [
+    'rq many8',
+    [
+      ...[0, 2, 4, 6].map((i) => [
+        [panelButton(`o${i}.text`), panelButton(`o${i}.cb`)],
+        [panelButton(`o${i + 1}.text`), panelButton(`o${i + 1}.cb`)],
+      ]),
+      [
+        ['✅ Готово', panelButton('d')],
+        ['✍️ Свой ответ', panelButton('t')],
+      ],
+      [
+        ['⏭ Пропустить', panelButton('k')],
+        ['⏹ Хватит', panelButton('x')],
+      ],
+    ],
+  ],
+  [
+    'rq text',
+    [
+      [['✍️ Ответить', panelButton('t')]],
+      [
+        ['⏭ Пропустить', panelButton('k')],
+        ['⏹ Хватит', panelButton('x')],
+      ],
+    ],
+  ],
+  [
+    'rp add',
+    [
+      [
+        ['✅ Применить', panelButton('y')],
+        ['✏️ Иначе', panelButton('e')],
+        ['⏭ Не надо', panelButton('n')],
+      ],
+    ],
+  ],
+  [
+    'rp replace',
+    [
+      [
+        ['🔁 Заменить', panelButton('r')],
+        ['➕ Не заменять, дописать', panelButton('a')],
+      ],
+      [
+        ['✏️ Иначе', panelButton('e')],
+        ['⏭ Не надо', panelButton('n')],
+      ],
+    ],
+  ],
+  [
+    'rs done',
+    [
+      [
+        ['📄 Резюме файлом', 'rs:file'],
+        ['↩️ Откатить', 'rs:undo'],
+      ],
+      [['⬅️ Рекомендации', 'rs:view']],
+    ],
+  ],
+  [
+    'rs undo',
+    [
+      [
+        ['↩️ Да, откатить', 'rs:undo:y'],
+        ['Отмена', 'rs:view'],
+      ],
+    ],
+  ],
+  ['rs back', [[[panelButton('back.text'), panelButton('back.cb')]]]],
+  [
+    'rs retry',
+    [
+      [
+        ['🔄 Повторить', panelButton('retry')],
+        ['⬅️ Рекомендации', 'rs:view'],
+      ],
+    ],
+  ],
+  // Отчёт анализа (часть C): вопросы — новой панелью под ним
+  [
+    'rs report',
+    [
+      [
+        ['▶️ Начать', panelButton('go')],
+        ['❌ Отмена', panelButton('no')],
+      ],
+    ],
+  ],
 ];
 
 // W3: состояние после нажатия кнопки, которое посчитали ноды «Apply choice», «Apply sent» и «Apply cancel»
@@ -737,6 +875,25 @@ const sendPhoto = (wf, name, position, { caption, fields = {}, markup, extra = {
       additionalFields: { caption, parse_mode: 'HTML', fileName: 'shot.jpg', ...fields },
     },
     { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput', ...extra },
+  );
+
+// Файл из binary «data» (резюме бота .md, W13): подпись HTML, без звука
+const sendDocument = (wf, name, position, { caption, fileName }) =>
+  node(
+    wf,
+    name,
+    'telegram',
+    1.2,
+    position,
+    {
+      resource: 'message',
+      operation: 'sendDocument',
+      chatId: '={{ $env.TG_CHAT_ID }}',
+      binaryData: true,
+      binaryPropertyName: 'data',
+      additionalFields: { caption, parse_mode: 'HTML', fileName, disable_notification: true },
+    },
+    { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
   );
 
 // Кнопки письма с роботом: [🚀 Откликнуться роботом] сверху (решение пользователя 10.10.2026)
@@ -1333,6 +1490,9 @@ const workflows = {
       // Профиль (W11, 13.10.2026): резюме PDF, кнопки pf:*, ответы на вопросы профиля
       node('W3', 'Profile?', 'if', 2.3, [330, -320], ifTrue('W3', "={{ $json.action === 'profile' }}")),
       runWorkflow('W3', 'Profile', [550, -380], IDS.profile),
+      // Рекомендации по резюме (W13, 15.10.2026): кнопки rs: ru: rq: rp: rr: и ответы на вопросы RESUME_PROMPTS
+      node('W3', 'Resume?', 'if', 2.3, [330, -180], ifTrue('W3', "={{ $json.action === 'resume' }}")),
+      runWorkflow('W3', 'Resume', [550, -200], IDS.resume),
       // Робот-отклик (этап 6): 🚀, ⛔, ▶️, /go, ответ на фото капчи — всё решает W9 Robot (он и отвечает на нажатие)
       node('W3', 'Robot?', 'if', 2.3, [440, -250], ifTrue('W3', "={{ $json.action === 'robot' }}")),
       runWorkflow('W3', 'Robot', [660, -300], IDS.robot),
@@ -1677,7 +1837,9 @@ const workflows = {
       ['Panel?', 'Menu', 0],
       ['Panel?', 'Profile?', 1],
       ['Profile?', 'Profile', 0],
-      ['Profile?', 'Robot?', 1],
+      ['Profile?', 'Resume?', 1],
+      ['Resume?', 'Resume', 0],
+      ['Resume?', 'Robot?', 1],
       ['Robot?', 'Robot', 0],
       ['Robot?', 'Button?', 1],
       ['Button?', 'Vacancy', 0],
@@ -3076,6 +3238,200 @@ const workflows = {
       ['Delete ids', 'Delete'],
     ],
     { errorWorkflow: IDS.errors },
+  ),
+
+  // Рекомендации по резюме (15.10.2026, docs/recommendations.md): ⚙️ → 💡, Upgrade (план → вопросы → правки по одной),
+  // откат, резюме файлом. Устроен как W11: Plan — кнопки человека, Build/Parse — нейросеть, Step — сессия и экран
+  'w13-resume': workflow(
+    IDS.resume,
+    'W13 Resume',
+    [
+      // Вызов из W3: { action: 'resume', data | op input, field, text, chatId, queryId, messageId, … }
+      node('W13', 'Called by W3', 'executeWorkflowTrigger', 1.1, [0, -100], { inputSource: 'passthrough' }),
+      // Ручной запуск — панель рекомендаций
+      node('W13', 'Manual', 'manualTrigger', 1, [0, 100], {}),
+      code('W13', 'Job', 'n8n/w13-resume/job.js', [220, 0]),
+      // Нажатие кнопки — сразу ответ (убрать «часики»): нейросеть думает секунды
+      node('W13', 'Answer?', 'if', 2.3, [440, -250], ifTrue('W13', '={{ Boolean($json.queryId) }}')),
+      answerQuery('W13', 'Answer', [660, -250], "={{ $('Job').first().json.queryId }}", '', { onError: 'continueRegularOutput' }),
+      settingsNode('W13', [440, 0]),
+      code('W13', 'Plan', 'n8n/w13-resume/plan.js', [660, 0]),
+      // Строки вакансий — только для покрытия навыков (панель, итог правок)
+      node('W13', 'Rows?', 'if', 2.3, [880, 0], ifTrue('W13', '={{ $json.rows }}')),
+      node(
+        'W13',
+        'Vacancies',
+        'dataTable',
+        1.1,
+        [1100, -100],
+        { resource: 'row', operation: 'get', dataTableId: VACANCIES, returnAll: true },
+        { executeOnce: true, alwaysOutputData: true },
+      ),
+      code('W13', 'Rows count', 'n8n/w13-resume/rows-count.js', [1320, -100]),
+      node('W13', 'Route', 'switch', 3.4, [1540, 0], {
+        mode: 'expression',
+        numberOutputs: 3,
+        output: "={{ ({ llm: 0, file: 1, step: 2 })[$('Plan').first().json.route] }}",
+        options: {},
+      }),
+      // Нейросеть: «⏳ …» на панели → запрос → разбор. Тот же провайдер, что для оценки (модель — как у W11)
+      editMessage(
+        'Wait',
+        [1760, -300],
+        {
+          chatId: "={{ $('Job').first().json.chatId }}",
+          messageId: "={{ $('Plan').first().json.wait.messageId }}",
+          text: "={{ $('Plan').first().json.wait.text }}",
+          rows: null,
+        },
+        'W13',
+        { onError: 'continueRegularOutput' },
+      ),
+      code('W13', 'Build', 'n8n/w13-resume/build.js', [1980, -300]),
+      node('W13', 'Claude?', 'if', 2.3, [2200, -300], ifTrue('W13', "={{ $json.provider === 'claude' }}")),
+      node(
+        'W13',
+        'Claude',
+        'httpRequest',
+        4.5,
+        [2420, -400],
+        llmRequest({
+          url: 'https://api.anthropic.com/v1/messages',
+          credential: 'anthropicApi',
+          headers: [['anthropic-version', '2023-06-01']],
+          interval: 1000,
+        }),
+        { credentials: { anthropicApi: { id: IDS.claudeCredential, name: 'Claude' } }, onError: 'continueRegularOutput' },
+      ),
+      node(
+        'W13',
+        'Gemini',
+        'httpRequest',
+        4.5,
+        [2420, -200],
+        llmRequest({
+          url: '=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.model }}:generateContent',
+          credential: 'googlePalmApi',
+          interval: 1000,
+        }),
+        { credentials: { googlePalmApi: { id: IDS.geminiCredential, name: 'Gemini' } }, onError: 'continueRegularOutput' },
+      ),
+      code('W13', 'Parse', 'n8n/w13-resume/parse.js', [2640, -300]),
+      // Резюме файлом: сообщение Telegram — до 4096 знаков, резюме — до 30 000
+      code('W13', 'Resume file', 'n8n/w13-resume/resume-file.js', [1760, 300]),
+      node('W13', 'To file', 'convertToFile', 1.1, [1980, 300], {
+        operation: 'toText',
+        sourceProperty: 'text',
+        binaryPropertyName: 'data',
+        options: { fileName: 'resume.md' },
+      }),
+      sendDocument('W13', 'Send file', [2200, 300], { caption: "={{ $('Resume file').first().json.caption }}", fileName: 'resume.md' }),
+      // Шаг: что показать, что сохранить
+      code('W13', 'Step', 'n8n/w13-resume/step.js', [2860, 0]),
+      // Ветки «Step» по порядку (execution order v1, сверху вниз): сохранить → план без кнопок → панель → вопрос → удалить
+      node('W13', 'Save?', 'if', 2.3, [3080, -500], ifTrue('W13', '={{ Boolean($json.save) }}')),
+      code('W13', 'Save rows', 'n8n/w13-resume/save-rows.js', [3300, -500]),
+      node('W13', 'Save resume', 'dataTable', 1.1, [3520, -500], {
+        resource: 'row',
+        operation: 'upsert',
+        dataTableId: SETTINGS_TABLE,
+        matchType: 'allConditions',
+        filters: { conditions: [{ keyName: 'name', keyValue: '={{ $json.name }}' }] },
+        columns: setColumns({ name: '={{ $json.name }}', value_json: '={{ $json.value_json }}' }),
+        options: {},
+      }),
+      // План остаётся в чате без кнопок, вопросы и правки — новой панелью под ним
+      node('W13', 'Freeze?', 'if', 2.3, [3080, -150], ifTrue('W13', '={{ Boolean($json.freeze) }}')),
+      editMessage(
+        'Freeze',
+        [3300, -150],
+        { chatId: "={{ $('Job').first().json.chatId }}", messageId: '={{ $json.freeze.messageId }}', text: '={{ $json.freeze.text }}', rows: null },
+        'W13',
+        { onError: 'continueRegularOutput' },
+      ),
+      code('W13', 'Render', 'n8n/w13-resume/render.js', [3080, 0]),
+      node('W13', 'Layout', 'switch', 3.4, [3300, 0], {
+        mode: 'expression',
+        numberOutputs: RESUME_LAYOUTS.length * 2,
+        output: '={{ $json.route }}',
+        options: {},
+      }),
+      ...RESUME_LAYOUTS.flatMap(([layout, rows], i) => [
+        telegram('W13', `New: ${layout}`, [3520, -900 + i * 300], {
+          fields: { disable_notification: true },
+          ...(rows && { markup: { replyMarkup: 'inlineKeyboard', inlineKeyboard: keyboard(rows) } }),
+        }),
+        // Правка панели: «message is not modified» (нажали то же самое) — не ошибка
+        editMessage(
+          `Edit: ${layout}`,
+          [3520, -750 + i * 300],
+          { chatId: '={{ $json.chatId }}', messageId: '={{ $json.messageId }}', text: '={{ $json.text }}', rows },
+          'W13',
+          { onError: 'continueRegularOutput' },
+        ),
+      ]),
+      code('W13', 'Remember', 'n8n/w13-resume/remember.js', [3740, 0]),
+      node('W13', 'Prompt?', 'if', 2.3, [3080, 300], ifTrue('W13', '={{ Boolean($json.prompt) }}')),
+      telegram('W13', 'Prompt', [3300, 300], {
+        text: '={{ $json.prompt }}',
+        fields: { disable_notification: true },
+        markup: { replyMarkup: 'forceReply', forceReply: { force_reply: true } },
+      }),
+      code('W13', 'Delete ids', 'n8n/w13-resume/delete-ids.js', [3080, 500]),
+      node(
+        'W13',
+        'Delete',
+        'telegram',
+        1.2,
+        [3300, 500],
+        { resource: 'message', operation: 'deleteMessage', chatId: '={{ $json.chatId }}', messageId: '={{ $json.messageId }}' },
+        { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
+      ),
+    ],
+    [
+      ['Called by W3', 'Job'],
+      ['Manual', 'Job'],
+      ['Job', 'Answer?'],
+      ['Answer?', 'Answer', 0],
+      ['Job', 'Settings'],
+      ['Settings', 'Plan'],
+      ['Plan', 'Rows?'],
+      ['Rows?', 'Vacancies', 0],
+      ['Rows?', 'Route', 1],
+      ['Vacancies', 'Rows count'],
+      ['Rows count', 'Route'],
+      ['Route', 'Wait', 0],
+      ['Route', 'Resume file', 1],
+      ['Route', 'Step', 2],
+      ['Wait', 'Build'],
+      ['Build', 'Claude?'],
+      ['Claude?', 'Claude', 0],
+      ['Claude?', 'Gemini', 1],
+      ['Claude', 'Parse'],
+      ['Gemini', 'Parse'],
+      ['Parse', 'Step'],
+      ['Resume file', 'To file'],
+      ['To file', 'Send file'],
+      ['Step', 'Save?'],
+      ['Save?', 'Save rows', 0],
+      ['Save rows', 'Save resume'],
+      ['Step', 'Freeze?'],
+      ['Freeze?', 'Freeze', 0],
+      ['Step', 'Render'],
+      ['Render', 'Layout'],
+      ...RESUME_LAYOUTS.flatMap(([layout], i) => [
+        ['Layout', `New: ${layout}`, i * 2],
+        ['Layout', `Edit: ${layout}`, i * 2 + 1],
+        [`New: ${layout}`, 'Remember'],
+      ]),
+      ['Step', 'Prompt?'],
+      ['Prompt?', 'Prompt', 0],
+      ['Step', 'Delete ids'],
+      ['Delete ids', 'Delete'],
+    ],
+    // Панель и анализ читают всю таблицу вакансий (~1 МБ с описаниями) — успешные запуски не храним, как у W7.
+    // Сессия правки — в static data, она сохраняется и без этого; ошибки сохраняются и идут в W4
+    { errorWorkflow: IDS.errors, saveDataSuccessExecution: 'none' },
   ),
 
   'w4-errors': workflow(
