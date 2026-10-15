@@ -10,7 +10,7 @@
 //   POST /resume                   перепроверить вход и капчу, снять блок
 //   POST /captcha {text}           ответ на капчу-картинку (фото в Telegram): ввести и отправить
 //   POST /apply {vacancyId, letter, requestId, dry}   отклик; APPLY_LIVE=0 или dry: true — сухой прогон до кнопки
-//   POST /recon {vacancyIds?, inbox?}            разведка без кликов — фоновое задание, 202
+//   POST /recon {vacancyIds?, inbox?, resume?}   разведка без кликов — фоновое задание, 202 (resume — резюме, E0)
 //   POST /record {on}              запись: пользователь откликается сам в окне робота
 //   POST /record/paste {text}      во время записи: вставить текст (письмо с Mac) туда, где курсор
 //   POST /shot                     скриншот окна сейчас
@@ -43,7 +43,7 @@ import {
 import { LOGIN_URL, SEL } from './hh/selectors.mjs';
 import { applyFlow } from './flows/apply.mjs';
 import { captchaKind, captchaShown, visible } from './flows/dom.mjs';
-import { reconInbox, reconVacancies } from './flows/recon.mjs';
+import { reconInbox, reconResume, reconVacancies } from './flows/recon.mjs';
 import { recordStart, recordStop, recording } from './flows/record.mjs';
 import { FAKE_OUTCOMES, fakeApply, fakeCaptcha, fakePush, fakeQueue, fakeResume } from './fake.mjs';
 
@@ -251,10 +251,11 @@ const routes = {
   'POST /recon': async (body) => {
     assertNotBlocked();
     const ids = Array.isArray(body.vacancyIds) ? body.vacancyIds : [];
-    if (!ids.length && !body.inbox) throw new HttpError(400, { error: 'нужны vacancyIds или inbox: true' });
+    if (!ids.length && !body.inbox && !body.resume) throw new HttpError(400, { error: 'нужны vacancyIds, inbox: true или resume: true' });
     const started = await startJob('recon', async (progress) => ({
       vacancies: ids.length ? await reconVacancies(ids, progress) : null,
       inbox: body.inbox ? await reconInbox(progress) : null,
+      resume: body.resume ? await reconResume(progress) : null,
     }));
     return { status: 202, body: { ok: true, job: { kind: started.kind, state: started.state } } };
   },

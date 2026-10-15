@@ -6,6 +6,8 @@
 //   node scripts/applier.mjs login                   открыть вход hh в окне робота и «Общий экран»; ждёт входа
 //   node scripts/applier.mjs recon <id> [<id>…]      разведка вакансий без кликов → fixtures/applier/recon-…
 //   node scripts/applier.mjs recon --inbox           разведка «Откликов» и чатов (чаты не открываются)
+//   node scripts/applier.mjs recon --resume          разведка резюме: «Мои резюме», резюме, страницы правки по ссылкам —
+//                                                    без кликов, рвётся любой не-GET к hh (часть D, E0); бэкап резюме hh
 //   node scripts/applier.mjs record start|stop       запись: вы откликаетесь сами в окне робота, он смотрит
 //   node scripts/applier.mjs paste                   во время записи: буфер обмена Mac (pbpaste) → туда, где курсор
 //                                                    в окне робота (VNC передаёт только латиницу, письмо — русское)
@@ -110,13 +112,16 @@ const commands = {
 
   async recon(args) {
     const inbox = args.includes('--inbox');
+    const resume = args.includes('--resume');
     const ids = args.filter((a) => /^\d+$/.test(a));
-    if (!ids.length && !inbox) throw new Error('нужны id вакансий hh или --inbox');
-    await api('POST', '/recon', { vacancyIds: ids, inbox });
-    console.log(`Разведка: ${ids.length ? `${ids.length} вакансий (20–40 с между ними)` : ''}${inbox ? ' + отклики и чаты' : ''}…`);
+    if (!ids.length && !inbox && !resume) throw new Error('нужны id вакансий hh, --inbox или --resume');
+    await api('POST', '/recon', { vacancyIds: ids, inbox, resume });
+    console.log(
+      `Разведка: ${[ids.length ? `${ids.length} вакансий (20–40 с между ними)` : '', inbox ? 'отклики и чаты' : '', resume ? 'резюме (4–9 с между страницами)' : ''].filter(Boolean).join(' + ')}…`,
+    );
     const job = await waitJob();
     if (job.state === 'error') throw new Error(`разведка упала: ${job.error}`);
-    const { vacancies, inbox: box } = job.result;
+    const { vacancies, inbox: box, resume: cv } = job.result;
     if (vacancies) {
       console.log(`→ ${vacancies.dir}`);
       for (const it of vacancies.items) {
@@ -145,6 +150,18 @@ const commands = {
       console.log(`  отклики: HTTP ${box.negotiations.status}, тем ${box.negotiations.topics}, ключи: ${box.negotiations.keys.join(', ')}`);
       console.log(`  чаты: HTTP ${box.chats.status}${box.chats.error ? ` (${box.chats.error})` : ''}`);
       console.log(`  непрочитанные до/после: ${JSON.stringify(box.unread.before)} / ${JSON.stringify(box.unread.after)}${box.unreadChanged ? ' ⚠️ ИЗМЕНИЛИСЬ' : ''}`);
+    }
+    if (cv) {
+      console.log(`→ ${cv.dir}`);
+      console.log(`  резюме: ${cv.resumes.length}${cv.resumes.map((r) => `\n    ${r.hash.slice(0, 8)}… «${r.title || 'без названия'}» — ссылок на правку: ${r.editLinks?.length ?? 0}`).join('')}`);
+      for (const r of cv.resumes) for (const l of r.editLinks ?? []) console.log(`      ${l}`);
+      for (const p of cv.pages) {
+        const flags = [p.captcha ? 'КАПЧА' : '', p.login ? 'НЕ ВОШЛИ' : ''].filter(Boolean).join(', ');
+        console.log(
+          `  ${p.name}: HTTP ${p.status}${flags ? ` ${flags}` : ''} · data-qa ${p.dataQa ?? 0} · полей ${p.fields ?? 0} (с пределом ${p.fieldLimits ?? 0}) · пределов в state ${Object.keys(p.limits ?? {}).length}${p.resumeKeys?.length ? ` · ключи ${p.resumeKeys.join(', ')}` : ''}`,
+        );
+      }
+      console.log(`  порвано не-GET к hh: ${cv.blocked}${cv.blockedPaths?.length ? `\n    ${cv.blockedPaths.join('\n    ')}` : ''}`);
     }
   },
 

@@ -90,6 +90,28 @@ export function visibleDataQa(frame) {
   });
 }
 
+// Поля форм страницы (разведка резюме): что можно править и с какими пределами — без значений, только их длина
+export function formFields(frame) {
+  return frame.evaluate(() =>
+    [...document.querySelectorAll('input, textarea, select, [contenteditable="true"]')].slice(0, 300).map((e) => ({
+      tag: e.tagName.toLowerCase(),
+      type: e.getAttribute('type') ?? '',
+      name: e.getAttribute('name') ?? '',
+      dataQa: e.getAttribute('data-qa') ?? e.closest('[data-qa]')?.getAttribute('data-qa') ?? '',
+      maxLength: typeof e.maxLength === 'number' && e.maxLength > 0 ? e.maxLength : null,
+      length: String(e.value ?? e.innerText ?? '').length,
+      visible: e.getClientRects().length > 0,
+    })),
+  );
+}
+
+// Ссылки страницы из живой разметки (часть страниц hh дорисовывает скрипт) — как атрибуты href="…" для разбора
+export const pageHrefs = (frame) =>
+  frame
+    .evaluate(() => [...document.querySelectorAll('a[href]')].map((a) => a.getAttribute('href')))
+    .then((list) => list.map((h) => `href="${h}"`).join('\n'))
+    .catch(() => '');
+
 // Прогноз исхода без клика: GET /applicant/vacancy_response/popup — тот же запрос, что интерфейс hh делает при
 // нажатии «Откликнуться». Только в сухом прогоне и разведке; формат уточняет разведка (popupPrediction терпимый)
 export async function predictResponse(page, vacancyId) {
