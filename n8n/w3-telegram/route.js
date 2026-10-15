@@ -24,6 +24,7 @@
 //   { action: 'profile', op, field, value, chatId, queryId, messageId, userMessageId, promptId, text, file, username } —
 //      профиль (W11, 13.10.2026): документ в чате (op pdf | not_pdf, file = { id, name, size }), кнопки pf:* и ответы
 //      на вопросы профиля (PROFILE_PROMPTS, op input).
+//      Несколько резюме (docs/resumes.md): кнопки rm:* — op rm, field — действие, value — id резюме[:флаг].
 //   { action: 'resume', data, op, field, text, chatId, queryId, messageId, userMessageId, promptId } — рекомендации по
 //      резюме (W13, 15.10.2026): кнопки rs: ru: rq: rp: rr: rc: rk: rx: re: (data — как есть, разбирает W13 «Job») и ответы на вопросы
 //      RESUME_PROMPTS (op input).
@@ -55,6 +56,12 @@ if (cb) {
     // pf:ok:<шаг> — шаг, на котором показали кнопку (W11 не перескочит шаг при двойном нажатии)
     const value = { ok: arg, yes: 'yes', no: 'no', g: arg, tz: arg, new: arg }[kind] ?? '';
     return [{ json: { action: 'profile', op, field, value, ...pressed, username: cb.from?.username ?? '' } }];
+  }
+
+  // Несколько резюме (W11, docs/resumes.md): rm:<действие>[:<id>[:<y|l>]] — действие в field, остальное в value
+  const rm = data.match(/^rm:(list|new|o|on|off|ren|clone|del|txt)(?::(r[1-5](?::[yl])?))?$/);
+  if (rm) {
+    return [{ json: { action: 'profile', op: 'rm', field: rm[1], value: rm[2] ?? '', ...pressed, username: cb.from?.username ?? '' } }];
   }
 
   // Рекомендации по резюме (W13): callback_data разбирает сам W13

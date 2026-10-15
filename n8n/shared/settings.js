@@ -280,13 +280,15 @@ function validCv(v) {
   );
 }
 
-// Поля резюме r2–r5 (resume.<id>) → ключи настроек, которые они подменяют у основного резюме. Проверка значения — по
-// спецификации ключа; поле, которого нет, берётся по умолчанию ключа
+// Поля резюме r2–r5 (resume.<id>) → ключи настроек, которые они подменяют у основного резюме. Своё у резюме всё,
+// что зависит от профессии: текст, факты, правила оценки и фильтра, поиск, стиль писем. Общее: подпись, контакт,
+// пояс, нейросеть, порог откликов, чёрный список. Проверка значения — по спецификации ключа
 const RESUME_FIELDS = {
   resume: 'profile.resume',
   extra: 'profile.extra',
   facts: 'profile.facts',
   about: 'profile.about',
+  preset: 'profile.preset',
   rules: 'llm.rules',
   cases: 'llm.cases',
   roles: 'search.roles',
@@ -295,7 +297,14 @@ const RESUME_FIELDS = {
   formats: 'search.formats',
   area: 'search.area',
   education: 'search.education',
+  stop_words: 'filter.stop_words',
+  rules_off: 'filter.rules_off',
+  examples: 'letters.examples',
+  prompt: 'letters.prompt',
 };
+
+// Слова «в названии» у резюме могут быть пустыми, если искать по всему тексту (у основного резюме — минимум одно слово)
+const resumeSpec = (field) => (field === 'in_name' ? { ...SETTINGS['search.in_name'], min: 0 } : SETTINGS[RESUME_FIELDS[field]]);
 
 // Данные резюме: null (нет) или объект только из известных полей с допустимыми значениями
 const validResumeData = (v) =>
@@ -303,7 +312,7 @@ const validResumeData = (v) =>
   (Boolean(v) &&
     typeof v === 'object' &&
     !Array.isArray(v) &&
-    Object.entries(v).every(([field, value]) => field in RESUME_FIELDS && validSetting(SETTINGS[RESUME_FIELDS[field]], value)));
+    Object.entries(v).every(([field, value]) => field in RESUME_FIELDS && validSetting(resumeSpec(field), value)));
 
 // Список резюме: 1–5 записей, r1 обязателен, id уникальны (r1–r5), у привязки к hh — hash и название
 const validResumes = (list) =>
