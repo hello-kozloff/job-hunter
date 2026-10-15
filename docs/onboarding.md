@@ -148,7 +148,7 @@ node scripts/n8n-api.mjs profile-import docs/profile.json   # JSON { "имя": �
 **Устройство W11** (`n8n/w11-profile/*.js`, `jobHunterW11Prof`, вызывает W3; W10 зарезервирован под Inbox):
 - «Job» → «Settings» → «Plan» (route: `pdf` | `llm` | `step`);
 - PDF: «Reading» → Telegram File → Get → Extract From PDF → «PDF text». Чистка подвалов hh; меньше 400 знаков — «скан?». Профиль уже есть — новое резюме ждёт выбора (`pending`);
-- нейросеть — «Build extract» → Gemini или Claude (тот же провайдер, что для оценки; модель — `GEMINI_PROFILE_MODEL`, иначе `GEMINI_MODEL`) → «Parse profile» (`draftFromAnswer`, `n8n/shared/profile.js`);
+- нейросеть — «Build extract» → Gemini или Claude (тот же провайдер, что для оценки; модель — `GEMINI_PROFILE_MODEL`, иначе `GEMINI_MODEL`) → «Parse profile» (`draftFromAnswer`, `n8n/shared/profile.js`). Тело запроса и разбор ответа — `n8n/shared/llm.js` (его же берёт W13);
 - город: «Area lookup» → `https://hh.ru/autosuggest/multiprefix/v2?d=areas_RU&q=<город>` → «Area». Города нет в hh (Белград) — офис не ищем, предупреждение в сводке;
 - объём: «Estimate plan» → «Estimate» (первая страница поиска по запросам черновика) → «Estimate parse» → `totalResults`. Больше 150 за сутки — предупреждение;
 - «Step» — машина состояний, ветки по порядку: сохранить («Save rows» → upsert `settings`) → первый сбор («Run W1») → панель («Render» → «Layout» → «New:»/«Edit:» по раскладкам `PROFILE_LAYOUTS`) → вопрос (ForceReply) → удалить вопрос и ответ.
