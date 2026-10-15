@@ -8,13 +8,17 @@
 //   plan   → plan { understood, places } (мест может не быть, если есть вопрос), questions [{ text, kind: one | text,
 //            options, area, hint }];
 //   patch  → patches (n8n/shared/resume.js → checkPatches: old найден ровно один раз, вид add | replace), dropped;
-//   rework → patch — одна правка.
+//   rework → patch — одна правка;
+//   split  → cv, problems — разметка резюме по якорям (n8n/shared/cv.js → cvFromAnchors): без потерь или ошибка.
+// Upgrade из «💼 Опыт работы» (сессия scope experience) — правки вне опыта отбрасываются (checkPatches).
 
 // @include n8n/shared/settings.js
 
 // @include n8n/shared/skills.js
 
 // @include n8n/shared/resume.js
+
+// @include n8n/shared/cv.js
 
 // @include n8n/shared/llm.js
 
@@ -89,9 +93,18 @@ if (req.mode === 'plan') {
   if (!places.length && !questions.length) return fail('не понял, куда это вписать: переформулируй просьбу');
   return ok({ plan: { understood: oneLine(a.understood, 300), places }, questions });
 }
-if (req.mode === 'patch') return ok(checkPatches(sess.draft, a.patches));
+if (req.mode === 'split') {
+  const about = a.about?.from && a.about?.to ? a.about : null;
+  const r = cvFromAnchors(sess.draft.resume, { title: a.title, about, places: a.places });
+  if (r.error === 'mark') return fail('в резюме есть знаки ⟦ ⟧, разложить его не могу');
+  if (r.error) return fail('разметка не сошлась с текстом резюме — попробуй ещё раз');
+  const c = r.cv;
+  if (!c.places.length && !c.resumes[0].title && !c.resumes[0].about) return fail('не нашёл в резюме ни должности, ни «О себе», ни мест работы');
+  return ok({ cv: c, problems: r.problems.slice(0, 8) });
+}
+if (req.mode === 'patch') return ok(checkPatches(sess.draft, a.patches, 8, sess.scope));
 
 // rework: одна правка
-const { patches, dropped } = checkPatches(sess.draft, a.patches, 1);
+const { patches, dropped } = checkPatches(sess.draft, a.patches, 1, sess.scope);
 if (!patches.length) return fail(`переделать правку не вышло: ${PATCH_ERRORS[dropped[0]?.error] ?? 'нейросеть не вернула правку'}`);
 return ok({ patch: patches[0] });

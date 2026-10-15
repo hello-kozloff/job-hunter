@@ -94,6 +94,8 @@ services:
       APPLIER_TOKEN: ${APPLIER_TOKEN:-}
       # Предохранитель: без APPLY_LIVE=1 робот не нажимает «Откликнуться» (сухой прогон до кнопки)
       APPLY_LIVE: ${APPLY_LIVE:-0}
+      # Предохранитель резюме: без RESUME_LIVE=1 робот резюме на hh не сохраняет (сухой прогон: формы и снимки)
+      RESUME_LIVE: ${RESUME_LIVE:-0}
       APPLIER_FAKE: ${APPLIER_FAKE:-0}
       APPLIER_DAILY_CAP: ${APPLIER_DAILY_CAP:-40}
       HH_RESUME_TITLE: ${HH_RESUME_TITLE:-}

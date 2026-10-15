@@ -10,7 +10,9 @@
 //   POST /resume                   перепроверить вход и капчу, снять блок
 //   POST /captcha {text}           ответ на капчу-картинку (фото в Telegram): ввести и отправить
 //   POST /apply {vacancyId, letter, requestId, dry}   отклик; APPLY_LIVE=0 или dry: true — сухой прогон до кнопки
-//   POST /recon {vacancyIds?, inbox?}            разведка без кликов — фоновое задание, 202
+//   POST /recon {vacancyIds?, inbox?, resume?}   разведка без кликов — фоновое задание, 202 (resume — резюме, E0)
+//   POST /resume/read {hash?}      резюме hh: поля из страницы резюме, только GET (часть D, S2); бэкап — /data/resume
+//   POST /resume/write {hash, changes, dry}  записать разделы резюме формами hh; RESUME_LIVE=0 или dry — сухой прогон
 //   POST /record {on}              запись: пользователь откликается сам в окне робота
 //   POST /record/paste {text}      во время записи: вставить текст (письмо с Mac) туда, где курсор
 //   POST /shot                     скриншот окна сейчас
@@ -43,9 +45,11 @@ import {
 import { LOGIN_URL, SEL } from './hh/selectors.mjs';
 import { applyFlow } from './flows/apply.mjs';
 import { captchaKind, captchaShown, visible } from './flows/dom.mjs';
-import { reconInbox, reconVacancies } from './flows/recon.mjs';
+import { reconInbox, reconResume, reconVacancies } from './flows/recon.mjs';
+import { readResume, writeResume } from './flows/resume.mjs';
+import { cleanChanges } from './hh/resume.mjs';
 import { recordStart, recordStop, recording } from './flows/record.mjs';
-import { FAKE_OUTCOMES, fakeApply, fakeCaptcha, fakePush, fakeQueue, fakeResume } from './fake.mjs';
+import { FAKE_OUTCOMES, fakeApply, fakeCaptcha, fakePush, fakeQueue, fakeResume, fakeResumeRead, fakeResumeWrite } from './fake.mjs';
 
 if (config.token.length < 16) {
   console.error('APPLIER_TOKEN не задан или короче 16 символов — без него API робота открыт, не стартую');
@@ -132,6 +136,7 @@ async function health() {
     api: 1,
     version: config.version,
     live: config.live,
+    resumeLive: config.resumeLive,
     fake: config.fake,
     browser: browserStatus(),
     role: r,
@@ -251,12 +256,31 @@ const routes = {
   'POST /recon': async (body) => {
     assertNotBlocked();
     const ids = Array.isArray(body.vacancyIds) ? body.vacancyIds : [];
-    if (!ids.length && !body.inbox) throw new HttpError(400, { error: 'нужны vacancyIds или inbox: true' });
+    if (!ids.length && !body.inbox && !body.resume) throw new HttpError(400, { error: 'нужны vacancyIds, inbox: true или resume: true' });
     const started = await startJob('recon', async (progress) => ({
       vacancies: ids.length ? await reconVacancies(ids, progress) : null,
       inbox: body.inbox ? await reconInbox(progress) : null,
+      resume: body.resume ? await reconResume(progress) : null,
     }));
     return { status: 202, body: { ok: true, job: { kind: started.kind, state: started.state } } };
+  },
+
+  // Резюме hh для W13 (разделы резюме, сверка бота с hh). Капча — блок 423 на следующих действиях, как у отклика
+  'POST /resume/read': async (body) => {
+    assertNotBlocked();
+    const hash = /^[0-9a-f]{32,64}$/.test(String(body.hash ?? '')) ? String(body.hash) : '';
+    return { ...(await lock.run('resume-read', () => readResume({ hash }))), resumeLive: config.resumeLive };
+  },
+
+  // Запись разделов резюме (часть D, E2/E3). Без RESUME_LIVE=1 — всегда сухой прогон, как у отклика с APPLY_LIVE
+  'POST /resume/write': async (body) => {
+    assertNotBlocked();
+    const hash = /^[0-9a-f]{32,64}$/.test(String(body.hash ?? '')) ? String(body.hash) : '';
+    if (!hash) throw new HttpError(400, { error: 'нужен hash резюме hh' });
+    const c = cleanChanges(body.changes);
+    if (c.error) throw new HttpError(400, { error: c.error });
+    const dry = body.dry !== false || !config.resumeLive;
+    return lock.run('resume-write', () => writeResume({ hash, changes: c.changes, dry }));
   },
 
   'POST /record': async (body) => {
@@ -357,6 +381,14 @@ async function fakeRoute(key, req) {
       return fakeCaptcha(body.text ?? '');
     case 'POST /resume':
       return { status: 200, body: fakeResume() };
+    case 'POST /resume/read':
+      if (store.blocked) return { status: 423, body: { blocked: store.blocked } };
+      return { status: 200, body: { ...fakeResumeRead(), resumeLive: false } };
+    case 'POST /resume/write': {
+      if (store.blocked) return { status: 423, body: { blocked: store.blocked } };
+      const c = cleanChanges(body.changes);
+      return c.error ? { status: 400, body: { error: c.error } } : { status: 200, body: fakeResumeWrite(c.changes) };
+    }
     case 'POST /notice':
       return { status: 200, body: noticeAck(body) };
     case 'POST /fake': {

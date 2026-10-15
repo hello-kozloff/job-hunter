@@ -6,6 +6,13 @@
 //   node scripts/applier.mjs login                   открыть вход hh в окне робота и «Общий экран»; ждёт входа
 //   node scripts/applier.mjs recon <id> [<id>…]      разведка вакансий без кликов → fixtures/applier/recon-…
 //   node scripts/applier.mjs recon --inbox           разведка «Откликов» и чатов (чаты не открываются)
+//   node scripts/applier.mjs recon --resume          разведка резюме: «Мои резюме», резюме, страницы правки по ссылкам —
+//                                                    без кликов, рвётся любой не-GET к hh (часть D, E0); бэкап резюме hh
+//   node scripts/applier.mjs cv [hash]               прочитать резюме hh (только GET): должность, навыки, «О себе», опыт
+//                                                    — сводка без личных данных; бэкап — /data/resume в томе робота
+//   node scripts/applier.mjs cv-dry <файл.json>      сухой прогон записи резюме: робот заполняет формы hh и не сохраняет
+//                                                    (всегда dry: true); файл — { hash?, changes: [{ kind: title | about |
+//                                                    skills | place, … }] }; снимки форм — в fixtures/applier/
 //   node scripts/applier.mjs record start|stop       запись: вы откликаетесь сами в окне робота, он смотрит
 //   node scripts/applier.mjs paste                   во время записи: буфер обмена Mac (pbpaste) → туда, где курсор
 //                                                    в окне робота (VNC передаёт только латиницу, письмо — русское)
@@ -110,13 +117,16 @@ const commands = {
 
   async recon(args) {
     const inbox = args.includes('--inbox');
+    const resume = args.includes('--resume');
     const ids = args.filter((a) => /^\d+$/.test(a));
-    if (!ids.length && !inbox) throw new Error('нужны id вакансий hh или --inbox');
-    await api('POST', '/recon', { vacancyIds: ids, inbox });
-    console.log(`Разведка: ${ids.length ? `${ids.length} вакансий (20–40 с между ними)` : ''}${inbox ? ' + отклики и чаты' : ''}…`);
+    if (!ids.length && !inbox && !resume) throw new Error('нужны id вакансий hh, --inbox или --resume');
+    await api('POST', '/recon', { vacancyIds: ids, inbox, resume });
+    console.log(
+      `Разведка: ${[ids.length ? `${ids.length} вакансий (20–40 с между ними)` : '', inbox ? 'отклики и чаты' : '', resume ? 'резюме (4–9 с между страницами)' : ''].filter(Boolean).join(' + ')}…`,
+    );
     const job = await waitJob();
     if (job.state === 'error') throw new Error(`разведка упала: ${job.error}`);
-    const { vacancies, inbox: box } = job.result;
+    const { vacancies, inbox: box, resume: cv } = job.result;
     if (vacancies) {
       console.log(`→ ${vacancies.dir}`);
       for (const it of vacancies.items) {
@@ -145,6 +155,55 @@ const commands = {
       console.log(`  отклики: HTTP ${box.negotiations.status}, тем ${box.negotiations.topics}, ключи: ${box.negotiations.keys.join(', ')}`);
       console.log(`  чаты: HTTP ${box.chats.status}${box.chats.error ? ` (${box.chats.error})` : ''}`);
       console.log(`  непрочитанные до/после: ${JSON.stringify(box.unread.before)} / ${JSON.stringify(box.unread.after)}${box.unreadChanged ? ' ⚠️ ИЗМЕНИЛИСЬ' : ''}`);
+    }
+    if (cv) {
+      console.log(`→ ${cv.dir}`);
+      console.log(`  резюме: ${cv.resumes.length}${cv.resumes.map((r) => `\n    ${r.hash.slice(0, 8)}… «${r.title || 'без названия'}» — ссылок на правку: ${r.editLinks?.length ?? 0}`).join('')}`);
+      for (const r of cv.resumes) for (const l of r.editLinks ?? []) console.log(`      ${l}`);
+      for (const p of cv.pages) {
+        const flags = [p.captcha ? 'КАПЧА' : '', p.login ? 'НЕ ВОШЛИ' : ''].filter(Boolean).join(', ');
+        console.log(
+          `  ${p.name}: HTTP ${p.status}${flags ? ` ${flags}` : ''} · data-qa ${p.dataQa ?? 0} · полей ${p.fields ?? 0} (с пределом ${p.fieldLimits ?? 0}) · пределов в state ${Object.keys(p.limits ?? {}).length}${p.resumeKeys?.length ? ` · ключи ${p.resumeKeys.join(', ')}` : ''}`,
+        );
+      }
+      console.log(`  порвано не-GET к hh: ${cv.blocked}${cv.blockedPaths?.length ? `\n    ${cv.blockedPaths.join('\n    ')}` : ''}`);
+    }
+  },
+
+  async cv(args) {
+    const hash = args.find((a) => /^[0-9a-f]{32,64}$/.test(a)) ?? '';
+    console.log('Читаю резюме на hh (только чтение)…');
+    const r = await api('POST', '/resume/read', { hash });
+    if (!r.ok) throw new Error(`резюме не прочитал: ${r.error}`);
+    for (const x of r.resumes) console.log(`  ${x.hash === r.resume.hash ? '→' : ' '} ${x.hash.slice(0, 8)}… «${x.title}» · ${x.access || '—'} · ${x.status}`);
+    const v = r.resume;
+    console.log(`должность: «${v.title}» (до ${v.limits.title} знаков)`);
+    console.log(`«О себе»: ${v.about.length} знаков · ключевых навыков: ${v.keySkills.length} из ${v.limits.keySkills}`);
+    for (const p of v.places) console.log(`💼 ${p.company} — ${p.position} (${p.start || '?'} — ${p.end || 'сейчас'}): ${p.description.length} знаков`);
+    if (r.backup) console.log(`бэкап: /data/resume/${r.backup}`);
+  },
+
+  async 'cv-dry'(args) {
+    if (!args[0]) throw new Error('cv-dry <файл.json> — { hash?, changes: [...] }');
+    const job = JSON.parse(readFileSync(args[0], 'utf8'));
+    let hash = job.hash;
+    if (!hash) {
+      const read = await api('POST', '/resume/read', {});
+      if (!read.ok) throw new Error(`резюме не прочитал: ${read.error}`);
+      hash = read.resume.hash;
+    }
+    console.log(`Сухой прогон записи: ${job.changes.length} разделов, резюме ${hash.slice(0, 8)}… (на hh ничего не сохраняется)`);
+    // CLI никогда не просит живую запись: правка резюме — только из W13, где человек подтверждает каждый раздел
+    const r = await api('POST', '/resume/write', { hash, changes: job.changes, dry: true });
+    const dir = new URL('../fixtures/applier/', import.meta.url);
+    mkdirSync(dir, { recursive: true });
+    for (const x of r.results) {
+      let saved = '';
+      if (x.shot) {
+        writeFileSync(new URL(x.shot, dir), await api('GET', `/shots/${x.shot}`));
+        saved = ` · fixtures/applier/${x.shot}`;
+      }
+      console.log(`  ${x.kind}${x.hhId ? ` ${x.hhId}` : ''}: ${x.outcome}${x.note ? ` — ${x.note}` : ''}${saved}`);
     }
   },
 

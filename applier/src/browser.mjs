@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { config } from './config.mjs';
 import { log } from './log.mjs';
-import { FORCE_QUICK, FORCE_QUICK_URL, GUARD_ALLOW, GUARD_URL, HH, RESPONSE_PAGE } from './hh/selectors.mjs';
+import { FORCE_QUICK, FORCE_QUICK_URL, GUARD_ALLOW, GUARD_URL, HH, HH_PAGE, RESPONSE_PAGE } from './hh/selectors.mjs';
 import { roleFromCookies } from './hh/state.mjs';
 import { stamp, writeJsonAtomic } from './util.mjs';
 
@@ -61,6 +61,29 @@ export function guardBlocks(req) {
   if (!write && !quick) return false;
   log('guard.blocked', { method: req.method(), path: new URL(url).pathname, ...(quick && { force: 'quickResponse' }) });
   return true;
+}
+
+// Строгий предохранитель (разведка резюме, E0 15.10.2026): рвём любой не-GET к hh, не только к /applicant/ — как
+// hh сохраняет резюме, ещё неизвестно. Каждый порванный — в onBlocked (так видно, что страницы шлют сами).
+// Свой маршрут поверх остальных (Playwright зовёт маршруты от последнего к первому), GET уходит дальше — к обычному
+// предохранителю. Вернуть как было — вызвать результат
+export async function strictGuard(onBlocked = () => {}) {
+  if (!context) throw new Error('браузер не запущен');
+  const ctx = context;
+  const handler = (route) => {
+    const req = route.request();
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method())) return route.fallback();
+    const path = new URL(req.url()).pathname;
+    onBlocked({ method: req.method(), host: new URL(req.url()).hostname, path, type: req.resourceType() });
+    log('guard.strict', { method: req.method(), path });
+    return route.abort('blockedbyclient');
+  };
+  await ctx.route(HH_PAGE, handler);
+  log('guard.strict', { on: true });
+  return async () => {
+    await ctx.unroute(HH_PAGE, handler).catch(() => {});
+    log('guard.strict', { on: false });
+  };
 }
 
 async function launch() {
@@ -167,11 +190,12 @@ export async function shutdown() {
 export const SHOT_NAME = /^\d{8}-\d{6}-[a-z0-9-]+\.(jpg|png)$/;
 const shotName = (tag) =>
   `${stamp()}-${String(tag).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'shot'}.jpg`;
-export async function shot(tag, dir = SHOTS) {
+// fullPage — вся страница целиком (разведка: страница резюме длинная), для Telegram не годится
+export async function shot(tag, dir = SHOTS, { fullPage = false } = {}) {
   const p = await ensure();
   mkdirSync(dir, { recursive: true });
   const name = shotName(tag);
-  await p.screenshot({ path: join(dir, name), type: 'jpeg', quality: 70 });
+  await p.screenshot({ path: join(dir, name), type: 'jpeg', quality: 70, fullPage });
   return name;
 }
 

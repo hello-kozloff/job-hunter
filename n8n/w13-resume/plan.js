@@ -1,11 +1,14 @@
 // W13 · Plan — событие человека → сессия правки → куда дальше (15.10.2026, docs/recommendations.md).
 // Нода: Code, режим «Run Once for All Items». Вход: «Job», «Settings», static data (сессия).
-// Выход: { route: llm | file | step, mode, rows, wait, comment, keep, stale }
+// Выход: { route: llm | file | step | robot | write, mode, rows, wait, comment, keep, stale, hhHash, writeBody }
 //   llm  — спросить нейросеть: mode analyze (анализ: отчёт и вопросы) | plan (план Upgrade) | patch (правки) | rework
 //          (переделать одну правку, comment — пожелание, keep — «➕ Не заменять, дописать»); wait — { messageId, text }:
 //          что показать, пока нейросеть думает;
 //   file — резюме файлом;
 //   step — остальное: «Step» покажет, что теперь в сессии;
+//   robot — разделы резюме: робот читает резюме hh (hhHash — какое, '' — видимое работодателям), потом нейросеть
+//          (раскладка) или сразу «Step» (выгрузка: сравнить с hh);
+//   write — выгрузка на hh: робот пишет разделы (writeBody — тело POST /resume/write: { hash, changes, dry });
 //   rows — нужны строки вакансий (покрытие навыков: панель и итог); stale — кнопка от прошлой сессии.
 // Здесь — переходы по кнопкам и ответам человека; ответы нейросети разбирает «Step».
 //
@@ -16,6 +19,13 @@
 //   правок (ответы только на подсказки), last — последний запрос к нейросети { mode, comment, keep } для «🔄 Повторить» }.
 // Вопрос: { text, kind: one | many | text, options, area, hint — подсказка про фильтры hh (ответ — совет, не правка),
 //   tip, code: skills | where — вопросы кода про недостающие навыки, names — навыки без частоты }.
+// Разделы резюме (часть D, n8n/shared/cv.js): сессия kind split — { hh — резюме hh или null, hhError, cv — разметка,
+//   problems, fields — разделы, которые на hh другие: { kind: title | about | position | description | place, … },
+//   fi, skills: { list: [{ name, freq, hh }], picked, page }, back } → разложить, сверить, выбрать навыки, сохранить;
+//   kind skills — только ключевые навыки hh; у Upgrade — scope experience (из «💼 Опыт работы»: правки только опыта).
+// Выгрузка на hh (часть D, E2/E3): сессия kind export — { cv — копия разметки (для «взять с hh»), hh, live — включена
+//   ли запись (RESUME_LIVE), items — разделы, которые на hh другие (n8n/shared/cv.js → cvExportItems), ii, dry,
+//   results, after, writeError }.
 // panelId (static data) — сообщение-панель, которую правим.
 
 // @include n8n/shared/time.js
@@ -28,11 +38,13 @@
 
 // @include n8n/shared/resume.js
 
+// @include n8n/shared/cv.js
+
 const job = $('Job').first().json;
 const s = loadSettings($('Settings').all());
 const state = $getWorkflowStaticData('global');
 const sess = state.session ?? null;
-const out = { route: 'step', mode: '', rows: false, wait: null, comment: '', keep: false, stale: false };
+const out = { route: 'step', mode: '', rows: false, wait: null, comment: '', keep: false, stale: false, hhHash: '', writeBody: null };
 const panel = job.messageId || state.panelId || 0;
 // «➕ Не заменять, дописать» — то же, что пожелание к правке
 const KEEP_OLD = 'Ничего не убирай из старого текста этого места, только допиши новое.';
@@ -69,6 +81,7 @@ function newSession(kind, d) {
     applied: 0,
     done: false,
     last: null,
+    scope: '',
   };
 }
 // Нужны ли правки: у Upgrade план подтверждён; у анализа есть ответ не на подсказку (подсказки — только советы)
@@ -106,7 +119,144 @@ function nextPatch() {
   if (sess.pi >= sess.patches.length) out.rows = true;
 }
 
-if (job.op === 'view') {
+// ---------- Разделы резюме ----------
+
+// Разложить резюме по разделам: сначала резюме hh (робот), потом нейросеть. Незаконченная сессия заменяется.
+// Вакансии нужны для выбора ключевых навыков — их грузим сразу
+function splitStart(withHh, back) {
+  out.rows = true;
+  const d = resumeDraft(s);
+  if (!s['profile.ready'] || !d.resume) return;
+  state.session = { ...newSession('split', d), hh: null, hhError: '', cv: null, problems: [], fields: [], fi: 0, skills: null, back };
+  if (withHh) readHh();
+  else llm('split', '⏳ Раскладываю резюме по разделам… Это до минуты.');
+}
+function readHh() {
+  out.route = 'robot';
+  out.mode = 'split';
+  out.rows = true;
+  out.hhHash = s.cv?.resumes?.[0]?.hh?.hash ?? '';
+  out.wait = panel ? { messageId: panel, text: '⏳ Читаю резюме на hh и раскладываю по разделам… Это до минуты.' } : null;
+  // «🔄 Повторить» после сбоя нейросети — снова раскладка, резюме hh уже в сессии
+  state.session.last = { mode: 'split', comment: '', keep: false };
+}
+// Выбор по разделу: b — как в боте, h — с hh, a — добавить место с hh, k — пропустить
+function applyField(f, v) {
+  f.choice = v;
+  if (f.kind === 'place') {
+    if (v === 'a') f.id = cvAddPlace(sess.cv, f.hh);
+  } else if (v === 'h') cvSet(sess.cv, f.key, f.hh);
+}
+// Ключевые навыки: галочка — не больше 30 (предел hh)
+function togglePick(i) {
+  const k = sess.skills;
+  const x = k.list[i];
+  if (!x) return;
+  if (k.picked.includes(x.name)) k.picked = k.picked.filter((n) => n !== x.name);
+  else if (k.picked.length >= KEY_SKILLS_MAX) k.note = `Уже ${KEY_SKILLS_MAX} — сначала сними другой навык.`;
+  else k.picked = [...k.picked, x.name];
+}
+
+if (job.op === 'split') {
+  splitStart(job.value !== 'n', 'root');
+} else if (job.op === 'splitctl') {
+  if (!live || sess.kind !== 'split') stale();
+  else if (job.value === 'x') {
+    state.session = null;
+    out.rows = true;
+  } else if (sess.cv) stale();
+  else if (job.value === 'hh') readHh();
+  else {
+    out.rows = true;
+    llm('split', '⏳ Раскладываю резюме по разделам… Это до минуты.');
+  }
+} else if (job.op === 'field') {
+  if (!live || sess.kind !== 'split' || !sess.cv || sess.skills) stale();
+  else if (job.index === sess.fi) {
+    applyField(sess.fields[sess.fi], job.value);
+    sess.fi++;
+    // Разделы кончились — выбор ключевых навыков: «Step» соберёт список по вакансиям
+    if (sess.fi >= sess.fields.length) out.rows = true;
+  }
+} else if (job.op === 'skills') {
+  // 🧰 Ключевые навыки hh: разметки нет или устарела — сначала разложить
+  if (!cvFresh(s)) splitStart(true, 'skills');
+  else {
+    out.rows = true;
+    state.session = { ...newSession('skills', resumeDraft(s)), cv: JSON.parse(JSON.stringify(s.cv)), skills: null };
+  }
+} else if (job.op === 'pick' || job.op === 'page') {
+  if (!live || !sess.skills) stale();
+  else if (job.op === 'pick') {
+    sess.skills.note = '';
+    togglePick(job.index);
+  } else sess.skills.page = job.index;
+} else if (job.op === 'pickdone' || job.op === 'pickstop') {
+  if (!live || !sess.skills) stale();
+  else if (job.op === 'pickstop') {
+    state.session = null;
+    out.rows = true;
+  } else {
+    sess.done = true;
+    out.rows = true;
+  }
+} else if (job.op === 'exp') {
+  // 💼 Опыт работы: разметки нет или устарела — сначала разложить
+  if (!cvFresh(s)) splitStart(true, 'exp');
+} else if (job.op === 'export') {
+  // 📤 Обновить на hh: разметка живая и связана с резюме hh — сначала свежее чтение hh, потом сравнение («Step»)
+  if (cvFresh(s) && s.cv.resumes[0].hh) {
+    state.session = {
+      ...newSession('export', resumeDraft(s)),
+      cv: JSON.parse(JSON.stringify(s.cv)),
+      hh: null,
+      hhError: '',
+      live: false,
+      items: [],
+      ii: 0,
+      dry: true,
+      results: null,
+      after: null,
+      writeError: '',
+    };
+    out.route = 'robot';
+    out.hhHash = s.cv.resumes[0].hh.hash;
+    out.wait = panel ? { messageId: panel, text: '⏳ Читаю резюме на hh, чтобы сравнить с ботом…' } : null;
+  }
+} else if (job.op === 'item') {
+  if (!live || sess.kind !== 'export' || !sess.hh || sess.results) stale();
+  else if (job.index === sess.ii) {
+    const x = sess.items[sess.ii];
+    x.choice = job.value;
+    if (job.value === 'h') cvTakeFromHh(sess.cv, x);
+    sess.ii++;
+  }
+} else if (job.op === 'write') {
+  if (!live || sess.kind !== 'export' || !sess.hh) stale();
+  else if (job.value === 'x') {
+    state.session = null;
+    out.rows = true;
+  } else if (job.value === 'live' && !sess.live) stale();
+  else {
+    const changes = cvExportChanges(sess.items);
+    if (changes.length) {
+      sess.dry = job.value !== 'live';
+      sess.results = null;
+      sess.after = null;
+      sess.writeError = '';
+      out.route = 'write';
+      out.writeBody = { hash: sess.hh.hash, changes, dry: sess.dry };
+      out.wait = panel ? { messageId: panel, text: sess.dry ? '⏳ Робот заполняет формы hh (без сохранения)… Это 1–2 минуты.' : '⏳ Робот сохраняет разделы на hh и сверяет… Это 1–2 минуты.' } : null;
+    }
+  }
+} else if (job.op === 'input' && job.field === 'exp') {
+  // Upgrade опыта работы: как обычный Upgrade, но правки — только в местах работы (scope)
+  const d = resumeDraft(s);
+  if (s['profile.ready'] && d.cv && job.text.trim()) {
+    state.session = { ...newSession('upgrade', d), instruction: job.text.trim().slice(0, 1500), scope: 'experience' };
+    llm('plan', '⏳ Ищу в опыте работы, куда это вписать…', state.panelId || 0);
+  }
+} else if (job.op === 'view') {
   out.rows = true;
 } else if (job.op === 'file') {
   out.route = 'file';
