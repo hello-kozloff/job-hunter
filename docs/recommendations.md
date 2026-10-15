@@ -13,7 +13,7 @@
 | B | W13 Resume: панель, покрытие навыков, Upgrade, откат, резюме файлом | ✅ PR #78 |
 | C | Анализ: счёт по таблице вакансий, вопросы кнопками, подсказки по фильтрам | ✅ PR #79, #80 |
 | Релиз | Живая проверка владельцем 15.10.2026: «всё работает», анализ сохранил правки в резюме | ✅ v2026.10.15.2 |
-| D | Экспорт на hh роботом: разведка и запись редактора hh, чтение, сухие, живые | — |
+| D | Экспорт на hh роботом: разведка и запись редактора hh, чтение, сухие, живые | E0 ✅ PR #83, итог — ниже; дальше E1 |
 
 ## Решения пользователя (15.10.2026)
 
@@ -238,7 +238,42 @@ Step → Save? → Save rows → Save resume (upsert settings)
    - удалить копию → `record stop`;
    - русский текст — `node scripts/applier.mjs paste` (буфер обмена Mac → туда, где курсор: VNC передаёт только латиницу) или латиницей: содержимое копии не важно.
    Запись пишет любой не-GET к hh и GET с `resume` в адресе (`recordWanted`), предохранитель на время записи выключен, отклики W9 ждут (замок).
-3. Итог — сюда: адреса и тела запросов сохранения, `data-qa` формы, пределы полей.
+3. Итог — ниже.
+
+#### Итог E0 (15.10.2026)
+
+Разведка `fixtures/applier/resume-20261015-140015` (до записи — бэкап резюме hh), запись `record-20261015-140926` (первая попытка `record-20261015-140227` оборвалась: подвисло окно «Общего экрана», сам браузер робота отвечал).
+
+**Чтение — без форм.** Резюме целиком — в InitialState страницы `/resume/<hash>` → `applicantResume`:
+- `title[0].string` — должность; `skills[0].string` — «О себе»; `keySkills[].string` — ключевые навыки (`advancedKeySkills` — с id);
+- `experience[]` — `{ id, companyName, position, description, startDate, endDate, … }`;
+- `_conditions` — пределы полей, `_attributes` — `hash`, `status`, `updated`, `accessType` (`clients` — видно работодателям, `no_one` — никому).
+
+| Поле | Предел hh (`_conditions`) |
+|---|---|
+| Должность `title` | 2–100 знаков; не совпадает с должностью другого своего резюме (`not_in`) |
+| «О себе» `skills` | до 32 768 |
+| Ключевые навыки `keySkills` | **не больше 30**, каждый до 100 знаков. У владельца уже 30: добавить навык — значит убрать другой (кого убрать — по частоте в вакансиях, `skillStats`) |
+| Опыт: `position` / `description` | до 512 / до 32 768 |
+
+**Запись — по частям**, формы открываются прямым адресом (без клика по карандашу на странице резюме):
+
+| Что | Страница формы | `data-qa` | Запрос сохранения |
+|---|---|---|---|
+| Должность (+ зарплата, формат, занятость — уходят вместе) | `/resume/edit/<hash>/position` | `resume-edit-title-suggest`, `resume-partial-edit-save` | `POST hh.ru/applicant/resume/edit?resume=<hash>&hhtmSource=resume_partial_edit` → `{ title, salary, workFormats, employmentForms, professionalRole, travelTime, businessTripReadiness }` |
+| Ключевые навыки | `/resume/edit/<hash>/keySkills` → после сохранения hh показывает `…/skillsLevels` (уровни, можно «Назад») | `chips-trigger-chip-<навык>`, `chip-delete-action`, `resume-editor-skills-input`, `resume-partial-edit-save` | тот же адрес → `{ keySkills: [весь список] }` |
+| «О себе» | `/resume/edit/<hash>/about` | `resume-editor-about`, `resume-partial-edit-save` | тот же адрес → `{ skills: ["…"] }` |
+| Место опыта | `/profile/edit/experience/<id>` | `resume-profile-experience-specific-position-input-0`, `resume-editor-experience-description-input`, `profile-resumes-list-checkbox-<hash>`, `profile-layout-save-button` | `POST resume-profile-front.hh.ru/profile/shards/profile/update` → `{ profile: { experience: [все места] }, resumeFromHash }` |
+| Удалить резюме | — | — | `POST hh.ru/applicant/deleteresume` (multipart) |
+
+- Ответ `applicant/resume/edit` — резюме целиком (`{ resume: { _attributes, … } }`): по нему сверка без лишнего чтения. Ответ профиля — пустой, 200.
+- В теле — отпечатки браузера `fingerprintIteration2`, `fingerprintSp` (считает скрипт hh). Поэтому робот **заполняет форму и жмёт «Сохранить»**, как человек; запросов сам не собирает.
+- Подсказки (`POST /shards/recommended_skills`, `profession_suggestions`) — не сохранение.
+
+**Уроки:**
+1. **Опыт работы — в профиле, общий для резюме.** Правка места работы в скрытой копии ушла и в основное резюме (видно работодателям) и после удаления копии осталась: «Senior Frontend Developer TEST» около 3 минут, 15.10.2026 14:11–14:15 UTC. Владелец вернул руками, сверка разведкой — совпадает с бэкапом до записи. На странице правки опыта — галочки «в каких резюме показывать» (`profile-resumes-list-checkbox-<hash>`). Экспорт опыта меняет все резюме, где место отмечено, — W13 должен это говорить.
+2. **Предохранитель робота не покрывает профиль.** `GUARD_URL` рвёт не-GET к `hh.ru/applicant/…` (сохранение резюме), но не к `resume-profile-front.hh.ru` (сохранение опыта). До сухих прогонов (E2) — добавить; сохранение резюме и опыта — отдельные действия `guardAllow`.
+3. Копию резюме для опытов больше не делаем: она не изолирует опыт. Сухой прогон E2 — заполнить форму и не сохранять (предохранитель рвёт), живой — на основном резюме с бэкапом.
 
 **Как W13 будет выгружать:**
 1. Робот читает резюме hh.
