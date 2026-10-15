@@ -509,3 +509,28 @@ test('route: replies to the new-resume and rename questions', async () => {
   const [b] = await route(reply('Дизайнер', '✏️ Название резюме\nКак назвать резюме…'));
   assert.equal(b.json.field, 'rname');
 });
+
+// W7 «Render»: ⚙️ Настройки при нескольких резюме
+async function settingsView(settings, section = 'root') {
+  const w = world(settings);
+  const job = { view: 'settings', section, chatId: '1', messageId: 5, userMessageId: 0, queryId: '', tab: '', page: 1, id: 0 };
+  const out = await w.run('n8n/w7-menu/render.js', { job, nodes: { Rows: {}, Runs: {} } });
+  return out;
+}
+
+test('settings root: one resume — no resume line; several — a line and a note in the main resume sections', async () => {
+  let out = await settingsView(main());
+  assert.equal(out.layout, 'settings');
+  assert.ok(!/Резюме<\/b>/.test(out.text), 'nothing new for one resume');
+  const two = main({
+    resumes: [{ id: 'r1', name: 'Frontend', active: true, hh: null }, { id: 'r2', name: 'Дизайнер', active: false, hh: null }],
+  });
+  out = await settingsView(two);
+  assert.match(out.text, /📄 <b>Резюме<\/b>: 2 · ищут 1/);
+  for (const section of ['search', 'filter', 'llm']) {
+    out = await settingsView(two, section);
+    assert.match(out.text, /настройки основного резюме/, section);
+  }
+  out = await settingsView(main(), 'search');
+  assert.ok(!/основного резюме/.test(out.text), 'no note for one resume');
+});
