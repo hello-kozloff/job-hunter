@@ -185,7 +185,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - этап 6 (робот-отклик): `apply_state` ('' | queued | applying — очередь W9, статус не меняет), `apply_queued_at`, `apply_tries`, `apply_result`, `apply_letter` (attached | chat | none), `apply_note`, `apply_by` (robot | me | hh); 6.2 — `hh_state`, `hh_state_at`, `hh_chat_id`;
 - таблица `blacklist`: `company, comment`;
 - таблица `runs` — журнал сборов W1: `started_at, finished_at, kind` (schedule | catchup | bot | manual), `status` (running | ok | error), `found, uniq, fresh, rejected, scoring, pages, cards, error`;
-- таблица `settings` — настройки из бота: `name, value_json` (только изменения; значения по умолчанию — в коде); с 13.10.2026 там же профиль человека: `profile.*` (резюме, факты, подпись, контакт, пресет), `llm.rules`, `letters.*` (`docs/onboarding.md`); с 15.10.2026 — `resume.history` (версии резюме для отката, W13);
+- таблица `settings` — настройки из бота: `name, value_json` (только изменения; значения по умолчанию — в коде); с 13.10.2026 там же профиль человека: `profile.*` (резюме, факты, подпись, контакт, пресет), `llm.rules`, `letters.*` (`docs/onboarding.md`); с 15.10.2026 — `resume.history` (версии резюме для отката, W13) и `cv` (разделы резюме: разметка поверх `profile.resume`, W13);
 - таблица `alerts` — тревоги W4: `alert_key, workflow, message, first_at, last_at, hits, is_open, tg_message_id`;
 - имена колонок обходят служебные слова SQL (key, value, trigger, count, unique, open);
 - `id, createdAt, updatedAt` — встроенные.
@@ -389,7 +389,7 @@ n8n/w13-resume/*.js                 код Code-нод W13 (рекомендац
 n8n/shared/*.js                     общий код Code-нод (карточка, письмо, разбор страницы hh, меню, расписание W1, робот-отклик,
                                     поисковый запрос hh, признак AI-вакансии, время человека time.js, профиль profile.js,
                                     справочник ролей hh hh-roles.js, запрос к нейросети и разбор ответа llm.js,
-                                    названия навыков skills.js, правки резюме и покрытие навыков resume.js),
+                                    названия навыков skills.js, правки резюме и покрытие навыков resume.js, разделы резюме cv.js),
                                     подключается строкой // @include
 n8n/w4-errors/*.js                  код Code-нод W4
 n8n/schema.mjs                      схема таблиц vacancies и blacklist
