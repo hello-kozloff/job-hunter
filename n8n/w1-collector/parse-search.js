@@ -43,7 +43,8 @@ const contractOf = (v) =>
   ].join(',');
 
 // Вакансия из выдачи → строка таблицы vacancies (имена полей = имена колонок)
-function toRecord(v) {
+// resumeId — резюме, чьим поиском найдена вакансия (пусто у основного: колонка resume_id тогда не пишется)
+function toRecord(v, resumeId = '', resumeName = '') {
   const pay = v.compensation ?? {};
   const companyId = v.company?.id ? String(v.company.id) : '';
   return {
@@ -82,6 +83,7 @@ function toRecord(v) {
     apply_type: 'hh',
     published_at: v.publicationTime?.$ ?? '',
     status: 'new',
+    ...(resumeId ? { resume_id: resumeId, resume_name: resumeName } : {}),
   };
 }
 
@@ -129,7 +131,7 @@ for (const [index, item] of $input.all().entries()) {
     if (seenIds.has(id)) continue;
     seenIds.add(id);
 
-    const rec = toRecord(v);
+    const rec = toRecord(v, plan[index]?.resumeId ?? '', plan[index]?.resumeName ?? '');
     const prev = byKey.get(rec.dup_key);
     if (!prev) byKey.set(rec.dup_key, rec);
     else if (rec.areas && !prev.areas.split(', ').includes(rec.areas)) prev.areas += `, ${rec.areas}`;
