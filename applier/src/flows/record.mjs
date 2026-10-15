@@ -2,16 +2,17 @@
 // так видно экраны hh ПОСЛЕ нажатия «Откликнуться» (окно с письмом, один клик, «другая страна», чат), которые
 // разведка без клика не увидит. Предохранитель выключен (отклик человека должен уйти), замок держится до stop.
 // Каждая смена набора видимых data-qa → снимок: html, dom.json, shot.jpg; ответы XHR hh по отклику и чатам → .txt.
+// С 15.10.2026 (часть D «Экспорт на hh», E0) так же записываются правки резюме: что пишем — hh/resume.mjs → recordWanted.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { browserContext, ensure, setGuard, shot } from '../browser.mjs';
 import { log } from '../log.mjs';
+import { recordWanted } from '../hh/resume.mjs';
 import { WATCH } from '../hh/selectors.mjs';
 import { stamp } from '../util.mjs';
 import { RECON_DIR } from './recon.mjs';
 import { visibleDataQa, watchSelectors } from './dom.mjs';
 
-const XHR = /vacancy_response|negotiations|chatik|\/applicant\//;
 let rec = null;
 
 const slug = (s) => String(s).replace(/^https?:\/\/[^/]+/, '').replace(/[^a-z0-9]+/gi, '-').slice(0, 60);
@@ -31,7 +32,7 @@ export async function recordStart(release) {
 
   rec.onResponse = async (response) => {
     const req = response.request();
-    if (!['xhr', 'fetch', 'document'].includes(req.resourceType()) || !XHR.test(response.url())) return;
+    if (!['xhr', 'fetch', 'document'].includes(req.resourceType()) || !recordWanted(req.method(), response.url())) return;
     let body = '';
     try {
       body = (await response.text()).slice(0, 200000);
