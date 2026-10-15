@@ -24,6 +24,9 @@
 //   { action: 'profile', op, field, value, chatId, queryId, messageId, userMessageId, promptId, text, file, username } —
 //      профиль (W11, 13.10.2026): документ в чате (op pdf | not_pdf, file = { id, name, size }), кнопки pf:* и ответы
 //      на вопросы профиля (PROFILE_PROMPTS, op input).
+//   { action: 'resume', data, op, field, text, chatId, queryId, messageId, userMessageId, promptId } — рекомендации по
+//      резюме (W13, 15.10.2026): кнопки rs: ru: rq: rp: rr: (data — как есть, разбирает W13 «Job») и ответы на вопросы
+//      RESUME_PROMPTS (op input).
 // Чужие чаты отсекает сам Telegram Trigger (Restrict to Chat IDs = TG_CHAT_ID); здесь — вторая проверка.
 
 // @include n8n/shared/menu.js
@@ -53,6 +56,9 @@ if (cb) {
     const value = { ok: arg, yes: 'yes', no: 'no', g: arg, tz: arg, new: arg }[kind] ?? '';
     return [{ json: { action: 'profile', op, field, value, ...pressed, username: cb.from?.username ?? '' } }];
   }
+
+  // Рекомендации по резюме (W13): callback_data разбирает сам W13
+  if (/^(rs|ru|rq|rp|rr):/.test(data)) return [{ json: { action: 'resume', data, ...pressed } }];
 
   const list = data.match(/^p:l:([a-z]+):(\d+)$/);
   if (list && TABS[list[1]]) return panel({ ...pressed, view: 'list', tab: list[1], page: Number(list[2]) });
@@ -147,6 +153,25 @@ if (profilePrompt && text) {
         ...typed,
         promptId: msg.reply_to_message.message_id,
         username: msg.from?.username ?? '',
+      },
+    },
+  ];
+}
+
+// Ответ на вопрос рекомендаций по резюме (W13): поле — по началу текста вопроса
+const resumePrompt = Object.keys(RESUME_PROMPTS).find((key) =>
+  String(msg.reply_to_message?.text ?? '').startsWith(RESUME_PROMPTS[key]),
+);
+if (resumePrompt && text) {
+  return [
+    {
+      json: {
+        action: 'resume',
+        op: 'input',
+        field: resumePrompt,
+        text: text.slice(0, 4000),
+        ...typed,
+        promptId: msg.reply_to_message.message_id,
       },
     },
   ];
