@@ -229,10 +229,17 @@ Step → Save? → Save rows → Save resume (upsert settings)
 - **правки**: раздел правки — по позиции в тексте (`cvPartAt`): `title`, `about`, `p:e1`, `d:e1`, `text` (вне разделов), `extra`. Правка через границу разделов или по метке (компания + должность) — «задевает два раздела». У Upgrade из «💼» только правки опыта (`scope: experience`);
 - `resume.history` хранит и разметку; откат возвращает её вместе с текстом. Версия без разметки разметку не трогает: та станет неживой и оживёт при откате обратно.
 
+**Чтение hh роботом** (S2, `applier/src/flows/resume.mjs`, `POST /resume/read {hash?}`, CLI `node scripts/applier.mjs cv`):
+- «Мои резюме» → страница резюме (по умолчанию — видимое работодателям, иначе первое) → `applicantResume` из InitialState → `{ resumes, resume: { hash, title, about, keySkills, places[{ hhId, company, position, description, start, end }], access, status, updated, limits } }` (`parseResume`, `applier/src/hh/resume.mjs`);
+- только GET, строгий предохранитель; замок `resume-read` (занят откликом — 409, блок — 423); капча — блок, как у отклика; не вошли — `{ ok: false, error: 'login' }`;
+- бэкап прочитанного резюме целиком — `/data/resume/<hash>-<время>.json`, 30 дней;
+- фейк (`APPLIER_FAKE=1`) отдаёт синтетическое резюме;
+- предохранитель теперь рвёт и не-GET к `resume-profile-front.hh.ru` (сохранение опыта, урок E0); действия `resume` (`hh.ru/applicant/resume/edit`) и `profile` (сохранение опыта) экспорт откроет по одному.
+
 | Часть | Что | Статус |
 |---|---|---|
-| S1 | разметка в коде: `cv.js`, настройка `cv`, правки по разделам, откат | ✅ |
-| S2 | робот читает резюме hh (`POST /resume/read`), предохранитель на сохранение опыта | — |
+| S1 | разметка в коде: `cv.js`, настройка `cv`, правки по разделам, откат | ✅ PR #85 |
+| S2 | робот читает резюме hh (`POST /resume/read`), предохранитель на сохранение опыта | ✅ |
 | S3 | W13: 🧩 разложить, сверка с hh, 🧰 навыки | — |
 | S4 | W13: 💼 опыт, правки с ⚠️, панель | — |
 

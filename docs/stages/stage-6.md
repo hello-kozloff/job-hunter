@@ -93,6 +93,7 @@ cookie и токена; разведка вырезает токены и дан
 | `POST /login` | открыть вход hh в окне робота |
 | `POST /inbox` | 6.2: отклики и новые сообщения HR, чаты не открываются |
 | `POST /recon {vacancyIds?, inbox?, resume?}` → `GET /job` | разведка без кликов — фоновое задание; `resume` — резюме на hh со строгим предохранителем (часть D «Экспорт на hh», `docs/recommendations.md` → E0) |
+| `POST /resume/read {hash?}` | резюме hh для W13: должность, навыки, «О себе», опыт; только GET, бэкап в `/data/resume` (`docs/recommendations.md` → «Разделы резюме») |
 | `POST /record {on}` | запись: пользователь откликается сам в окне робота |
 | `GET /shots/:name`, `POST /shot` | скриншот |
 | `POST /fake {outcomes}` | 6.1a, только при `APPLIER_FAKE=1` |
