@@ -92,14 +92,16 @@ if (firstQuiet) {
   const parts = [`🟢 ${count('apply')}`, `🟡 ${count('maybe')}`, `🔴 ${count('skip')}`];
   if (count('error')) parts.push(`⚠️ ${count('error')}`);
   // Теневой режим выключен — skip без карточек (W2 «Quiet skips»)
-  let quiet = 0;
+  let quietSkips = 0;
   try {
-    quiet = $('Quiet skips').all().length;
+    quietSkips = $('Quiet skips').all().length;
   } catch {
     // теневой режим включён — ветка не выполнялась
   }
-  const text = `📊 Оценено ${scored.length}: ${parts.join(' · ')}${quiet ? `\n🔴 ${quiet} без карточек — теневой режим выключен, они в меню на вкладке ❌` : ''}${llmNote ? `\n${llmNote}` : ''}`;
-  messages.push({ text: report ? `${report}\n\n${text}` : text, silent: quiet, report: Boolean(report), live: false });
+  const text = `📊 Оценено ${scored.length}: ${parts.join(' · ')}${quietSkips ? `\n🔴 ${quietSkips} без карточек — теневой режим выключен, они в меню на вкладке ❌` : ''}${llmNote ? `\n${llmNote}` : ''}`;
+  // Без звука: тихие часы (23:00–09:00 по местному) и итог с вакансиями без карточек. До 16.10.2026 тихие часы здесь
+  // не работали: счётчик skip без карточек назывался quiet, как и тихие часы, и затенял их
+  messages.push({ text: report ? `${report}\n\n${text}` : text, silent: quiet || quietSkips > 0, report: Boolean(report), live: false });
 } else if (report) {
   messages.push({ text: llmNote ? `${report}\n\n${llmNote}` : report, silent: true, report: true, live: true });
 }

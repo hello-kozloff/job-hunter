@@ -11,13 +11,23 @@ const overload = (id) => row(id, { outcome: 'retry', problem: 'сервер не
 const scored = (id) => row(id, { outcome: 'scored', decision: 'apply', llm_reason: 'ок' });
 
 // Один запуск W2: results — «Parse verdict»; state — static data между запусками
-async function run(results, state, report = REPORT) {
-  const messages = await runNode('n8n/w2-score/summary.js', {
-    input: [{ report }],
-    nodes: { 'Parse verdict': results, Claim: results.map((r) => ({ id: r.id })) },
-    state,
-  });
-  return messages;
+async function run(results, state, report = REPORT, { at, quietSkips = 0 } = {}) {
+  const realNow = Date.now;
+  if (at) Date.now = () => Date.parse(at);
+  try {
+    return await runNode('n8n/w2-score/summary.js', {
+      input: [{ report }],
+      nodes: {
+        'Parse verdict': results,
+        Claim: results.map((r) => ({ id: r.id })),
+        ...(quietSkips && { 'Quiet skips': Array.from({ length: quietSkips }, (_, i) => ({ id: 100 + i })) }),
+      },
+      state,
+      env: { USER_TZ: 'Asia/Bangkok' },
+    });
+  } finally {
+    Date.now = realNow;
+  }
 }
 const loud = (messages) => messages.filter((m) => !m.report && !m.silent);
 
@@ -105,4 +115,27 @@ test('no transient failures: messages are exactly as before', async () => {
   const none = await run([], {});
   assert.equal(none.length, 1);
   assert.equal(none[0].text, REPORT);
+});
+
+// 16.10.2026: счётчик skip без карточек (quiet) затенял тихие часы — итог оценки ночью приходил со звуком
+const NIGHT = '2026-10-16T20:00:00Z'; // 03:00 в Таиланде
+const DAY = '2026-10-16T06:00:00Z'; // 13:00 в Таиланде
+
+test('summary of scored vacancies: silent at night, with sound in the daytime', async () => {
+  const night = await run([scored(1)], {}, REPORT, { at: NIGHT });
+  assert.equal(night[0].silent, true);
+  const day = await run([scored(1)], {}, REPORT, { at: DAY });
+  assert.equal(day[0].silent, false);
+});
+
+test('summary with skips without cards stays silent in the daytime too (as before)', async () => {
+  const day = await run([scored(1), scored(2)], {}, REPORT, { at: DAY, quietSkips: 2 });
+  assert.equal(day[0].silent, true);
+  assert.match(day[0].text, /🔴 2 без карточек/);
+});
+
+test('without a report (manual run) the summary keeps the same quiet rules', async () => {
+  const night = await run([scored(1)], {}, '', { at: NIGHT });
+  assert.equal(night[0].silent, true);
+  assert.equal(night[0].report, false);
 });
