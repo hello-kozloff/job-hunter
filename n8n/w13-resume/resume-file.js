@@ -8,13 +8,17 @@
 
 // @include n8n/shared/settings.js
 
+// @include n8n/shared/resumes.js
+
 // @include n8n/shared/skills.js
 
 // @include n8n/shared/resume.js
 
 // @include n8n/shared/cv.js
 
-const s = loadSettings($('Settings').all());
+const all = loadSettings($('Settings').all());
+const scope = resumeScope(all, $getWorkflowStaticData('global').target);
+const s = scope.s;
 const text = resumeJoin(resumeDraft(s));
 const h = s['resume.history'][0];
 const at = h && Date.parse(h.at) ? ` · правка ${localDM(Date.parse(h.at))} ${localHM(Date.parse(h.at))}` : '';
@@ -22,7 +26,7 @@ return [
   {
     json: {
       text: text || '(резюме пусто: пришли PDF боту)',
-      caption: `📄 Резюме бота · ${text.length} знаков${at}. По нему нейросеть оценивает вакансии и пишет письма.`,
+      caption: `📄 Резюме ${scope.several ? `«${scope.name}» ` : ''}бота · ${text.length} знаков${at}. По нему нейросеть оценивает вакансии и пишет письма.`,
     },
   },
 ];

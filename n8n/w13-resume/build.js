@@ -14,6 +14,8 @@
 
 // @include n8n/shared/settings.js
 
+// @include n8n/shared/resumes.js
+
 // @include n8n/shared/skills.js
 
 // @include n8n/shared/resume.js
@@ -23,8 +25,12 @@
 // @include n8n/shared/llm.js
 
 const plan = $('Plan').first().json;
-const settings = loadSettings($('Settings').all());
-const sess = $getWorkflowStaticData('global').session;
+const all = loadSettings($('Settings').all());
+const state = $getWorkflowStaticData('global');
+// Резюме, с которым работаем (docs/resumes.md): факты, вакансии для статистики — его; провайдер нейросети общий
+const scope = resumeScope(all, state.target);
+const settings = scope.s;
+const sess = state.session;
 const provider = settings['llm.provider'];
 const model = llmModel(provider);
 const resume = `<resume>\n${resumeJoin(sess.draft)}\n</resume>`;
@@ -230,10 +236,14 @@ const extra = {};
 if (plan.mode === 'analyze') {
   const rows = (() => {
     try {
-      return $('Vacancies')
-        .all()
-        .map((i) => i.json)
-        .filter((r) => r?.id);
+      return resumeVacancies(
+        all,
+        $('Vacancies')
+          .all()
+          .map((i) => i.json)
+          .filter((r) => r?.id),
+        scope.id,
+      );
     } catch {
       return [];
     }
