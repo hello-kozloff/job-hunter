@@ -906,3 +906,25 @@ test('route: кнопки импорта rm:imp и rm:i:<сессия>:<дейс
     assert.deepEqual(await route(press(bad)), [], bad);
   }
 });
+
+test('import: названия связанных резюме на hh обновляются при чтении списка', async () => {
+  const w = world(
+    main({
+      cv: { v: 1, places: [], resumes: [{ id: 'r1', hh: { hash: HA, title: 'Старое название' }, template: '', title: '', about: '', keySkills: [] }] },
+      resumes: [{ id: 'r1', name: 'Frontend', active: true, hh: { hash: HA, title: 'Старое название' } }, { id: 'r2', name: 'Бух', active: true, hh: { hash: HB, title: 'Тоже старое' } }],
+      'resume.r2': { resume: RESUME, in_name: ['бухгалтер'] },
+    }),
+  );
+  const job = w.jobOf({ op: 'rm', field: 'imp' });
+  const plan = await w.run('n8n/w11-profile/plan.js', { job });
+  const hh = await w.run('n8n/w11-profile/hh-resume.js', { job, plan, input: ok(hhListBody([[HA, 'Frontend-разработчик'], [HB, 'Бухгалтер'], [HC, 'Третье']])) });
+  const out = await w.run('n8n/w11-profile/step.js', { job, plan, nodes: { 'HH resume': hh } });
+  w.save(out);
+  assert.deepEqual(w.settings.resumes[0].hh, { hash: HA, title: 'Frontend-разработчик' });
+  assert.deepEqual(w.settings.resumes[1].hh, { hash: HB, title: 'Бухгалтер' });
+  assert.equal(w.settings.resumes[1].name, 'Бух', 'название в боте не трогаем: оно своё');
+  assert.equal(out.view.layout, 'rm imp3');
+  // ничего не поменялось на hh — ничего и не пишем
+  const again = await w.run('n8n/w11-profile/step.js', { job, plan, nodes: { 'HH resume': hh } });
+  assert.equal(again.save, null);
+});

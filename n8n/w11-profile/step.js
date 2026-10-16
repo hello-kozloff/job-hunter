@@ -228,6 +228,19 @@ function impSelectView(note = '') {
   });
   show(`rm imp${rows.length}`, lines.filter((l) => l !== null).join('\n'), b);
 }
+// Названия на hh меняют (в том числе 📤 из бота): у связанных резюме сохраняем текущее — по нему робот найдёт резюме
+// в окне отклика
+function impRefreshTitles() {
+  const st = state.imp;
+  let changed = false;
+  const next = resumeList(s).map((r) => {
+    const onHh = r.hh && st.list.find((x) => x.hash === r.hh.hash);
+    if (!onHh?.title || onHh.title === r.hh.title) return r;
+    changed = true;
+    return { ...r, hh: { hash: r.hh.hash, title: clip(onHh.title, 200) } };
+  });
+  if (changed) apply({ resumes: next });
+}
 // Следующее резюме из очереди: человек решает, когда идти дальше
 function impNextView(note) {
   const st = state.imp;
@@ -567,6 +580,7 @@ if (plan.problem) {
     impErrorView(hhWhy(hhr.hhError), state.imp?.current?.title ?? 'резюме с hh');
   }
 } else if (hhr?.hh === 'list') {
+  impRefreshTitles();
   impSelectView();
 } else if (job.op === 'not_pdf') {
   plain('📎 Это не PDF. Пришли резюме в PDF: на hh — «Мои резюме» → резюме → «Скачать» → PDF.', true);
