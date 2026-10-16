@@ -9,18 +9,22 @@
 
 // @include n8n/shared/card.js
 // @include n8n/shared/settings.js
+// @include n8n/shared/resumes.js
 // @include n8n/shared/robot.js
 // @include n8n/shared/letter.js
 
 const jobs = new Map($('Jobs').all().map((i) => [i.json.id, i.json]));
 const rows = new Map($('Vacancy').all().map((i) => [i.json.id, i.json]));
-const robotOn = loadSettings($('Settings').all())['apply.enabled'];
+const settings = loadSettings($('Settings').all());
+const robotOn = settings['apply.enabled'];
 
 return $input.all().map((item) => {
   const r = item.json;
   const job = jobs.get(r.id) ?? {};
   const row = rows.get(r.id) ?? {};
-  const robot = Boolean(r.ok) && robotEligible({ ...row, letter: r.letter }, robotOn);
+  // Несколько резюме: роботом — только резюме, связанным с резюме на hh (n8n/shared/robot.js → robotResume)
+  const resume = robotResume(settings, row);
+  const robot = Boolean(r.ok) && robotEligible({ ...row, letter: r.letter }, robotOn) && resume.ok;
   // Робот включён, а 🚀 нет — письмо объясняет почему (иначе непонятно, куда делась кнопка)
   const robotHint =
     robotOn && r.ok && !robot
@@ -28,7 +32,9 @@ return $input.all().map((item) => {
         ? 'у вакансии тест работодателя — ответы на вопросы и отклик вручную (📝)'
         : row.apply_type === 'external'
           ? 'отклик на сайте работодателя — вручную'
-          : ''
+          : !resume.ok
+            ? resume.reason
+            : ''
       : '';
   return {
     json: {

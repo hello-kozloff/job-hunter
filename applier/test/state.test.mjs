@@ -13,7 +13,9 @@ import {
   redactState,
   roleFromCookies,
   shape,
+  resumeChoice,
   vacancyFacts,
+  vacancyResumes,
   GROUP,
 } from '../src/hh/state.mjs';
 import { robotDayStart, stamp } from '../src/util.mjs';
@@ -130,6 +132,58 @@ test('popupPrediction: типы hh из разведки и предупрежд
   assert.equal(quick.letterRequired, false);
   assert.equal(quick.relocation, false);
   assert.equal(popupPrediction({ type: 'test-required', redirect_uri: '/x' }).hasTests, true);
+  // Резюме по умолчанию: в окне — прошлого отклика, в один клик — resume_hash тела
+  assert.equal(modal.defaultResume, '');
+  assert.equal(popupPrediction({ type: 'modal', lastResponseResumeHash: 'abc', responseStatus: {} }).defaultResume, 'abc');
+  assert.equal(quick.defaultResume, 'h');
+});
+
+// Страница вакансии у человека с двумя резюме (запись 16.10.2026): основное видно работодателям, копия скрыта
+const AH = 'a'.repeat(38);
+const BH = 'b'.repeat(38);
+const CH = 'c'.repeat(38);
+const twoResumes = (extra = {}) => ({
+  applicantVacancyResponseStatuses: {
+    5: {
+      usedResumeIds: [],
+      unusedResumeIds: ['11', '22'],
+      resumes: {
+        11: { _attributes: { id: '11', hash: AH }, title: [{ string: 'Frontend-разработчик' }], accessType: [{ string: 'clients' }] },
+        22: { _attributes: { id: '22', hash: BH, parentResumeId: '11' }, title: [{ string: 'Fullstack-разработчик' }], accessType: [{ string: 'no_one' }] },
+        33: { title: [{ string: 'без хеша' }] },
+      },
+      ...extra,
+    },
+  },
+});
+
+test('vacancyResumes: резюме со страницы вакансии — хеш, название, видимость, использовано', () => {
+  const list = vacancyResumes(twoResumes({ usedResumeIds: ['22'] }), 5);
+  assert.deepEqual(list, [
+    { id: '11', hash: AH, title: 'Frontend-разработчик', access: 'clients', used: false },
+    { id: '22', hash: BH, title: 'Fullstack-разработчик', access: 'no_one', used: true },
+  ]);
+  assert.deepEqual(vacancyResumes({}, 5), []);
+  assert.deepEqual(vacancyResumes(null, 5), []);
+  assert.deepEqual(vacancyResumes(twoResumes(), 6), [], 'чужая вакансия');
+});
+
+test('resumeChoice: нужное резюме — можно; уже откликались, скрыто, нет такого — нельзя до клика', () => {
+  const list = vacancyResumes(twoResumes(), 5);
+  assert.deepEqual(resumeChoice(list, { hash: AH, title: 'старое имя' }), { ok: true, id: '11', hash: AH, title: 'Frontend-разработчик' }, 'название — как сейчас на hh');
+  assert.deepEqual(resumeChoice(list, { hash: AH }).title, 'Frontend-разработчик');
+  const hidden = resumeChoice(list, { hash: BH });
+  assert.equal(hidden.outcome, 'hidden');
+  assert.match(hidden.note, /«Fullstack-разработчик» скрыто от работодателей/);
+  const used = resumeChoice(vacancyResumes(twoResumes({ usedResumeIds: ['11'] }), 5), { hash: AH });
+  assert.deepEqual([used.outcome, used.confirmed], ['already', true]);
+  assert.match(used.note, /уже откликалось/);
+  // этим резюме — уже, а другим — можно: «уже» не про всю вакансию
+  assert.equal(resumeChoice(vacancyResumes(twoResumes({ usedResumeIds: ['11'] }), 5), { hash: BH }).outcome, 'hidden');
+  const missing = resumeChoice(list, { hash: CH, title: 'Бухгалтер' });
+  assert.equal(missing.outcome, 'error');
+  assert.match(missing.note, /«Бухгалтер» нет среди резюме на hh/);
+  assert.equal(resumeChoice([], { hash: AH }).outcome, 'error');
 });
 
 test('vacancyFacts: alreadyApplied и responseImpossible от hh вошедшему', () => {

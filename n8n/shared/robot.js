@@ -9,6 +9,21 @@ const VNC_URL = 'vnc://localhost:5901';
 const robotEligible = (r, enabled = true) =>
   Boolean(enabled && r?.status === 'approved' && r.letter && !r.has_test && r.apply_type !== 'external' && !r.apply_state);
 
+// Каким резюме hh откликаться (несколько резюме, docs/resumes.md): резюме вакансии — resume_id (пусто — основное).
+// Нужен n8n/shared/resumes.js. → { ok: true, resume: { hash, title } } — резюме связано с резюме на hh, робот выберет его
+// в окне отклика; { ok: true, resume: null } — основное не связано: робот откликнется резюме по умолчанию (как раньше);
+// { ok: false, reason } — другое резюме не связано с hh: роботом откликаться нельзя, откликнулось бы не тем резюме
+function robotResume(s, row) {
+  const id = row?.resume_id && resumeById(s, row.resume_id) ? row.resume_id : 'r1';
+  const r = resumeById(s, id);
+  if (r?.hh?.hash) return { ok: true, resume: { hash: r.hh.hash, title: r.hh.title } };
+  if (id === 'r1') return { ok: true, resume: null };
+  return {
+    ok: false,
+    reason: `резюме «${r?.name ?? id}» не связано с резюме на hh: импортируйте его (⚙️ → 📄 Резюме → 📥 Импорт с hh) или откликнитесь вручную`,
+  };
+}
+
 // «День» робота для лимита — с 09:00 по местному (решение пользователя 10.10.2026): отложенные на завтра отклики
 // уходят, когда тихие часы (23–09) закончились
 const robotDayStart = (now = Date.now(), tz = TZ) => localDayStart(now, tz, 9);
@@ -36,10 +51,12 @@ function robotLine(r) {
   const lines = {
     test: '🧩 У вакансии вопросы работодателя — откликнитесь сами',
     external: '🌐 Отклик на сайте работодателя — откликнитесь сами',
-    hidden: '🙈 hh просит открыть резюме этому работодателю — откликнитесь сами',
+    // Скрыто конкретное резюме (несколько резюме, этап 5): робот называет его в заметке
+    hidden: `🙈 ${/^резюме/.test(r.apply_note ?? '') ? esc(r.apply_note) : 'hh просит открыть резюме этому работодателю'} — откликнитесь сами`,
     error: `⚠️ Робот не смог${note}${(r.apply_tries ?? 0) >= 3 ? ' — третий раз, откликнитесь сами' : ''}`,
     dry_run: `🧪 Сухой прогон (APPLY_LIVE=0), отклик не отправлен${note}`,
     disabled: '⏸ Робот выключен (⚙️ → 🚀 Робот) — откликнитесь сами',
+    no_resume: `📄 Робот не откликается: ${esc(r.apply_note || 'резюме не связано с резюме на hh')}`,
   };
   return lines[r.apply_result] ?? '';
 }

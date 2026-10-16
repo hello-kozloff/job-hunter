@@ -5,16 +5,25 @@ import { guardBlocks } from '../src/browser.mjs';
 
 const encode = (o) => JSON.stringify(o).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&#34;');
 
-// Запросы сценария, кроме GET: { path, blocked, letter, text }
+// Запросы сценария, кроме GET: { path, blocked, letter, text, resume }
 export const posts = [];
-const applied = new Set();
+// Каким резюме откликнулись: id вакансии → id резюме
+const usedBy = new Map();
 let current = null;
 export const useScenario = (sc) => {
   current = sc;
   posts.length = 0;
 };
 
+// Резюме человека на hh (запись 16.10.2026): по умолчанию одно. Сценарий: resumes [{ id, hash, title, access, used }],
+// defaultHash — выбрано в окне при открытии (lastResponseResumeHash)
+const ONE = [{ id: '1', hash: 'h1', title: 'Frontend-разработчик (React, Next.js, TypeScript)', access: 'clients' }];
+const resumesOf = (sc) => sc.resumes ?? ONE;
+const defaultOf = (sc) => sc.defaultHash ?? resumesOf(sc)[0].hash;
+
 function vacancyState(id) {
+  const resumes = resumesOf(current);
+  const used = (r) => Boolean(r.used) || Boolean(usedBy.get(String(id))?.has(r.id));
   return {
     userType: 'applicant',
     vacancyView: {
@@ -24,9 +33,15 @@ function vacancyState(id) {
     },
     applicantVacancyResponseStatuses: {
       [id]: {
-        usedResumeIds: applied.has(String(id)) ? [1] : [],
-        unusedResumeIds: applied.has(String(id)) ? [] : [1],
-        test: { hasTests: false },
+        usedResumeIds: resumes.filter(used).map((r) => r.id),
+        unusedResumeIds: resumes.filter((r) => !used(r)).map((r) => r.id),
+        resumes: Object.fromEntries(
+          resumes.map((r) => [
+            r.id,
+            { _attributes: { id: r.id, hash: r.hash }, title: [{ string: r.title }], accessType: [{ string: r.access ?? 'clients' }] },
+          ]),
+        ),
+        test: { hasTests: Boolean(current.hasTests) },
         letterMaxLength: 10000,
         shortVacancy: {},
       },
@@ -43,6 +58,10 @@ function vacancyPage(id, sc) {
     relocation: Boolean(sc.relocation),
     visibility: sc.visibility ?? '',
     captchaInModal: sc.captchaInModal ?? false,
+    resumes: resumesOf(sc),
+    defaultHash: defaultOf(sc),
+    // Окно выбора резюме: ok | missing (в списке нет второго резюме) | broken (клик по опции ничего не выбирает) | none (ячейка не кнопка)
+    chooser: sc.chooser ?? 'ok',
     errorText: sc.errorText ?? 'Произошла ошибка, попробуйте ещё раз',
   };
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Sim ${id}</title>
@@ -66,9 +85,11 @@ const closeDialogs = () => document.querySelectorAll('[role=dialog], [role=alert
 // «Аналитика» страницы: не-GET к /shards/applicant/ — предохранитель обязан порвать и при живом отклике
 fetch('/shards/applicant/sim_stats', { method: 'POST', body: 'x' }).catch(() => {});
 
+let selected = SIM.defaultHash;
 async function respond(letter) {
   const fd = new FormData();
   fd.append('vacancy_id', String(SIM.id));
+  fd.append('resume_hash', selected);
   if (letter !== null) fd.append('letter', letter);
   const r = await fetch('/applicant/vacancy_response/popup', { method: 'POST', body: fd });
   return { status: r.status, body: await r.json().catch(() => ({})) };
@@ -81,7 +102,7 @@ function success(quick) {
 function showModal() {
   document.body.append(el(\`<div role="dialog">
     <div data-qa="modal-header">Отклик на вакансию</div>
-    <div data-qa="resume-title">Frontend-разработчик (React, Next.js, TypeScript)</div>
+    <\${SIM.chooser === 'none' ? 'div' : 'div role="button" tabindex="0"'} data-sim="resume-cell"><div data-qa="resume-title">\${SIM.resumes.find((r) => r.hash === selected).title}</div></div>
     <div data-qa="hidden-resume-warning" class="collapsed">Чтобы откликнуться на эту вакансию, поменяйте видимость резюме</div>
     <textarea data-qa="vacancy-response-popup-form-letter-input">Старое письмо из прошлого отклика</textarea>
     <div id="captcha"></div>
@@ -110,7 +131,25 @@ async function proceed() {
   }
 }
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDialogs(); });
+// Окно выбора резюме: ячейка (role=button) открывает список опций magritte-select-option-<хеш>
+function openList() {
+  document.querySelectorAll('[data-qa="drop-base"]').forEach((d) => d.remove());
+  const options = SIM.resumes.filter((r) => SIM.chooser !== 'missing' || r.hash === SIM.defaultHash);
+  document.body.append(el(\`<div role="dialog" data-qa="drop-base"><div role="listbox" data-qa="magritte-select-option-list">\${options
+    .map((r) => \`<label role="option" data-qa="magritte-select-option-\${r.hash}" aria-selected="\${r.hash === selected}"><div data-qa="resume-title">\${r.title}</div></label>\`)
+    .join('')}</div></div>\`));
+}
 document.addEventListener('click', async (e) => {
+  const cell = e.target.closest('[role=button][data-sim="resume-cell"]');
+  if (cell) return openList();
+  const option = e.target.closest('[role=option]');
+  if (option) {
+    if (SIM.chooser !== 'broken') {
+      selected = option.getAttribute('data-qa').replace('magritte-select-option-', '');
+      document.querySelector('[data-sim="resume-cell"] [data-qa="resume-title"]').textContent = SIM.resumes.find((r) => r.hash === selected).title;
+    }
+    return document.querySelectorAll('[data-qa="drop-base"]').forEach((d) => d.remove());
+  }
   const qa = e.target.closest('[data-qa]')?.getAttribute('data-qa');
   if (!qa) return;
   e.preventDefault();
@@ -211,7 +250,7 @@ export async function handle(route) {
     } catch {
       // не JSON — текста нет
     }
-    posts.push({ path: url.pathname, blocked: false, letter: field(post, 'letter'), text: text ?? null });
+    posts.push({ path: url.pathname, blocked: false, letter: field(post, 'letter'), text: text ?? null, resume: field(post, 'resume_hash') });
   }
   const id = url.pathname.match(/^\/vacancy\/(\d+)/)?.[1] ?? url.searchParams.get('vacancyId');
   if (host === 'chatik.hh.ru') {
@@ -226,21 +265,28 @@ export async function handle(route) {
   if (url.pathname === '/applicant/vacancy_response/popup' && post === null) {
     const status = { by_country_applicant_visibility: { responseAllowed: true }, test: { hasTests: false } };
     if (sc.type === 'quickResponse') {
-      return json(route, 200, { type: 'quickResponse', body: { resume_hash: 'h', letterRequired: false, responseStatus: status } });
+      return json(route, 200, { type: 'quickResponse', body: { resume_hash: defaultOf(sc), letterRequired: false, responseStatus: status } });
     }
-    return json(route, 200, { type: sc.type, relocationWarning: { show: Boolean(sc.relocation) }, responseStatus: status });
+    return json(route, 200, {
+      type: sc.type,
+      relocationWarning: { show: Boolean(sc.relocation) },
+      lastResponseResumeHash: defaultOf(sc),
+      responseStatus: status,
+    });
   }
   if (url.pathname === '/applicant/vacancy_response/popup') {
     if (Array.isArray(sc.respond)) return json(route, sc.respond[0], sc.respond[1]);
     const withLetter = Boolean(field(post, 'letter'));
-    applied.add(String(sc.id));
+    // Откликнулись тем резюме, хеш которого в форме (в одиночных сценариях — единственным)
+    const used = resumesOf(sc).find((r) => r.hash === field(post, 'resume_hash')) ?? resumesOf(sc)[0];
+    usedBy.set(String(sc.id), new Set([...(usedBy.get(String(sc.id)) ?? []), used.id]));
     return json(route, 200, {
       success: 'true',
       topic_id: '1',
       chat_id: '555',
       response_label: `nonreq-letter-no-test-${withLetter ? 'with' : 'without'}-letter`,
       vacancy_id: String(sc.id),
-      responseStatus: { alreadyApplied: true, usedResumeIds: [1] },
+      responseStatus: { alreadyApplied: true, usedResumeIds: [used.id] },
     });
   }
   if (url.pathname === '/applicant/vacancy_response/edit_ajax') return json(route, ...(sc.edit ?? [403, { error: 'notEditable' }]));

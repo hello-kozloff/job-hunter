@@ -6,6 +6,10 @@
 //   node scripts/applier.mjs login                   открыть вход hh в окне робота и «Общий экран»; ждёт входа
 //   node scripts/applier.mjs recon <id> [<id>…]      разведка вакансий без кликов → fixtures/applier/recon-…
 //   node scripts/applier.mjs recon --inbox           разведка «Откликов» и чатов (чаты не открываются)
+//   node scripts/applier.mjs recon --chooser <id>    окно отклика и выбор резюме (этап 5): открывает окно, нажимает на
+//                                                    ячейку резюме и выбирает другое; «Откликнуться» не нажимает, ничего
+//                                                    не отправляется (только вакансия, где hh покажет окно, не «в один
+//                                                    клик») → fixtures/applier/chooser-…
 //   node scripts/applier.mjs recon --resume          разведка резюме: «Мои резюме», резюме, страницы правки по ссылкам —
 //                                                    без кликов, рвётся любой не-GET к hh (часть D, E0); бэкап резюме hh
 //   node scripts/applier.mjs cv [hash]               прочитать резюме hh (только GET): должность, навыки, «О себе», опыт
@@ -16,8 +20,9 @@
 //   node scripts/applier.mjs record start|stop       запись: вы откликаетесь сами в окне робота, он смотрит
 //   node scripts/applier.mjs paste                   во время записи: буфер обмена Mac (pbpaste) → туда, где курсор
 //                                                    в окне робота (VNC передаёт только латиницу, письмо — русское)
-//   node scripts/applier.mjs apply <id> --letter-file <файл>   сухой прогон отклика: до кнопки, без клика (всегда —
-//                                                    и при APPLY_LIVE=1: живой отклик только из W9, он ведёт таблицу)
+//   node scripts/applier.mjs apply <id> --letter-file <файл> [--resume <хеш>]   сухой прогон отклика: до кнопки, без
+//                                                    клика (всегда — и при APPLY_LIVE=1: живой отклик только из W9, он
+//                                                    ведёт таблицу); --resume — каким резюме hh откликнулся бы
 //   node scripts/applier.mjs resume                  перепроверить вход и капчу, снять блок
 //   node scripts/applier.mjs shot                    скриншот окна робота → fixtures/applier/
 //   node scripts/applier.mjs fake <исход> […]        фейковый режим (APPLIER_FAKE=1): следующие исходы /apply по порядку
@@ -118,15 +123,33 @@ const commands = {
   async recon(args) {
     const inbox = args.includes('--inbox');
     const resume = args.includes('--resume');
-    const ids = args.filter((a) => /^\d+$/.test(a));
-    if (!ids.length && !inbox && !resume) throw new Error('нужны id вакансий hh, --inbox или --resume');
-    await api('POST', '/recon', { vacancyIds: ids, inbox, resume });
+    const chooserAt = args.indexOf('--chooser');
+    const chooser = chooserAt >= 0 ? String(args[chooserAt + 1] ?? '').replace(/\D/g, '') : '';
+    if (chooserAt >= 0 && !chooser) throw new Error('после --chooser нужен id вакансии hh');
+    const ids = args.filter((a, i) => /^\d+$/.test(a) && i !== chooserAt + 1);
+    if (!ids.length && !inbox && !resume && !chooser) throw new Error('нужны id вакансий hh, --inbox, --resume или --chooser <id>');
+    await api('POST', '/recon', { vacancyIds: ids, inbox, resume, chooser });
     console.log(
-      `Разведка: ${[ids.length ? `${ids.length} вакансий (20–40 с между ними)` : '', inbox ? 'отклики и чаты' : '', resume ? 'резюме (4–9 с между страницами)' : ''].filter(Boolean).join(' + ')}…`,
+      `Разведка: ${[ids.length ? `${ids.length} вакансий (20–40 с между ними)` : '', inbox ? 'отклики и чаты' : '', resume ? 'резюме (4–9 с между страницами)' : '', chooser ? `окно отклика вакансии ${chooser}` : ''].filter(Boolean).join(' + ')}…`,
     );
     const job = await waitJob();
     if (job.state === 'error') throw new Error(`разведка упала: ${job.error}`);
-    const { vacancies, inbox: box, resume: cv } = job.result;
+    const { vacancies, inbox: box, resume: cv, chooser: choice } = job.result;
+    if (choice) {
+      console.log(`→ ${choice.dir}`);
+      if (choice.error || choice.skipped) console.log(`  ${choice.error ? `❌ ${choice.error}` : `⏭ ${choice.skipped}`}`);
+      if (choice.prediction) console.log(`  прогноз hh: ${choice.prediction.type}`);
+      if (choice.facts) console.log(`  резюме для отклика: свободных ${choice.facts.resumes.unused.length}, использованных ${choice.facts.resumes.used.length}, скрытых ${choice.facts.resumes.hidden.length}`);
+      if (choice.modalOpened !== undefined) console.log(`  окно отклика: ${choice.modalOpened ? 'открылось' : 'не открылось'}; ячейка резюме: ${choice.cell ? 'есть' : 'нет'}`);
+      for (const [tag, snap] of [['до', choice.before], ['после нажатия на резюме', choice.after]]) {
+        if (!snap) continue;
+        console.log(`  ${tag}: data-qa ${snap.dataQa.length}; окна: ${snap.dialogs.join(' | ') || '—'}`);
+      }
+      if (choice.pickedHash) {
+        console.log(`  выбрал другое резюме (${choice.pickedHash.slice(0, 8)}…, в списке «${choice.optionTitle}»): в окне теперь «${choice.titleAfterPick}»; предупреждение о скрытом: ${choice.hiddenWarning ? 'показано' : 'нет'}; список закрылся: ${choice.optionStillThere ? 'нет' : 'да'}`);
+      }
+      console.log(`  порвано не-GET к hh: ${choice.blocked?.length ?? 0}${choice.blocked?.length ? `\n    ${choice.blocked.join('\n    ')}` : ''}`);
+    }
     if (vacancies) {
       console.log(`→ ${vacancies.dir}`);
       for (const it of vacancies.items) {
@@ -227,12 +250,17 @@ const commands = {
     const id = args.find((a) => /^\d+$/.test(a));
     const i = args.indexOf('--letter-file');
     if (!id || i < 0 || !args[i + 1]) throw new Error('apply <id вакансии hh> --letter-file <файл с письмом>');
+    // --resume <хеш резюме hh>: каким резюме откликнулся бы (проверка до клика: есть ли, не скрыто, не использовано)
+    const j = args.indexOf('--resume');
+    const hash = j >= 0 ? String(args[j + 1] ?? '') : '';
+    if (j >= 0 && !/^[0-9a-f]{32,64}$/.test(hash)) throw new Error('после --resume нужен хеш резюме hh (его показывает node scripts/applier.mjs cv)');
     // CLI никогда не просит живой отклик (dry: true): иначе таблица n8n не узнала бы об отклике
     const r = await api('POST', '/apply', {
       vacancyId: id,
       letter: readFileSync(args[i + 1], 'utf8').trim(),
       requestId: `cli-${Date.now()}`,
       dry: true,
+      ...(hash && { resume: { hash } }),
     });
     console.log(`${r.outcome} (${r.group}) за ${Math.round(r.ms / 1000)} с${r.note ? ` — ${r.note}` : ''}${r.shot ? ` · скриншот ${r.shot}` : ''}`);
     for (const t of r.trace ?? []) console.log(`  ${t.ms} мс  ${t.s} ${JSON.stringify({ ...t, s: undefined, ms: undefined })}`);

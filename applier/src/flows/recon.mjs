@@ -5,14 +5,25 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { config } from '../config.mjs';
-import { browserContext, cookies, ensure, setGuard, shot, strictGuard } from '../browser.mjs';
+import { browserContext, cookies, ensure, guardReset, setGuard, shot, strictGuard } from '../browser.mjs';
 import { log } from '../log.mjs';
 import { store } from '../store.mjs';
-import { CHATIK, NEGOTIATIONS_URL, WATCH, vacancyUrl } from '../hh/selectors.mjs';
+import { CHATIK, NEGOTIATIONS_URL, SEL, WATCH, resumeOptionSel, vacancyUrl } from '../hh/selectors.mjs';
 import { RESUMES_URL, editLinks, limitsOf, resumeHashes, resumeUrl } from '../hh/resume.mjs';
 import { initialState, isCaptchaPage, isLoginUrl, negotiationsSummary, redactState, shape, vacancyFacts } from '../hh/state.mjs';
 import { pause, stamp, writeJsonAtomic } from '../util.mjs';
-import { captchaShown, formFields, pageHrefs, predictResponse, visibleDataQa, watchSelectors } from './dom.mjs';
+import {
+  captchaShown,
+  closeDialogs,
+  formFields,
+  humanRead,
+  pageHrefs,
+  predictResponse,
+  shownTall,
+  visibleDataQa,
+  visibleWithin,
+  watchSelectors,
+} from './dom.mjs';
 
 export const RECON_DIR = join(config.dataDir, 'recon');
 const MAX_VACANCIES = 10;
@@ -241,4 +252,114 @@ export async function reconResume(progress = () => {}) {
     writeJsonAtomic(join(root, 'summary.json'), out);
   }
   return out;
+}
+
+// ---------- Окно отклика и выбор резюме (этап 5, docs/resumes.md) ----------
+
+// Окна страницы (диалоги, списки, меню) без классов, стилей и картинок — только разметка и data-qa, для разбора
+const dialogsHtml = (page) =>
+  page.evaluate(() => {
+    const roots = [
+      ...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="listbox"], [role="menu"], [role="radiogroup"], [data-qa*="modal"], [data-qa*="popup"], [data-qa*="select"], [data-qa*="resume"]'),
+    ];
+    const strip = (el) => {
+      const copy = el.cloneNode(true);
+      copy.querySelectorAll('script, style, svg, img').forEach((n) => n.remove());
+      for (const n of [copy, ...copy.querySelectorAll('*')]) {
+        n.removeAttribute('class');
+        n.removeAttribute('style');
+      }
+      return copy.outerHTML.replace(/\s+/g, ' ');
+    };
+    return roots.slice(0, 20).map((r) => ({ role: r.getAttribute('role'), dataQa: r.getAttribute('data-qa'), html: strip(r).slice(0, 80000) }));
+  });
+
+async function snapDialog(page, dir, tag) {
+  const dataQa = await visibleDataQa(page).catch(() => []);
+  const dialogs = await dialogsHtml(page).catch(() => []);
+  writeJsonAtomic(join(dir, `${tag}-dialogs.json`), dialogs);
+  await shot(tag, dir).catch(() => {});
+  return { dataQa, dialogs: dialogs.map((d) => `${d.role ?? '-'} · ${d.dataQa ?? '-'} · ${d.html.length}`) };
+}
+
+// Что hh показывает в окне отклика, когда у человека несколько резюме: открываем окно, нажимаем на ячейку резюме,
+// выбираем другое резюме, снимаем разметку и скриншоты на каждом шаге, закрываем. Только для вакансии, где hh покажет окно (прогноз type = modal):
+// у «в один клик» клик по «Откликнуться» отправил бы отклик сразу. Строгий предохранитель: любой не-GET к hh рвётся.
+// «Откликнуться» не нажимается: ничего не отправляется
+export async function reconChooser(vacancyId, progress = () => {}) {
+  const id = String(vacancyId).replace(/\D/g, '');
+  const name = `chooser-${stamp()}`;
+  const dir = join(RECON_DIR, name);
+  mkdirSync(dir, { recursive: true });
+  const out = { id, dir: `fixtures/applier/${name}` };
+  const page = await ensure();
+  setGuard(true);
+  guardReset();
+  const blocked = [];
+  const relax = await strictGuard((b) => blocked.push(b));
+  try {
+    for (const p of page.context().pages()) if (p !== page) await p.close().catch(() => {});
+    progress({ done: 0, total: 1, current: id });
+    const res = await page.goto(vacancyUrl(id), { waitUntil: 'domcontentloaded', timeout: 45000 });
+    const html = (await res?.text().catch(() => '')) ?? '';
+    if (isCaptchaPage(page.url(), html) || (await captchaShown(page))) {
+      store.block('captcha', { shot: await shot(`captcha-${id}`) });
+      return { ...out, error: 'captcha' };
+    }
+    const state = initialState(html);
+    const facts = vacancyFacts(state, id);
+    out.facts = { loggedIn: facts.loggedIn, applied: facts.applied, archived: facts.archived || facts.closed, hasTests: facts.hasTests, resumes: facts.resumes };
+    if (!facts.found || !facts.loggedIn || facts.archived || facts.closed || facts.hasTests) return { ...out, skipped: 'вакансия не подходит для разведки окна (закрыта, тест или не вошли)' };
+    await page.locator(SEL.applyButton).first().waitFor({ timeout: 15000 }).catch(() => {});
+    await page.waitForLoadState('load', { timeout: 10000 }).catch(() => {});
+    await humanRead(page);
+    const predicted = await predictResponse(page, id);
+    out.prediction = predicted.prediction;
+    writeJsonAtomic(join(dir, 'popup.json'), predicted);
+    if (predicted.prediction?.type !== 'modal') {
+      return { ...out, skipped: `hh покажет «${predicted.prediction?.type ?? 'неизвестно'}», а не окно: кликать нельзя — отклик ушёл бы сразу` };
+    }
+    await pause(1000, 2500);
+    await page.locator(SEL.applyButton).first().click({ timeout: 10000 });
+    out.modalOpened = await visibleWithin(page.locator(SEL.modalSubmit), 12000);
+    if (!out.modalOpened) {
+      await shot('no-modal', dir).catch(() => {});
+      return { ...out, error: 'окно отклика не открылось' };
+    }
+    await pause(1200, 2200);
+    out.before = await snapDialog(page, dir, 'before');
+    // Ячейка резюме в окне — кнопка (role=button), внутри — название резюме
+    const cell = page.locator(SEL.resumeTitle).first().locator('xpath=ancestor::*[@role="button"][1]');
+    out.cell = (await cell.count().catch(() => 0)) > 0;
+    if (out.cell) {
+      await cell.click({ timeout: 5000 });
+      await pause(1500, 2500);
+      out.after = await snapDialog(page, dir, 'after');
+      // Выбрать другую опцию (как это сделает отклик) и посмотреть, что стало в окне: название и предупреждение о скрытом
+      // резюме. Выбор в окне ничего не отправляет — «Откликнуться» не нажимаем, предохранитель рвёт любую запись
+      const other = page.locator('[role="option"][aria-selected="false"][data-qa^="magritte-select-option-"]').first();
+      if (await visibleWithin(other, 3000)) {
+        out.pickedHash = String(await other.getAttribute('data-qa')).replace('magritte-select-option-', '');
+        out.optionTitle = (await other.locator(SEL.resumeTitle).first().innerText().catch(() => '')).trim();
+        await pause(800, 1600);
+        await other.click({ timeout: 5000 });
+        await pause(1200, 2200);
+        out.titleAfterPick = (await page.locator(SEL.resumeCurrent).first().innerText().catch(() => '')).trim();
+        out.hiddenWarning = await shownTall(page.locator(SEL.hiddenResume));
+        out.optionStillThere = await page.locator(resumeOptionSel(out.pickedHash)).first().isVisible().catch(() => false);
+        out.picked = await snapDialog(page, dir, 'picked');
+      }
+    }
+    return out;
+  } finally {
+    // Закрыть всё, что открыли; если окно осталось — уйти со страницы
+    await closeDialogs(page);
+    await pause(400, 900);
+    await closeDialogs(page);
+    if (await page.locator(SEL.modalSubmit).first().isVisible().catch(() => false)) await page.goto('https://hh.ru/applicant/resumes').catch(() => {});
+    await relax();
+    out.blocked = blocked.map((b) => `${b.method} ${b.host}${b.path}`).slice(0, 30);
+    writeJsonAtomic(join(dir, 'summary.json'), out);
+    progress({ done: 1, total: 1 });
+  }
 }
