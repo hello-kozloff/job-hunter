@@ -41,7 +41,7 @@ function vacancyState(id) {
             { _attributes: { id: r.id, hash: r.hash }, title: [{ string: r.title }], accessType: [{ string: r.access ?? 'clients' }] },
           ]),
         ),
-        test: { hasTests: false },
+        test: { hasTests: Boolean(current.hasTests) },
         letterMaxLength: 10000,
         shortVacancy: {},
       },

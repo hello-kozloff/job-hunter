@@ -97,7 +97,7 @@
 
 - `node --test scripts/test-shared.mjs` — данные: наложение настроек, проверка схемы, наследование фактов, `resumeFromDraft`.
 - `node --test scripts/test-w11.mjs` — сценарии W11 без n8n и Telegram: Code-ноды `Plan`, `PDF text`, `HH resume`, `Parse profile`, `Step` и W3 `Route` с общим static data (создание, копия, удаление, правка, очистка чата, импорт с hh: список, галочки, очередь, сбои, разбор кнопок).
-- `cd applier && npm test`, `applier/sim/run.sh resume` и `applier/sim/run.sh` — робот: поля для импорта (`roles`, `formats`, `salary`, `months`), чтение без не-GET, выбор резюме в окне отклика (25 сценариев).
+- `cd applier && npm test`, `applier/sim/run.sh resume` и `applier/sim/run.sh` — робот: поля для импорта (`roles`, `formats`, `salary`, `months`), чтение без не-GET, выбор резюме в окне отклика (26 сценариев).
 - `node --test scripts/test-w9.mjs` — W9 и W5: 🚀 и резюме в запросе роботу.
 - Живая проверка 16.10.2026 через вебхук W3 (поддельные обновления с секретом n8n, файлы — `fixtures/synthetic-resume/*.pdf`): создание из PDF, включить и выключить, название, «Дополнить», копия, удаление, правка нейросетью, новый текст, «Как новое резюме», отмена.
 

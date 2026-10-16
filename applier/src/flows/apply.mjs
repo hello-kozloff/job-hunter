@@ -162,11 +162,9 @@ export async function applyFlow({ vacancyId, letter = '', dry = false, resume = 
   // Несколько резюме: откликаемся резюме, которое бот привязал к вакансии. Решаем до клика
   const choice = resume ? resumeChoice(vacancyResumes(state, id), resume) : null;
   if (choice) step('resume', { ok: Boolean(choice.ok), outcome: choice.outcome, title: choice.title });
-  if (choice && !choice.ok) {
-    return done(choice.outcome, { note: choice.note, ...(choice.confirmed && { confirmed: true }), facts: brief(facts), resume });
-  }
   // hh — истина: отклик уже есть (вручную, через бота или повтор после обрыва связи). С выбранным резюме «уже» —
-  // только им (проверено выше): откликались другим — это не мешает
+  // только им: откликались другим — это не мешает
+  if (choice?.outcome === 'already') return done('already', { note: choice.note, confirmed: true, facts: brief(facts), resume });
   if (!choice && facts.applied) return done('already', { confirmed: true, facts: brief(facts) });
   if (facts.hasTests) return done('test', { note: 'у вакансии вопросы работодателя', facts: brief(facts) });
   // Не закрыта и отклика нет, а hh всё равно не даёт откликнуться (видимость резюме и т. п.) — человеку
@@ -176,6 +174,8 @@ export async function applyFlow({ vacancyId, letter = '', dry = false, resume = 
   if (letter.length > facts.letterMax) {
     return done('error', { note: `письмо длиннее ${facts.letterMax} знаков`, facts: brief(facts) });
   }
+  // Нужного резюме нет среди резюме для отклика или оно скрыто — вакансия сама в порядке, дело в резюме
+  if (choice && !choice.ok) return done(choice.outcome, { note: choice.note, facts: brief(facts), resume });
 
   const button = page.locator(SEL.applyButton).first();
   if (!(await visibleWithin(button, 15000))) {
@@ -419,7 +419,12 @@ async function readScreen(page, net, before) {
   if (await visible(page.locator(SEL.modalSubmit))) return { kind: 'modal' };
   if (await visible(page.locator(`${SEL.attachLetter}, ${SEL.viewTopic}, ${SEL.success}`))) return { kind: 'success' };
   const text = screenText(await bodyText(page), before);
-  if (text) return { kind: 'text', ...text };
+  if (text) {
+    // Окно отклика могло появиться между проверками выше и чтением текста: слова «поменяйте видимость резюме» и подобные
+    // есть в нём всегда (свёрнутые), и без перепроверки они дали бы ложное «скрыто»
+    if (await visible(page.locator(SEL.modalSubmit))) return { kind: 'modal' };
+    return { kind: 'text', ...text };
+  }
   return { kind: 'wait' };
 }
 

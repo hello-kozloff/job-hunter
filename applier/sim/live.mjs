@@ -192,6 +192,14 @@ const SCENARIOS = [
     expect: { outcome: 'error', posts: [], note: /в окне отклика нет выбора резюме/ },
   },
   {
+    name: 'resume-test-first: у вакансии тест — это важнее, чем нет ли нужного резюме',
+    type: 'modal',
+    hasTests: true,
+    resumes: [A, B],
+    wanted: { hash: 'd'.repeat(38), title: 'Бухгалтер' },
+    expect: { outcome: 'test', posts: [], noClick: true },
+  },
+  {
     name: 'resume-quick-other: отклик в один клик уйдёт другим резюме — клика нет',
     type: 'quickResponse',
     resumes: [A, B],
