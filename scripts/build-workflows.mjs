@@ -2943,7 +2943,8 @@ const workflows = {
         applierNode('W9', 'Apply', [2200, 100], {
           method: 'POST',
           path: '/apply',
-          body: `={{ JSON.stringify({ vacancyId: ${GATE}.next.external_id, letter: ${GATE}.next.letter, requestId: ${GATE}.next.id + '-' + Date.now() }) }}`,
+          // resume — каким резюме hh откликаться (резюме вакансии, связанное с hh; пусто — по умолчанию)
+          body: `={{ JSON.stringify({ vacancyId: ${GATE}.next.external_id, letter: ${GATE}.next.letter, requestId: ${GATE}.next.id + '-' + Date.now(), resume: ${GATE}.next.resume || undefined }) }}`,
           timeout: 240000,
           full: true,
         }),

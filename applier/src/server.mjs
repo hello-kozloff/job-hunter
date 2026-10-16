@@ -9,8 +9,10 @@
 //   POST /login                    открыть вход hh в окне робота («Общий экран» → vnc://localhost:5901)
 //   POST /resume                   перепроверить вход и капчу, снять блок
 //   POST /captcha {text}           ответ на капчу-картинку (фото в Telegram): ввести и отправить
-//   POST /apply {vacancyId, letter, requestId, dry}   отклик; APPLY_LIVE=0 или dry: true — сухой прогон до кнопки
-//   POST /recon {vacancyIds?, inbox?, resume?}   разведка без кликов — фоновое задание, 202 (resume — резюме, E0)
+//   POST /apply {vacancyId, letter, requestId, dry, resume?}   отклик; APPLY_LIVE=0 или dry: true — сухой прогон до кнопки;
+//                                                       resume { hash, title? } — каким резюме hh откликаться (этап 5)
+//   POST /recon {vacancyIds?, inbox?, resume?, chooser?}   разведка без кликов — фоновое задание, 202 (resume — резюме, E0;
+//                                                       chooser — id вакансии: окно отклика и выбор резюме, этап 5)
 //   POST /resume/read {hash?}      резюме hh: поля из страницы резюме, только GET (часть D, S2); бэкап — /data/resume
 //   POST /resume/write {hash, changes, dry}  записать разделы резюме формами hh; RESUME_LIVE=0 или dry — сухой прогон
 //   POST /record {on}              запись: пользователь откликается сам в окне робота
@@ -45,7 +47,7 @@ import {
 import { LOGIN_URL, SEL } from './hh/selectors.mjs';
 import { applyFlow } from './flows/apply.mjs';
 import { captchaKind, captchaShown, visible } from './flows/dom.mjs';
-import { reconInbox, reconResume, reconVacancies } from './flows/recon.mjs';
+import { reconChooser, reconInbox, reconResume, reconVacancies } from './flows/recon.mjs';
 import { readResume, writeResume } from './flows/resume.mjs';
 import { cleanChanges } from './hh/resume.mjs';
 import { recordStart, recordStop, recording } from './flows/record.mjs';
@@ -237,6 +239,13 @@ const routes = {
     const vacancyId = String(body.vacancyId ?? '').replace(/\D/g, '');
     if (!vacancyId) throw new HttpError(400, { error: 'нужен vacancyId' });
     const letter = String(body.letter ?? '');
+    // Резюме для отклика (несколько резюме, этап 5): { hash, title? } — хеш резюме на hh. Без него — как раньше
+    let resume = null;
+    if (body.resume) {
+      const hash = String(body.resume.hash ?? '');
+      if (!/^[0-9a-f]{32,64}$/.test(hash)) throw new HttpError(400, { error: 'resume.hash — хеш резюме hh (32–64 символа 0-9a-f)' });
+      resume = { hash, title: String(body.resume.title ?? '').slice(0, 200) };
+    }
     // CLI просит только сухой прогон — даже при APPLY_LIVE=1 (живой отклик — только из W9: он ведёт таблицу)
     const dry = body.dry === true;
     // Повтор после обрыва связи (деплой n8n, сон Mac): исход уже известен — не откликаемся второй раз
@@ -248,7 +257,7 @@ const routes = {
     if (config.live && !dry && today >= config.dailyCap) {
       throw new HttpError(429, { error: `потолок дня робота: ${today} из ${config.dailyCap}`, today, cap: config.dailyCap });
     }
-    const result = await lock.run('apply', () => applyFlow({ vacancyId, letter, dry }));
+    const result = await lock.run('apply', () => applyFlow({ vacancyId, letter, dry, resume }));
     rememberResult(vacancyId, result);
     return { ...result, requestId: body.requestId ?? null };
   },
@@ -256,11 +265,15 @@ const routes = {
   'POST /recon': async (body) => {
     assertNotBlocked();
     const ids = Array.isArray(body.vacancyIds) ? body.vacancyIds : [];
-    if (!ids.length && !body.inbox && !body.resume) throw new HttpError(400, { error: 'нужны vacancyIds, inbox: true или resume: true' });
+    const chooser = String(body.chooser ?? '').replace(/\D/g, '');
+    if (!ids.length && !body.inbox && !body.resume && !chooser) {
+      throw new HttpError(400, { error: 'нужны vacancyIds, inbox: true, resume: true или chooser — id вакансии' });
+    }
     const started = await startJob('recon', async (progress) => ({
       vacancies: ids.length ? await reconVacancies(ids, progress) : null,
       inbox: body.inbox ? await reconInbox(progress) : null,
       resume: body.resume ? await reconResume(progress) : null,
+      chooser: chooser ? await reconChooser(chooser, progress) : null,
     }));
     return { status: 202, body: { ok: true, job: { kind: started.kind, state: started.state } } };
   },
