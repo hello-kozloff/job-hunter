@@ -354,8 +354,9 @@ const PANEL_LAYOUTS = [
       // 15.10.2026): Upgrade, откат, резюме файлом
       [
         ['👤 Профиль', 'pf:view'],
-        ['💡 Рекомендации', 'rs:view'],
+        ['📄 Резюме', 'rm:list'],
       ],
+      [['💡 Рекомендации', 'rs:view']],
       [
         ['🕐 Сбор', panelButton('collect.cb')],
         ['🔎 Поиск', panelButton('search.cb')],
@@ -525,10 +526,14 @@ const PROFILE_LAYOUTS = [
         ['🔄 Всё заново', 'pf:new:all'],
         ['📄 Только текст', 'pf:new:text'],
       ],
+      [['➕ Как новое резюме', 'pf:new:add']],
       [['❌ Отмена', 'pf:new:no']],
     ],
   ],
-  ['pf replace text', [[['📄 Обновить текст резюме', 'pf:new:text']], [['❌ Отмена', 'pf:new:no']]]],
+  [
+    'pf replace text',
+    [[['📄 Обновить текст резюме', 'pf:new:text']], [['➕ Как новое резюме', 'pf:new:add']], [['❌ Отмена', 'pf:new:no']]],
+  ],
   [
     'pf profile',
     [
@@ -544,10 +549,97 @@ const PROFILE_LAYOUTS = [
         ['🕐 Пояс', 'pf:e:tz'],
         ['✉️ Образцы писем', 'pf:e:examples'],
       ],
-      [['⬅️ Настройки', 's:root']],
+      [
+        ['📄 Резюме', 'rm:list'],
+        ['⬅️ Настройки', 's:root'],
+      ],
     ],
   ],
   ['pf plain', null],
+  // Несколько резюме (docs/resumes.md): список (по числу резюме: у каждого — название и ⏸/▶️), карточка, удаление,
+  // ожидание файла. Подписи и callback_data считает «Step» ($json.b)
+  ...[1, 2, 3, 4, 5].map((n) => [
+    `rm list${n}`,
+    [
+      ...Array.from({ length: n }, (_, i) => [
+        [panelButton(`r${i}.text`), panelButton(`r${i}.cb`)],
+        [panelButton(`t${i}.text`), panelButton(`t${i}.cb`)],
+      ]),
+      [
+        ['➕ Новое резюме', 'rm:new'],
+        ['📥 Импорт с hh', 'rm:imp'],
+      ],
+      [
+        ['📋 Копия основного', 'rm:clone:r1'],
+        ['⬅️ Профиль', 'pf:view'],
+      ],
+    ],
+  ]),
+  [
+    'rm card',
+    [
+      [
+        [panelButton('toggle.text'), panelButton('toggle.cb')],
+        ['✏️ Название', panelButton('ren')],
+      ],
+      [
+        ['✏️ Поправить', 'pf:e:profile'],
+        ['➕ Дополнить', 'pf:e:extra'],
+      ],
+      [
+        ['📄 Новый текст', panelButton('txt')],
+        ['✉️ Образцы писем', 'pf:e:examples'],
+      ],
+      [
+        ['📋 Копия', panelButton('clone')],
+        ['🗑 Удалить', panelButton('del')],
+      ],
+      [['💡 Рекомендации по резюме', panelButton('rec')]],
+      [['⬅️ Резюме', 'rm:list']],
+    ],
+  ],
+  [
+    'rm delete',
+    [
+      [
+        ['🗑 Да, удалить', panelButton('yes')],
+        ['❌ Нет', panelButton('no')],
+      ],
+    ],
+  ],
+  ['rm wait', [[['❌ Отмена', 'rm:list']]]],
+  // Импорт с hh (docs/resumes.md): список резюме hh с галочками (по числу резюме, до 6), следующее из очереди, сбой
+  ...[1, 2, 3, 4, 5, 6].map((n) => [
+    `rm imp${n}`,
+    [
+      ...Array.from({ length: n }, (_, i) => [[panelButton(`i${i}.text`), panelButton(`i${i}.cb`)]]),
+      [[panelButton('go.text'), panelButton('go.cb')]],
+      [
+        ['🔗 Это основное', panelButton('bind')],
+        ['⬅️ Резюме', 'rm:list'],
+      ],
+    ],
+  ]),
+  ['rm imp next', [[[panelButton('next.text'), panelButton('next.cb')]], [['⏹ Хватит', panelButton('x')]]]],
+  [
+    'rm imp error',
+    [
+      [
+        ['🔄 Повторить', panelButton('retry')],
+        ['⏭ Пропустить', panelButton('skip')],
+      ],
+      [['⏹ Хватит', panelButton('x')]],
+    ],
+  ],
+  [
+    'rm hh error',
+    [
+      [
+        ['🔄 Повторить', 'rm:imp'],
+        ['⬅️ Резюме', 'rm:list'],
+      ],
+    ],
+  ],
 ];
 
 // W13: раскладки панели рекомендаций по резюме (15.10.2026, docs/recommendations.md). Порядок = LAYOUTS в
@@ -764,6 +856,52 @@ const RESUME_LAYOUTS = [
     ],
   ],
 ];
+// Несколько резюме (docs/resumes.md): та же панель с кнопкой «Другое резюме» (с hh-разделами — rootm, у резюме без связи
+// с hh — rootm0) и выбор резюме (по числу резюме, 2–5). Раскладки — в конце: порядок = LAYOUTS в render.js
+RESUME_LAYOUTS.push(
+  [
+    'rs rootm',
+    [
+      [
+        ['🔍 Анализ резюме', 'rs:an'],
+        ['⬆️ Upgrade резюме', 'rs:up'],
+      ],
+      [
+        ['💼 Опыт работы', 'rx:view'],
+        ['🧰 Навыки hh', 'rk:view'],
+      ],
+      [['📤 Обновить на hh', 're:go']],
+      [
+        ['📄 Резюме файлом', 'rs:file'],
+        ['↩️ Откатить', 'rs:undo'],
+      ],
+      [['📄 Другое резюме', 'rs:list']],
+      [['⬅️ Настройки', 's:root']],
+    ],
+  ],
+  [
+    'rs rootm0',
+    [
+      [
+        ['🔍 Анализ резюме', 'rs:an'],
+        ['⬆️ Upgrade резюме', 'rs:up'],
+      ],
+      [
+        ['📄 Резюме файлом', 'rs:file'],
+        ['↩️ Откатить', 'rs:undo'],
+      ],
+      [['📄 Другое резюме', 'rs:list']],
+      [['⬅️ Настройки', 's:root']],
+    ],
+  ],
+  ...[2, 3, 4, 5].map((n) => [
+    `rs pick${n}`,
+    [
+      ...Array.from({ length: n }, (_, i) => [[panelButton(`r${i}.text`), panelButton(`r${i}.cb`)]]),
+      [['⬅️ Рекомендации', 'rs:view']],
+    ],
+  ]),
+);
 
 // W3: состояние после нажатия кнопки, которое посчитали ноды «Apply choice», «Apply sent» и «Apply cancel»
 const CHOICE = "$('Apply choice').first().json";
@@ -2852,7 +2990,8 @@ const workflows = {
         applierNode('W9', 'Apply', [2200, 100], {
           method: 'POST',
           path: '/apply',
-          body: `={{ JSON.stringify({ vacancyId: ${GATE}.next.external_id, letter: ${GATE}.next.letter, requestId: ${GATE}.next.id + '-' + Date.now() }) }}`,
+          // resume — каким резюме hh откликаться (резюме вакансии, связанное с hh; пусто — по умолчанию)
+          body: `={{ JSON.stringify({ vacancyId: ${GATE}.next.external_id, letter: ${GATE}.next.letter, requestId: ${GATE}.next.id + '-' + Date.now(), resume: ${GATE}.next.resume || undefined }) }}`,
           timeout: 240000,
           full: true,
         }),
@@ -3101,10 +3240,32 @@ const workflows = {
       code('W11', 'Plan', 'n8n/w11-profile/plan.js', [660, 0]),
       node('W11', 'Route', 'switch', 3.4, [880, 0], {
         mode: 'expression',
-        numberOutputs: 3,
-        output: "={{ ({ pdf: 0, llm: 1, step: 2 })[$json.route] }}",
+        numberOutputs: 4,
+        output: "={{ ({ pdf: 0, llm: 1, step: 2, hh: 3 })[$json.route] }}",
         options: {},
       }),
+      // Импорт резюме с hh (docs/resumes.md): панель «Читаю…» → робот читает список или одно резюме (только GET) →
+      // одно резюме идёт к нейросети как новое (To LLM?), список и сбой — в «Step»
+      editMessage(
+        'Wait hh',
+        [1100, -650],
+        {
+          chatId: "={{ $('Job').first().json.chatId }}",
+          messageId: "={{ $('Plan').first().json.wait.messageId }}",
+          text: "={{ $('Plan').first().json.wait.text }}",
+          rows: null,
+        },
+        'W11',
+        { onError: 'continueRegularOutput' },
+      ),
+      applierNode('W11', 'Read hh', [1320, -650], {
+        method: 'POST',
+        path: '/resume/read',
+        body: "={{ JSON.stringify({ hash: $('Plan').first().json.hash || '' }) }}",
+        timeout: 120000,
+        full: true,
+      }),
+      code('W11', 'HH resume', 'n8n/w11-profile/hh-resume.js', [1540, -650]),
       // Резюме PDF: «Читаю…» (станет панелью) → файл из Telegram → текст
       telegram('W11', 'Reading', [1100, -400], { text: '📄 Читаю резюме…', fields: { disable_notification: true } }),
       node(
@@ -3257,6 +3418,7 @@ const workflows = {
         fields: { disable_notification: true },
         markup: { replyMarkup: 'forceReply', forceReply: { force_reply: true } },
       }),
+      code('W11', 'Remember prompt', 'n8n/w11-profile/remember-prompt.js', [5500, 300]),
       code('W11', 'Delete ids', 'n8n/w11-profile/delete-ids.js', [5060, 500]),
       node(
         'W11',
@@ -3279,6 +3441,10 @@ const workflows = {
       ['Route', 'Reading', 0],
       ['Route', 'Build extract', 1],
       ['Route', 'Step', 2],
+      ['Route', 'Wait hh', 3],
+      ['Wait hh', 'Read hh'],
+      ['Read hh', 'HH resume'],
+      ['HH resume', 'To LLM?'],
       ['Reading', 'Get file'],
       ['Get file', 'Extract PDF'],
       ['Extract PDF', 'PDF text'],
@@ -3318,6 +3484,7 @@ const workflows = {
       ]),
       ['Step', 'Prompt?'],
       ['Prompt?', 'Prompt', 0],
+      ['Prompt', 'Remember prompt'],
       ['Step', 'Delete ids'],
       ['Delete ids', 'Delete'],
     ],

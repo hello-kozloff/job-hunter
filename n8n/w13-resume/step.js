@@ -16,6 +16,8 @@
 
 // @include n8n/shared/settings.js
 
+// @include n8n/shared/resumes.js
+
 // @include n8n/shared/menu.js
 
 // @include n8n/shared/skills.js
@@ -26,8 +28,11 @@
 
 const job = $('Job').first().json;
 const plan = $('Plan').first().json;
-const s = loadSettings($('Settings').all());
+const all = loadSettings($('Settings').all());
 const state = $getWorkflowStaticData('global');
+// С каким резюме работаем (Plan уже вернул удалённое к основному); s — настройки этого резюме
+const scope = resumeScope(all, state.target);
+const s = scope.s;
 const ran = (name) => {
   try {
     return $(name).first().json;
@@ -35,12 +40,17 @@ const ran = (name) => {
     return null; // нода в этом запуске не выполнялась
   }
 };
+// Вакансии этого резюме (у одного резюме — все): по ним покрытие навыков
 const rows = (() => {
   try {
-    return $('Vacancies')
-      .all()
-      .map((i) => i.json)
-      .filter((r) => r?.id);
+    return resumeVacancies(
+      all,
+      $('Vacancies')
+        .all()
+        .map((i) => i.json)
+        .filter((r) => r?.id),
+      scope.id,
+    );
   } catch {
     return null;
   }
@@ -71,7 +81,7 @@ function sectionsLines() {
   const r = s.cv.resumes[0];
   const n = s.cv.places.length;
   return [
-    `📄 «${esc(oneLine(r.title || 'без должности', 80))}»${r.hh ? ' · связано с резюме на hh' : ''}`,
+    `📄 «${esc(oneLine(r.title || 'без должности', 80))}»${scope.link || r.hh ? ' · связано с резюме на hh' : ''}`,
     `💼 Опыт работы, общий для всех резюме: ${n} ${plural(n, 'место', 'места', 'мест')}`,
     `🧰 Ключевые навыки для hh: ${r.keySkills.length} из ${KEY_SKILLS_MAX}`,
   ];
@@ -124,7 +134,10 @@ function fieldView(messageId = panelId) {
   const f = sess.fields[sess.fi];
   const cb = (v) => `rc:${sess.sid}:${sess.fi}:${v}`;
   const head = `🧩 <b>Разделы резюме</b> · ${sess.fi + 1} из ${sess.fields.length}`;
-  const shared = !['title', 'about'].includes(f.kind) ? '⚠️ Опыт работы общий для всех резюме: и в боте, и на hh (во всех резюме, где отмечено это место).' : null;
+  const sharedText = scope.several
+    ? '⚠️ Опыт работы на hh общий для всех резюме. В боте это место поменяется только в этом резюме.'
+    : '⚠️ Опыт работы общий для всех резюме: и в боте, и на hh (во всех резюме, где отмечено это место).';
+  const shared = !['title', 'about'].includes(f.kind) ? sharedText : null;
   if (f.kind === 'place') {
     const lines = [
       head,
@@ -196,8 +209,10 @@ function skillsView(messageId = panelId) {
 function expView(note = '', messageId = panelId) {
   const places = s.cv.places;
   const lines = [
-    '💼 <b>Опыт работы</b> — общий для всех резюме',
-    '⚠️ Правка опыта меняет его во всех резюме: в боте сразу, на hh — при выгрузке (во всех резюме, где отмечено место).',
+    scope.several ? '💼 <b>Опыт работы</b> — на hh общий для всех резюме' : '💼 <b>Опыт работы</b> — общий для всех резюме',
+    scope.several
+      ? '⚠️ Правка опыта в боте меняет только это резюме, а на hh — при выгрузке, и там — во всех резюме, где отмечено место.'
+      : '⚠️ Правка опыта меняет его во всех резюме: в боте сразу, на hh — при выгрузке (во всех резюме, где отмечено место).',
     '',
     ...places.map(
       (p, i) =>
@@ -409,29 +424,59 @@ function coverageLine(st) {
   return `🎯 Навыки твоих вакансий в резюме: <b>${percent(st.coverage)}</b> — ${basis}`;
 }
 
+// Выбор резюме для рекомендаций (резюме больше одного): 👉 — с каким работаем сейчас
+function pickView() {
+  const list = resumeList(all).filter((r) => r.id === 'r1' || all[`resume.${r.id}`]);
+  if (list.length < 2) return rootView();
+  const b = {};
+  list.forEach((r, i) => {
+    b[`r${i}`] = { text: `${r.id === scope.id ? '👉 ' : ''}${oneLine(r.name, 28)}${r.hh ? ' 🔗' : ''}`, cb: `rs:r:${r.id}` };
+  });
+  const lines = [
+    '💡 <b>Рекомендации</b>: какое резюме правим?',
+    '',
+    ...list.map((r) => `${r.id === scope.id ? '👉' : '📄'} <b>${esc(r.name)}</b>${r.hh ? ' · 🔗 связано с hh' : ' · не связано с hh'}${r.active ? '' : ' · ⏸ поиск выключен'}`),
+    '',
+    'У каждого резюме свои правки, вакансии (для покрытия навыков) и откат. Разделы и выгрузка на hh — у резюме, связанных с hh.',
+  ];
+  show(`rs pick${list.length}`, lines.join('\n'), b);
+}
+
 function rootView(note = '') {
   const d = resumeDraft(s);
   if (!s['profile.ready'] || !d.resume) {
-    return show('rs back', '📄 Сначала пришли резюме PDF — без него рекомендовать нечего.', { back: { text: '⬅️ Настройки', cb: 's:root' } });
+    return show(
+      'rs back',
+      scope.id === 'r1'
+        ? '📄 Сначала пришли резюме PDF — без него рекомендовать нечего.'
+        : '📄 В этом резюме пока нет текста: ⚙️ → 📄 Резюме → открой его → «📄 Новый текст».',
+      { back: scope.id === 'r1' ? { text: '⬅️ Настройки', cb: 's:root' } : { text: '⬅️ Резюме', cb: 'rm:list' } },
+    );
   }
   const h = s['resume.history'][0];
   const st = rows ? skillStats(rows, resumeJoin(d)) : null;
+  // Разделы, ключевые навыки и выгрузка — только с резюме на hh: основное связывается само (💼), у r2–r5 связь — от импорта
+  const hhOk = scope.id === 'r1' || Boolean(scope.link);
   const lines = [
     '💡 <b>Рекомендации по резюме</b>',
+    scope.several ? `📚 Резюме: <b>${esc(scope.name)}</b>${scope.link ? ' · 🔗 связано с hh' : ' · не связано с hh'}` : null,
     '',
     `📄 Резюме: ${num(resumeJoin(d).length)} знаков${h ? ` · последняя правка ${when(h.at)} (${BY[h.by] ?? h.by})` : ''}`,
     coverageLine(st),
     st?.missing.length ? `    нет в резюме: ${esc(st.missing.slice(0, 5).map((x) => x.name).join(' · '))}` : null,
-    ...sectionsLines(),
+    ...(hhOk
+      ? sectionsLines()
+      : ['🔗 Не связано с hh: разделы, ключевые навыки и выгрузка на hh появятся после импорта (⚙️ → 📄 Резюме → 📥 Импорт с hh).']),
     '',
     '🔍 <b>Анализ</b> — посмотрю резюме глазами ATS и роботов hh, задам до 8 вопросов кнопками и предложу правки.',
     '⬆️ <b>Upgrade</b> — напиши, что добавить или поменять: покажу, куда впишу, и спрошу про каждую правку.',
-    '💼 <b>Опыт работы</b> — места работы, общие для всех резюме. 🧰 <b>Навыки hh</b> — выбрать 30 ключевых навыков.',
-    '📤 <b>Обновить на hh</b> — сравню резюме бота с hh, покажу разницу по разделам и выгружу роботом.',
+    hhOk ? '💼 <b>Опыт работы</b> — места работы, общие для всех резюме. 🧰 <b>Навыки hh</b> — выбрать 30 ключевых навыков.' : null,
+    hhOk ? '📤 <b>Обновить на hh</b> — сравню резюме бота с hh, покажу разницу по разделам и выгружу роботом.' : null,
     '📄 <b>Файлом</b> — резюме бота целиком. ↩️ <b>Откатить</b> — вернуть версию до последней правки.',
+    scope.several ? '📄 <b>Другое резюме</b> — переключиться на другое резюме.' : null,
     note ? `\n${note}` : null,
   ];
-  show('rs root', lines.filter((l) => l !== null).join('\n'));
+  show(!scope.several ? 'rs root' : hhOk ? 'rs rootm' : 'rs rootm0', lines.filter((l) => l !== null).join('\n'));
 }
 
 function planText(sess) {
@@ -505,7 +550,11 @@ function patchView(messageId = panelId, note = '') {
   const section = cvSectionName(sess.draft.cv, p.section);
   const lines = [
     `✏️ <b>Правка ${sess.pi + 1}/${sess.patches.length}</b> · ${esc(section || p.where)}`,
-    cvShared(p.section) ? '⚠️ Опыт работы — общий раздел: правка поменяет его во всех резюме (на hh — при выгрузке).' : null,
+    cvShared(p.section)
+      ? scope.several
+        ? '⚠️ Опыт работы на hh общий для всех резюме: в боте правка поменяет только это резюме, на hh — все резюме, где отмечено место (при выгрузке).'
+        : '⚠️ Опыт работы — общий раздел: правка поменяет его во всех резюме (на hh — при выгрузке).'
+      : null,
     wordDiff(p.old, p.new),
     p.why ? `<i>Почему:</i> ${esc(p.why)}` : null,
     p.kind === 'replace'
@@ -571,7 +620,7 @@ function finish() {
     `✅ <b>Резюме обновлено</b>: ${sess.applied} из ${n} ${plural(n, 'правки', 'правок', 'правок')}.`,
     before?.coverage != null ? `🎯 Навыки твоих вакансий в резюме: ${percent(before.coverage)} → <b>${percent(after.coverage)}</b>` : null,
     'Новое резюме уже работает в оценке вакансий и в письмах.',
-    s.cv?.resumes?.[0]?.hh ? '🌐 На hh резюме пока прежнее: 📤 <b>Обновить на hh</b> покажет разницу и выгрузит.' : null,
+    scope.link ? '🌐 На hh резюме пока прежнее: 📤 <b>Обновить на hh</b> покажет разницу и выгрузит.' : null,
     failNote,
     tips,
   ];
@@ -665,6 +714,8 @@ if (plan.stale) {
     sess.dropped = parsed.dropped;
     sess.pi = 0;
     if (!sess.patches.length) {
+      // moveOn() читает сессию — до того, как она закрыта (иначе TypeError и тревога вместо «🤷 …»)
+      const messageId = moveOn();
       state.session = null;
       const lost = parsed.dropped.length;
       show(
@@ -673,7 +724,7 @@ if (plan.stale) {
           ? `🤷 Нейросеть предложила ${lost} ${plural(lost, 'правку', 'правки', 'правок')}, но ни одну не смог привязать к тексту резюме. Попробуй сформулировать просьбу иначе.`
           : '🤷 Нейросеть не нашла, что поменять. Попробуй сформулировать просьбу иначе.',
         { back: BACK_RECS },
-        moveOn(),
+        messageId,
       );
     } else {
       const messageId = moveOn();
@@ -694,6 +745,11 @@ if (plan.stale) {
     sess.patches[sess.pi] = { ...p, state: 'pending', warn: plan.keep && p.kind === 'replace' };
     patchView(panelId, plan.keep && p.kind === 'add' ? '➕ Переписал: старый текст остаётся.' : '✏️ Переделал правку.');
   }
+} else if (job.op === 'targets') {
+  pickView();
+} else if (job.op === 'target') {
+  // Plan переключил резюме (или оно то же, или такого нет)
+  rootView(job.value === scope.id ? (scope.several ? `📚 Работаем с резюме «${esc(scope.name)}».` : '') : '⚠️ Такого резюме нет.');
 } else if (job.op === 'view' || job.op === 'analyze') {
   // analyze сюда — только без профиля: иначе Plan отправил к нейросети
   rootView();
@@ -722,7 +778,13 @@ if (plan.stale) {
   } else expView();
 } else if (job.op === 'export' && !state.session) {
   // 📤 без живой разметки, связанной с hh: сначала разложить резюме вместе с резюме hh
-  rootView(cvFresh(s) ? '🤖 Резюме бота не связано с резюме на hh: 💼 разложит его заново вместе с hh (нужен робот).' : '📝 Сначала разложи резюме по разделам: нажми 💼.');
+  rootView(
+    scope.id !== 'r1' && !scope.link
+      ? '🤖 Это резюме не связано с резюме на hh, выгружать некуда. Связать: ⚙️ → 📄 Резюме → 📥 Импорт с hh.'
+      : cvFresh(s)
+        ? '🤖 Резюме бота не связано с резюме на hh: 💼 разложит его заново вместе с hh (нужен робот).'
+        : '📝 Сначала разложи резюме по разделам: нажми 💼.',
+  );
 } else if (job.op === 'input' && job.field === 'exp') {
   // Сюда — только если сессию не начали: нет разметки или ответ пустой
   rootView(cvFresh(s) ? '' : '📝 Сначала разложи резюме по разделам: нажми 💼.');

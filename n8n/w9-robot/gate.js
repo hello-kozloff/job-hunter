@@ -6,8 +6,9 @@
 //   «лимит» — раз в «день» робота.
 // Выход: { heal[], next, wait, notice, resolved, views[] }
 //   heal — починка: applying дольше 6 мин (n8n или робот упали посреди отклика) → queued; в очереди, но решение
-//          сменили (не ✅) → снять. Повтор безопасен: робот перед кликом проверяет «уже откликались» на hh;
-//   next — кого отправлять (старейшая queued); null — нельзя: wait = disabled | paused | down | blocked | busy | limit;
+//          сменили (не ✅) или резюме вакансии больше не связано с hh → снять. Повтор безопасен: робот перед кликом
+//          проверяет «уже откликались» на hh;
+//   next — кого отправлять (старейшая queued, + resume { hash, title } — каким резюме hh откликаться); null — нельзя: wait = disabled | paused | down | blocked | busy | limit;
 //   notice — сообщение: { kind: captcha | alert | info, key, text, shot, silent, button }; key — для POST /notice
 //            робота: параллельные запуски W9 видят один блок, а отправит тревогу только первый;
 //   resolved — блок снят: { messageId, text, promptId } — поправить прошлую тревогу и удалить фото капчи;
@@ -17,6 +18,7 @@
 
 // @include n8n/shared/card.js
 // @include n8n/shared/settings.js
+// @include n8n/shared/resumes.js
 // @include n8n/shared/robot.js
 // @include n8n/shared/letter.js
 // @include n8n/shared/menu.js
@@ -44,7 +46,8 @@ const out = { heal: [], next: null, wait: '', notice: null, resolved: null, view
 
 // 1. Починка
 for (const r of queue) {
-  if (r.status !== 'approved') out.heal.push({ id: r.id, to: '' });
+  // Резюме вакансии расстались с hh уже после 🚀 (удалили, отвязали) — из очереди: откликнулись бы не тем
+  if (r.status !== 'approved' || !robotResume(s, r).ok) out.heal.push({ id: r.id, to: '' });
   else if (r.apply_state === 'applying' && now - Date.parse(r.updatedAt) > 6 * 60 * 1000) out.heal.push({ id: r.id, to: 'queued' });
 }
 const healed = new Map(out.heal.map((x) => [x.id, x.to]));
@@ -151,5 +154,5 @@ if (job.fromUser && job.op === 'enqueue' && WAIT[out.wait]) {
 }
 
 // 5. Кого отправлять
-if (!out.wait && queued.length) out.next = queued[0];
+if (!out.wait && queued.length) out.next = { ...queued[0], resume: robotResume(s, queued[0]).resume };
 return [{ json: out }];

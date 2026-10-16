@@ -15,6 +15,8 @@
 | Релиз | Живая проверка владельцем 15.10.2026: «всё работает», анализ сохранил правки в резюме | ✅ v2026.10.15.2 |
 | D | Экспорт на hh роботом: разведка и запись редактора hh, разделы резюме, чтение, сухие, живые | ✅ PR #83–#90, #92 |
 
+**Несколько резюме (16.10.2026, этап 6 из `docs/resumes.md`):** всё ниже работает с одним резюме за раз — выбранным кнопкой «📄 Другое резюме» или из карточки резюме. У каждого резюме свои правки, версии отката, разметка и покрытие навыков (по его вакансиям); hh-разделы и выгрузка — у резюме, связанных с hh. Устройство — `docs/resumes.md` → «Рекомендации и выгрузка на hh по резюме». Ниже, где сказано «основное резюме» и `profile.resume`, у остальных резюме — `resume.<id>`.
+
 ## Решения пользователя (15.10.2026)
 
 | Тема | Решение |
@@ -123,6 +125,7 @@ Step → Save? → Save rows → Save resume (upsert settings)
 | Данные | Что |
 |---|---|
 | `rs:view` · `rs:an` · `rs:up` · `rs:file` · `rs:undo` · `rs:undo:y` | панель, анализ, Upgrade, файл, откат (вопрос / да) |
+| `rs:list` · `rs:r:<r1…r5>` | выбор резюме (несколько резюме): список, работать с этим |
 | `ru:<sid>:<y\|e\|n>` | план Upgrade: верно, не так, отмена |
 | `rq:<sid>:<вопрос>:<0-7\|t\|k\|d>` · `rq:<sid>:x` · `rq:<sid>:go` | вариант или галочка, свой ответ, пропустить, готово (галочки); хватит; начать (анализ) |
 | `rp:<sid>:<правка>:<y\|r\|a\|e\|n>` | применить, заменить, дописать, иначе, не надо |
@@ -131,7 +134,7 @@ Step → Save? → Save rows → Save resume (upsert settings)
 **Вопросы ForceReply** (`RESUME_PROMPTS`, `n8n/shared/menu.js`): `upgrade`, `answer`, `plan`, `patch`. W3 узнаёт ответ по началу текста вопроса.
 
 **Раскладки** (`RESUME_LAYOUTS` в `scripts/build-workflows.mjs`, порядок = `n8n/w13-resume/render.js`):
-- `rs root`, `ru plan`;
+- `rs root`, `ru plan`; при нескольких резюме — `rs rootm` (с кнопкой «📄 Другое резюме»), `rs rootm0` (то же у резюме без связи с hh, без 💼 🧰 📤), `rs pick2`…`rs pick5` (выбор резюме; в конце списка раскладок);
 - `rq one2` / `rq one3` / `rq one4` — варианты по одному в ряд, подписи длинные;
 - `rq many8` — галочки по две в ряд, пустые места — «·» (`p:x`);
 - `rq text` — без вариантов;
@@ -230,7 +233,7 @@ Step → Save? → Save rows → Save resume (upsert settings)
 - `resume.history` хранит и разметку; откат возвращает её вместе с текстом. Версия без разметки разметку не трогает: та станет неживой и оживёт при откате обратно.
 
 **Чтение hh роботом** (S2, `applier/src/flows/resume.mjs`, `POST /resume/read {hash?}`, CLI `node scripts/applier.mjs cv`):
-- «Мои резюме» → страница резюме (по умолчанию — видимое работодателям, иначе первое) → `applicantResume` из InitialState → `{ resumes, resume: { hash, title, about, keySkills, places[{ hhId, company, position, description, start, end }], access, status, updated, limits } }` (`parseResume`, `applier/src/hh/resume.mjs`);
+- «Мои резюме» → страница резюме (по умолчанию — видимое работодателям, иначе первое) → `applicantResume` из InitialState → `{ resumes, resume: { hash, title, about, keySkills, places[{ hhId, company, position, description, start, end }], roles[{ id, text }], formats, salary, months, access, status, updated, limits } }` (`parseResume`, `applier/src/hh/resume.mjs`); `roles`, `formats`, `salary`, `months` (16.10.2026) — то, что человек выбрал на hh сам, для импорта в бота (`docs/resumes.md`); имя, пол и контакты не отдаются;
 - только GET, строгий предохранитель; замок `resume-read` (занят откликом — 409, блок — 423); капча — блок, как у отклика; не вошли — `{ ok: false, error: 'login' }`;
 - бэкап прочитанного резюме целиком — `/data/resume/<hash>-<время>.json`, 30 дней;
 - фейк (`APPLIER_FAKE=1`) отдаёт синтетическое резюме;

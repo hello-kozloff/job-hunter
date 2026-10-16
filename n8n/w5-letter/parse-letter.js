@@ -10,12 +10,17 @@
 
 // @include n8n/shared/settings.js
 
+// @include n8n/shared/resumes.js
+
 const prompts = $('Build letter').all().map((i) => i.json);
 const rows = new Map($('Vacancy').all().map((i) => [i.json.id, i.json]));
 const settings = loadSettings($('Settings').all());
 const CONTACT = settings['profile.contact'];
 const SIGNATURE = settings['profile.signature'];
-const COMPANIES = settings['profile.facts'].companies ?? [];
+// Компании всех резюме: «в компании X» → «в X» безвредно и для чужого резюме
+const COMPANIES = [
+  ...new Set(resumeList(settings).flatMap((r) => resumeSettings(settings, r.id)['profile.facts'].companies ?? [])),
+];
 const escapeRe = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // Контакт уже есть в письме, если там есть его «ключ»: @ник, e-mail или телефон из строки контакта
 const contactKey = (CONTACT.match(/[\w.+-]+@[\w-]+\.[\w.-]+|@\w+|\+?\d[\d\s()-]{6,}\d/) ?? [CONTACT])[0];

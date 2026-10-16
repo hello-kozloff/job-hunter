@@ -10,6 +10,9 @@ export const LOGIN_URL = `${HH}/account/login?backurl=%2Fapplicant%2Fresumes`;
 export const NEGOTIATIONS_URL = `${HH}/applicant/negotiations`;
 export const CHATIK = 'https://chatik.hh.ru';
 
+// Опция списка резюме в окне отклика — по хешу резюме
+export const resumeOptionSel = (hash) => `[data-qa="magritte-select-option-${hash}"]`;
+
 export const SEL = {
   // Страница вакансии
   applyButton: '[data-qa="vacancy-response-link-top"]',
@@ -19,6 +22,10 @@ export const SEL = {
   letterInput: '[data-qa="vacancy-response-popup-form-letter-input"]',
   letterToggle: '[data-qa="vacancy-response-letter-toggle"]',
   resumeTitle: '[data-qa="resume-title"]',
+  // Выбор резюме в окне (запись 16.10.2026, два резюме): ячейка с названием — кнопка (role=button), по нажатию — список
+  // опций magritte-select-option-<хеш резюме> (radio). Название в самом окне — resume-title вне списка (в списке свои)
+  resumeCurrent: 'xpath=(//*[@data-qa="resume-title"][not(ancestor::*[@role="listbox"])])[1]',
+  resumeCell: 'xpath=(//*[@data-qa="resume-title"][not(ancestor::*[@role="listbox"])])[1]/ancestor::*[@role="button"][1]',
   hiddenResume: '[data-qa="hidden-resume-warning"]',
   modalClose: '[data-qa="response-popup-close"]',
   // Отклик в один клик: уже ушёл, письмо прикладывается после

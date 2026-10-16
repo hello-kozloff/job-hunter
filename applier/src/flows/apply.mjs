@@ -10,14 +10,18 @@
 //   «другая страна», «может получить отказ», «разрешите работодателям из … видеть профиль» → подтвердить, текст —
 //   в warnings (решения пользователя 10–11.10.2026);
 //   вопросы работодателя, сайт работодателя, скрытое резюме → человеку; лимит hh, «нарушает правила» → блок.
+// Несколько резюме (этап 5, docs/resumes.md): бот передаёт resume { hash, title } — резюме, привязанное к вакансии.
+// До клика по странице вакансии ясно, есть ли оно среди резюме для отклика, не откликались ли им уже, не скрыто ли;
+// в окне отклика оно выбирается в списке по хешу и сверяется по названию, после отклика hh перепроверяется. Нужное
+// резюме выбрать не вышло — отклик не уходит (ошибка), чужим резюме не откликаемся никогда.
 // Необратимое — только в живом режиме и по одному действию предохранителя (browser.mjs → guardAllow).
 // Непонятный экран → error + скриншот, без повторных кликов; 3 живых сбоя подряд → блок errors.
 import { config } from '../config.mjs';
 import { ensure, guardAllow, guardReset, setGuard, shot, shotOf } from '../browser.mjs';
 import { log } from '../log.mjs';
 import { store } from '../store.mjs';
-import { CHAT_FRAME, HH_PAGE, SEL, TEXT, vacancyUrl } from '../hh/selectors.mjs';
-import { GROUP, initialState, isCaptchaPage, isLoginUrl, vacancyFacts } from '../hh/state.mjs';
+import { CHAT_FRAME, HH_PAGE, SEL, TEXT, resumeOptionSel, vacancyUrl } from '../hh/selectors.mjs';
+import { GROUP, initialState, isCaptchaPage, isLoginUrl, resumeChoice, vacancyFacts, vacancyResumes } from '../hh/state.mjs';
 import { chatResult, letterResult, respondResult, sameText, screenText } from '../hh/xhr.mjs';
 import { pause, sleep } from '../util.mjs';
 import {
@@ -86,13 +90,17 @@ async function closeExtraPages(page) {
 async function recheck(page, id) {
   try {
     const res = await page.goto(vacancyUrl(id), { waitUntil: 'domcontentloaded', timeout: 30000 });
-    return vacancyFacts(initialState((await res?.text().catch(() => '')) ?? ''), id);
+    const state = initialState((await res?.text().catch(() => '')) ?? '');
+    return { ...vacancyFacts(state, id), resumeList: vacancyResumes(state, id) };
   } catch {
-    return { applied: false };
+    return { applied: false, resumeList: [] };
   }
 }
 
-export async function applyFlow({ vacancyId, letter = '', dry = false }) {
+// Откликнулись ли выбранным резюме (hh — истина: usedResumeIds). Резюме не выбрано — любым
+const appliedBy = (after, choice) => (choice ? Boolean(after.resumeList?.find((r) => r.hash === choice.hash)?.used) : Boolean(after.applied));
+
+export async function applyFlow({ vacancyId, letter = '', dry = false, resume = null }) {
   const id = String(vacancyId).replace(/\D/g, '');
   const live = config.live && !dry;
   const t0 = Date.now();
@@ -108,6 +116,7 @@ export async function applyFlow({ vacancyId, letter = '', dry = false }) {
       via: fields.via,
       letter: fields.letter,
       note: fields.note,
+      resume: fields.resume ? { hash: fields.resume.hash?.slice(0, 8), title: fields.resume.title, used: fields.resume.used } : undefined,
       shot: fields.shot,
       ms: result.ms,
       trace,
@@ -150,8 +159,13 @@ export async function applyFlow({ vacancyId, letter = '', dry = false }) {
     return done('login', { note: 'робот не вошёл в hh', shot: await shot(`login-${id}`) });
   }
   if (facts.archived || facts.closed) return done('archived', { facts: brief(facts) });
-  // hh — истина: отклик уже есть (вручную, через бота или повтор после обрыва связи)
-  if (facts.applied) return done('already', { confirmed: true, facts: brief(facts) });
+  // Несколько резюме: откликаемся резюме, которое бот привязал к вакансии. Решаем до клика
+  const choice = resume ? resumeChoice(vacancyResumes(state, id), resume) : null;
+  if (choice) step('resume', { ok: Boolean(choice.ok), outcome: choice.outcome, title: choice.title });
+  // hh — истина: отклик уже есть (вручную, через бота или повтор после обрыва связи). С выбранным резюме «уже» —
+  // только им: откликались другим — это не мешает
+  if (choice?.outcome === 'already') return done('already', { note: choice.note, confirmed: true, facts: brief(facts), resume });
+  if (!choice && facts.applied) return done('already', { confirmed: true, facts: brief(facts) });
   if (facts.hasTests) return done('test', { note: 'у вакансии вопросы работодателя', facts: brief(facts) });
   // Не закрыта и отклика нет, а hh всё равно не даёт откликнуться (видимость резюме и т. п.) — человеку
   if (facts.responseImpossible) {
@@ -160,6 +174,8 @@ export async function applyFlow({ vacancyId, letter = '', dry = false }) {
   if (letter.length > facts.letterMax) {
     return done('error', { note: `письмо длиннее ${facts.letterMax} знаков`, facts: brief(facts) });
   }
+  // Нужного резюме нет среди резюме для отклика или оно скрыто — вакансия сама в порядке, дело в резюме
+  if (choice && !choice.ok) return done(choice.outcome, { note: choice.note, facts: brief(facts), resume });
 
   const button = page.locator(SEL.applyButton).first();
   if (!(await visibleWithin(button, 15000))) {
@@ -185,6 +201,14 @@ export async function applyFlow({ vacancyId, letter = '', dry = false }) {
   if (prediction?.responseAllowed === false) {
     return done('hidden', { note: 'hh просит открыть резюме этому работодателю', facts: brief(facts) });
   }
+  // Отклик в один клик уходит сразу и резюмом по умолчанию — выбрать другое негде
+  if (choice && prediction?.type === 'quickResponse' && prediction.defaultResume && prediction.defaultResume !== choice.hash) {
+    return done('error', {
+      note: `hh отправит отклик в один клик другим резюме, а нужно «${choice.title}»: откликнись вручную`,
+      facts: brief(facts),
+      resume: { hash: choice.hash, title: choice.title },
+    });
+  }
 
   if (!live) {
     // Точка сухого прогона: дальше — необратимый клик
@@ -192,17 +216,19 @@ export async function applyFlow({ vacancyId, letter = '', dry = false }) {
       el.style.outline = '4px solid #e53935';
       el.style.outlineOffset = '2px';
     });
+    const pick = choice && !(prediction?.defaultResume === choice.hash);
     return done('dry_run', {
       prediction,
       facts: brief(facts),
       shot: await shot(`dry-${id}`),
-      note: predictionText(prediction, facts),
+      note: `${predictionText(prediction, facts)}${choice ? `; резюме «${choice.title}»${pick ? ' (выберу в окне)' : ''}` : ''}`,
+      ...(choice && { resume: { hash: choice.hash, title: choice.title, select: pick } }),
     });
   }
 
   const net = watchActions(page.context());
   try {
-    return await liveApply({ page, id, letter, facts, prediction, net, step, done });
+    return await liveApply({ page, id, letter, facts, prediction, choice, net, step, done });
   } catch (e) {
     // Сбой посреди отклика: ничего не повторяем, снимок — человеку (повтор по 🚀 сначала проверит «уже откликались»)
     log('apply.crash', { vacancyId: id, error: e.message.split('\n')[0] });
@@ -218,7 +244,7 @@ export async function applyFlow({ vacancyId, letter = '', dry = false }) {
 }
 
 // Живой отклик после всех проверок: клик → ответ на экраны hh → отклик ушёл → письмо, если не ушло с ним
-async function liveApply({ page, id, letter, facts, prediction, net, step, done }) {
+async function liveApply({ page, id, letter, facts, prediction, choice, net, step, done }) {
   const warnings = new Set();
   const before = await bodyText(page);
   let submitted = false; // в окне отклика нажали «Откликнуться»
@@ -286,7 +312,7 @@ async function liveApply({ page, id, letter, facts, prediction, net, step, done 
       case 'modal':
         if (submitted) break;
         {
-          const m = await fillModal(page, letter, facts, warnings, step);
+          const m = await fillModal(page, letter, facts, warnings, step, choice);
           if (m.error) {
             const name = await shot(`modal-${id}`);
             await closeDialogs(page);
@@ -328,8 +354,8 @@ async function liveApply({ page, id, letter, facts, prediction, net, step, done 
     // Ответа нет или он непонятный — истина на странице вакансии
     const name = await shot(`unclear-${id}`);
     const after = await recheck(page, id);
-    step('recheck', { applied: Boolean(after.applied) });
-    if (!after.applied) {
+    step('recheck', { applied: appliedBy(after, choice) });
+    if (!appliedBy(after, choice)) {
       const why = respond
         ? `hh не принял отклик: ${respond.code || (ev.status ? `HTTP ${ev.status}` : 'нет ответа')}`
         : 'исход отклика не ясен';
@@ -346,13 +372,25 @@ async function liveApply({ page, id, letter, facts, prediction, net, step, done 
     how = added.how;
     if (how === 'none') warnings.add(`письмо не приложилось (${added.note}) — добавьте его в чате отклика на hh`);
   }
-  const confirmed = respond.confirmed || Boolean((await recheck(page, id)).applied);
+  // hh — истина: с выбранным резюме проверяем, что отклик ушёл именно им (usedResumeIds)
+  let confirmed = respond.confirmed;
+  let resumeUsed = null;
+  if (!confirmed || choice) {
+    const after = await recheck(page, id);
+    confirmed = confirmed || appliedBy(after, choice);
+    if (choice) {
+      resumeUsed = appliedBy(after, choice);
+      step('resume-used', { used: resumeUsed });
+      if (!resumeUsed) warnings.add(`hh не показывает резюме «${choice.title}» среди использованных для отклика — проверьте на hh`);
+    }
+  }
   return done('applied', {
     via: submitted ? 'modal' : 'quick',
     letter: how,
     confirmed,
     warnings: [...warnings],
     facts: brief(facts),
+    ...(choice && { resume: { hash: choice.hash, title: choice.title, used: resumeUsed } }),
   });
 }
 
@@ -381,7 +419,12 @@ async function readScreen(page, net, before) {
   if (await visible(page.locator(SEL.modalSubmit))) return { kind: 'modal' };
   if (await visible(page.locator(`${SEL.attachLetter}, ${SEL.viewTopic}, ${SEL.success}`))) return { kind: 'success' };
   const text = screenText(await bodyText(page), before);
-  if (text) return { kind: 'text', ...text };
+  if (text) {
+    // Окно отклика могло появиться между проверками выше и чтением текста: слова «поменяйте видимость резюме» и подобные
+    // есть в нём всегда (свёрнутые), и без перепроверки они дали бы ложное «скрыто»
+    if (await visible(page.locator(SEL.modalSubmit))) return { kind: 'modal' };
+    return { kind: 'text', ...text };
+  }
   return { kind: 'wait' };
 }
 
@@ -392,9 +435,13 @@ async function warningText(page, fallback) {
 }
 
 // Окно отклика: сверить резюме, вставить письмо и проверить, что вставилось целиком. → { withLetter } | { error }
-async function fillModal(page, letter, facts, warnings, step) {
+async function fillModal(page, letter, facts, warnings, step, choice) {
   const title = (await page.locator(SEL.resumeTitle).first().innerText({ timeout: 2000 }).catch(() => '')).trim();
-  if (config.resumeTitle && title && !title.includes(config.resumeTitle)) {
+  if (choice) {
+    // Резюме выбрано ботом: выбираем его в окне и сверяем (HH_RESUME_TITLE не нужен)
+    const picked = await pickResume(page, choice, step);
+    if (picked.error) return { error: picked.error };
+  } else if (config.resumeTitle && title && !title.includes(config.resumeTitle)) {
     return { error: `в окне отклика другое резюме: «${title.slice(0, 60)}»` };
   }
   const reject = (await bodyText(page)).match(TEXT.rejectWarning)?.[0];
@@ -419,6 +466,36 @@ async function fillModal(page, letter, facts, warnings, step) {
   }
   step('modal', { resume: Boolean(title), letter: withLetter });
   return { withLetter };
+}
+
+// Название для сравнения: пробелы и неразрывные пробелы, регистр
+const normTitle = (t) => String(t ?? '').replace(/[\s\u00a0\u202f]+/g, ' ').trim().toLowerCase();
+
+// Выбрать в окне отклика нужное резюме. Ячейка с названием — кнопка: по нажатию список опций, у каждой data-qa с
+// хешем резюме (запись 16.10.2026). Выбрали — сверяем название в окне с названием из hh: не то — отклик не уходит
+async function pickResume(page, choice, step) {
+  const shown = async () => normTitle(await page.locator(SEL.resumeCurrent).first().innerText({ timeout: 2000 }).catch(() => ''));
+  const want = normTitle(choice.title);
+  if (want && (await shown()) === want) {
+    step('resume', { pick: 'already' });
+    return {};
+  }
+  const cell = page.locator(SEL.resumeCell).first();
+  if (!(await visibleWithin(cell, 3000))) return { error: `в окне отклика нет выбора резюме, а нужно «${choice.title}»` };
+  await pause(600, 1400);
+  await cell.click({ timeout: 5000 });
+  const option = page.locator(resumeOptionSel(choice.hash)).first();
+  if (!(await visibleWithin(option, 6000))) {
+    await page.keyboard.press('Escape').catch(() => {});
+    return { error: `в списке резюме окна нет «${choice.title}»` };
+  }
+  await pause(500, 1200);
+  await option.click({ timeout: 5000 });
+  await pause(700, 1500);
+  const now = await shown();
+  step('resume', { pick: 'clicked', ok: now === want });
+  if (want && now !== want) return { error: `не удалось выбрать резюме «${choice.title}»: в окне «${now.slice(0, 60)}»` };
+  return {};
 }
 
 // Ответ hh с кодом ошибки (не «непонятно») → исход и блок

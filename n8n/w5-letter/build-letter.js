@@ -24,9 +24,14 @@
 
 // @include n8n/shared/skills.js
 
-const jobs = $('Jobs').all().map((i) => i.json);
+// @include n8n/shared/resumes.js
+
+const allJobs = $('Jobs').all().map((i) => i.json);
 const rows = new Map($('Vacancy').all().map((i) => [i.json.id, i.json]));
-const settings = loadSettings($('Settings').all());
+const allSettings = loadSettings($('Settings').all());
+
+// Тело функции — без отступа: многострочные шаблонные строки промпта нельзя сдвигать, иначе изменится текст промпта
+function buildFor(settings, jobs) {
 const profile = resumeText(settings);
 if (!profile) throw new Error('Пустой профиль: пришли PDF боту или импортируй профиль (docs/onboarding.md)');
 const frontend = settings['profile.preset'] === 'frontend';
@@ -327,3 +332,18 @@ return jobs
     const { text, said } = task(job, row);
     return { json: { id: job.id, mode: job.mode, provider, model, said, body: body(job, row, text) } };
   });
+}
+
+// Несколько резюме (16.10.2026, docs/resumes.md): письмо — по резюме вакансии (resume_id пусто — основное);
+// подпись и контакт общие. Задания группируются по резюме, порядок результатов — как у заданий
+const groups = new Map();
+for (const job of allJobs.filter((j) => rows.has(j.id))) {
+  const rid = rows.get(job.id).resume_id;
+  const id = rid && resumeById(allSettings, rid) ? rid : '';
+  groups.set(id, [...(groups.get(id) ?? []), job]);
+}
+const built = new Map();
+for (const [id, group] of groups) {
+  for (const item of buildFor(resumeSettings(allSettings, id || 'r1'), group)) built.set(item.json.id, item);
+}
+return allJobs.filter((job) => rows.has(job.id)).map((job) => built.get(job.id));

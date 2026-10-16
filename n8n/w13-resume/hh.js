@@ -20,6 +20,8 @@ else if (status === 409) error = 'busy';
 else if (status === 423) error = `blocked:${body?.blocked?.kind ?? ''}`;
 else if (status !== 200) error = `http:${status}`;
 else if (!body?.ok || !body.resume) error = String(body?.error ?? 'layout');
+// Прочитано не то резюме, что просили (sess.hhHash — хеш резюме, связанного с ботом): сверять с ним и писать в него нельзя
+else if (sess.hhHash && String(body.resume.hash) !== sess.hhHash) error = 'not_found';
 
 if (!error) {
   sess.hh = body.resume;

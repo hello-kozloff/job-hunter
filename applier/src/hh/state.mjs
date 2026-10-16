@@ -77,6 +77,38 @@ export function vacancyFacts(state, id) {
   };
 }
 
+// Резюме человека на странице вакансии (InitialState → applicantVacancyResponseStatuses[id].resumes) — из них hh собирает
+// список в окне отклика (запись 16.10.2026, два резюме). [{ id, hash, title, access, used }]: access — clients (видно
+// работодателям) или no_one (скрыто), used — этим резюме на вакансию уже откликались
+export function vacancyResumes(state, id) {
+  const resp = state?.applicantVacancyResponseStatuses?.[String(id)] ?? {};
+  const used = new Set((Array.isArray(resp.usedResumeIds) ? resp.usedResumeIds : []).map(String));
+  const first = (v) => String((Array.isArray(v) ? v[0]?.string : (v?.string ?? v)) ?? '').trim();
+  return Object.entries(resp.resumes ?? {})
+    .map(([rid, r]) => ({
+      id: String(r?._attributes?.id ?? rid),
+      hash: String(r?._attributes?.hash ?? ''),
+      title: first(r?.title),
+      access: first(r?.accessType),
+      used: used.has(String(rid)),
+    }))
+    .filter((r) => r.hash);
+}
+
+// Каким резюме откликаться — решение до клика. wanted — { hash, title? }: резюме, которое бот привязал к вакансии.
+// → { ok: true, id, hash, title } или { outcome: error | already | hidden, note }: откликаться не надо
+export function resumeChoice(resumes, wanted) {
+  const name = wanted.title ? `«${wanted.title}»` : 'выбранного в боте';
+  const found = resumes.find((r) => r.hash === wanted.hash);
+  if (!found) {
+    return { outcome: 'error', note: `резюме ${name} нет среди резюме на hh для этого отклика (удалено или перепривязано?): ⚙️ → 📄 Резюме → 📥 Импорт с hh` };
+  }
+  const title = found.title || wanted.title || '';
+  if (found.used) return { outcome: 'already', confirmed: true, note: `резюме «${title}» уже откликалось на эту вакансию` };
+  if (found.access === 'no_one') return { outcome: 'hidden', note: `резюме «${title}» скрыто от работодателей: открой его на hh и повтори` };
+  return { ok: true, id: found.id, hash: found.hash, title };
+}
+
 // Ответ GET /applicant/vacancy_response/popup — его зовёт сам интерфейс hh при нажатии «Откликнуться» и по type решает,
 // что показать (разведка 10.10.2026):
 //   modal          — окно с письмом до отправки (responsePopup, responseStatus, relocationWarning, lastResponseLetter);
@@ -95,6 +127,8 @@ export function popupPrediction(body) {
     hasTests: body.type === 'test-required' || Boolean(status.test?.hasTests),
     inconsistencies: Array.isArray(inc) ? inc.length : inc && typeof inc === 'object' ? Object.keys(inc).length : 0,
     responseAllowed: status.by_country_applicant_visibility?.responseAllowed ?? null,
+    // Резюме по умолчанию: выбрано в окне (прошлый отклик) или уйдёт с откликом в один клик
+    defaultResume: String(body.lastResponseResumeHash ?? body.body?.resume_hash ?? ''),
   };
 }
 

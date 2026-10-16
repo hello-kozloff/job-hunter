@@ -101,6 +101,9 @@ export function resumeList(state) {
 export const pickResume = (list, hash = '') =>
   hash ? list.find((r) => r.hash === hash) ?? null : list.find((r) => r.access && r.access !== 'no_one') ?? list[0] ?? null;
 
+// Значения поля hh [{ string }, …] → строки
+const strings = (v) => (Array.isArray(v) ? v : []).map((x) => String(x?.string ?? '').trim()).filter(Boolean);
+
 // applicantResume → поля для бота или null (не резюме). Места — в порядке hh (новые сверху)
 export function parseResume(r) {
   if (!r || typeof r !== 'object' || !r._attributes?.hash) return null;
@@ -123,6 +126,14 @@ export function parseResume(r) {
     access: one(r.accessType),
     status: String(r._attributes.status ?? ''),
     updated: isoOf(r._attributes.updated),
+    // Что человек выбрал на hh сам (импорт резюме в бота, docs/resumes.md): профессиональные роли (id как в поиске hh),
+    // формат работы, желаемая зарплата, общий стаж в месяцах. Имя, пол и контакты не отдаём: они уже в профиле бота
+    roles: (Array.isArray(r.professionalRole) ? r.professionalRole : [])
+      .map((x) => ({ id: String(x?.id ?? x?.string ?? ''), text: String(x?.text ?? '').trim() }))
+      .filter((x) => /^\d{1,4}$/.test(x.id)),
+    formats: strings(r.workFormats),
+    salary: Number(r.salary?.[0]?.amount) > 0 ? { amount: Math.round(Number(r.salary[0].amount)), currency: String(r.salary[0].currency ?? '') } : null,
+    months: Math.max(0, Math.round(Number(one(r.totalExperience)) || 0)),
     limits: {
       title: num(part('title', 'string').maxlength, RESUME_LIMITS.title),
       about: num(part('skills', 'string').maxlength, RESUME_LIMITS.about),

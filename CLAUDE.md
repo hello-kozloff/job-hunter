@@ -122,7 +122,10 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
                  те же строки не возьмёт) → резюме + промпт → Gemini | Claude → apply/maybe/skip + причина
                  → карточка в Telegram с кнопками ✅/🤔/❌ → status = waiting → сообщение о сборе + тревоги (429 и т. п.):
                  были карточки — «🔎 Сбор» сверху итога «📊 Оценено N»; нет — «🔎 Сбор» одним живым сообщением без звука
-                 (прошлое удаляется, static data W2 `liveId`; решение пользователя 07.10.2026); число карточек → runs
+                 (прошлое удаляется, static data W2 `liveId`; решение пользователя 07.10.2026); число карточек → runs.
+                 Временный сбой нейросети (503 «высокий спрос», таймаут, сеть; 16.10.2026 Gemini так делал несколько раз
+                 за день) — строка в тихом сообщении о сборе, строки вернутся в очередь; тревога со звуком — когда она не
+                 отвечает 3 запуска подряд (static data W2 `llmFails`), потом раз в 8; ключ, доступ и 429 — сразу
 [W3 Telegram]  Telegram Trigger (вебхук через ngrok) → кнопка: my_decision, status, перерисовать карточку,
                  при расхождении с нейросетью «Почему?» → ответ (reply) → my_reason; отсеянная фильтром — решение с панели
                  (/v<id>: страница с hh, если нет описания → новая карточка в ленте → «Почему?» → письмо; «🤖 На оценку» → W2);
@@ -151,12 +154,20 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
                  отклика в чате; сетевой фильтр открывает по одному действию; 6.0 — вход, разведка, запись; 6.1 — W9 Robot
                  (🚀), 6.2 — W10 Inbox
 [W9 Robot]     🚀 под письмом → W3 → W9: очередь в колонке apply_state ('' → queued → applying), лимит дня, отклик через
-                 applier (POST /apply), итог — правка письма и карточки; капча — фото в Telegram, ответ текстом; вход / сбои —
+                 applier (POST /apply; при нескольких резюме — resume { hash, title }: резюме вакансии, связанное с hh), итог — правка письма и карточки; капча — фото в Telegram, ответ текстом; вход / сбои —
                  тревога с [▶️]; Schedule раз в минуту + вызов себя после успеха (docs/stages/stage-6.md → 6.1a)
 [W11 Profile]  онбординг (13.10.2026, docs/onboarding.md): резюме PDF в чат → W3 → W11: Telegram File → Extract From PDF
                  → нейросеть (Gemini | Claude) → проверка → город (автоподсказка hh) → оценка объёма → «Вот что я понял»
                  → подпись, контакт, пояс → профиль в settings, profile.ready, сразу W1; потом ⚙️ → 👤 Профиль: правка
                  полей, новое резюме, правка нейросетью (предпросмотр); пока profile.ready = false — W8 не собирает
+[W11 + резюме] несколько резюме (16.10.2026, docs/resumes.md): ⚙️ → 📄 Резюме → W3 (rm:*) → W11: список, карточка, поиск вкл/выкл,
+                 название, копия, удаление, новое резюме (PDF или текст → нейросеть → «Новое резюме разобрано»), новый текст, импорт с hh
+                 (📥: робот читает список резюме hh → галочки → по одному: разбор нейросетью → ✅ → «Дальше»; роли, формат, зарплата, стаж — с hh).
+                 Основное резюме r1 — прежние глобальные ключи settings, r2–r5 — resume.<id> (resumes — список); W1 ищет по каждому
+                 включённому (до 3), вакансия несёт resume_id/resume_name, фильтры (пресет, стоп-слова), оценка W2 и письма W5 —
+                 по резюме вакансии (n8n/shared/resumes.js → resumeSettings); подпись, контакт, пояс, нейросеть, чёрный список общие.
+                 W13 (💡, 📤) работает с одним резюме за раз: «📄 Другое резюме» на панели или «💡» в карточке резюме (rs:list,
+                 rs:r:<id>, static data target); разметка и версии отката r2–r5 — resume.<id>.cv и resume.<id>.history
 [W13 Resume]   рекомендации по резюме (15.10.2026, docs/recommendations.md): ⚙️ → 💡 → W3 → W13: панель с покрытием навыков
                  вакансий; 🔍 анализ — отчёт глазами ATS и роботов hh (статистика навыков и названий из таблицы) → до 8
                  вопросов кнопками (недостающие навыки галочками, фильтры hh — только подсказка) → правки; ⬆️ Upgrade —
@@ -192,6 +203,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - таблица `blacklist`: `company, comment`;
 - таблица `runs` — журнал сборов W1: `started_at, finished_at, kind` (schedule | catchup | bot | manual), `status` (running | ok | error), `found, uniq, fresh, rejected, scoring, pages, cards, error`;
 - таблица `settings` — настройки из бота: `name, value_json` (только изменения; значения по умолчанию — в коде); с 13.10.2026 там же профиль человека: `profile.*` (резюме, факты, подпись, контакт, пресет), `llm.rules`, `letters.*` (`docs/onboarding.md`); с 15.10.2026 — `resume.history` (версии резюме для отката, W13) и `cv` (разделы резюме: разметка поверх `profile.resume`, W13);
+- 16.10.2026 (несколько резюме, `docs/resumes.md`): таблица `settings` — `resumes` (список резюме) и `resume.r2` … `resume.r5` (данные резюме: текст, факты, правила, поиск, фильтр, письма), `resume.r2.cv` … `resume.r5.cv` и `resume.r2.history` … `resume.r5.history` (разметка и версии отката W13); `vacancies` — `resume_id`, `resume_name` (пусто у основного резюме);
 - таблица `alerts` — тревоги W4: `alert_key, workflow, message, first_at, last_at, hits, is_open, tg_message_id`;
 - имена колонок обходят служебные слова SQL (key, value, trigger, count, unique, open);
 - `id, createdAt, updatedAt` — встроенные.
@@ -201,10 +213,11 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - chat_id — в `.env` как `TG_CHAT_ID`, в нодах `{{ $env.TG_CHAT_ID }}` (Variables в Community edition нет);
 - кнопки ловит W3 через Telegram Trigger (v1.5: проверяет секретный заголовок, Restrict to Chat IDs = TG_CHAT_ID). Публичный HTTPS → контейнер ngrok (`COMPOSE_PROFILES=tunnel`, `ngrok/policy.yml`), `WEBHOOK_URL=https://<NGROK_DOMAIN>/` (→ `N8N_WEBHOOK_URL`);
 - робот-отклик (этап 6): `l:<id>:robot` — 🚀, `l:<id>:stop` — ⛔, `rb:go` и `/go` — ▶️ после блока, ответ на фото капчи → W9; ⚙️ → 🚀 Робот (`s:apply`);
+- несколько резюме (W11, 16.10.2026): `rm:list`, `rm:o:<id>`, `rm:on|off:<id>[:l]`, `rm:new`, `rm:ren:<id>`, `rm:clone:<id>`, `rm:del:<id>[:y]`, `rm:txt:<id>`, `rm:imp`, `rm:i:<сессия>:<действие>`, `pf:new:add` (`docs/resumes.md`);
 - профиль (W11, 13.10.2026): `pf:view` (⚙️ → 👤), `pf:ok:<шаг>`, `pf:e:<поле>` (вопрос ForceReply), `pf:g:<m|f>`, `pf:tz:<IANA>`, `pf:new:<all|text|no>`, `pf:yes|no`; документ PDF в чате → W11; ответы на `PROFILE_PROMPTS` → W11;
 - callback_data кнопок: `v:<id строки>:<apply|maybe|skip|earlier|ban|edit>` — карточка (`ban` — «🚫 В ЧС»: компания в `blacklist`, вакансия — ❌ с причиной «чёрный список») (`earlier` — «📨 Уже откликался», 07.10.2026: status = applied без письма и `applied_at`, без «Почему?», вне теневого режима); `l:<id>:<redo|sent|unsent|cancel>` — письмо (`cancel` — «↩️ Отменить отклик», 14.10.2026); панель меню (W7): `p:l:<tab>:<page>`, `p:s`, `p:x`, `p:n` («📋 К вакансиям» под отправленным письмом), `pv:<id>:<choice>:<tab>:<page>` (`score` — «🤖 На оценку» у отсеянной фильтром, 08.10.2026);
 - меню бота (07.10.2026, `docs/bot-menu.md`): кнопки под полем ввода `[📋 Вакансии] [📊 Статистика]` (ставит `/start`), одна живая панель — нажатие пользователя и прошлая панель удаляются, листание правит панель на месте;
-- тихие часы: 23:00–09:00 по местному (пояс человека `profile.tz`, у владельца — Таиланд; `n8n/shared/time.js`) — карточки и сводка без звука (`disable_notification`), тревоги со звуком;
+- тихие часы: 23:00–09:00 по местному (пояс человека `profile.tz`, у владельца — Таиланд; `n8n/shared/time.js`) — карточки, итог оценки «📊 Оценено» и сводка без звука (`disable_notification`), тревоги со звуком (16.10.2026: итог оценки ночью приходил со звуком — счётчик в `summary.js` затенял тихие часы);
 - не использовать «Send and wait» на каждую вакансию.
 
 **Окружение n8n** (`docker-compose.yml`):
@@ -343,7 +356,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - В живом n8n: `node scripts/n8n-api.mjs run jobHunterW1Colle` (сводка по нодам), `node scripts/n8n-api.mjs rows vacancies 5`.
 - Проверка ветки поломки: временно импортировать W1 с битым URL под тем же id → run → вернуть `scripts/deploy.sh`.
 - Pin data: 10–15 реальных вакансий разных типов, включая «ловушки» (Angular под видом Frontend, React Native, .NET + React, «только из РФ»).
-- Робот-отклик: `cd applier && npm test` (чистые функции на фикстурах и записи откликов), `node scripts/applier.mjs status | recon | record | apply <id> --letter-file f` (всегда сухой прогон, `dry: true`), `recon --resume` — разведка резюме на hh (часть D), `cv` — чтение резюме hh (только GET), `cv-dry <файл.json>` — сухой прогон записи резюме (формы hh, снимки, без сохранения); `applier/sim/run.sh` — живой сценарий на поддельном hh в контейнере без сети (13 сценариев, перед каждым изменением `apply.mjs`), `applier/sim/run.sh resume` — разведка, чтение и запись резюме (8 сценариев); предохранитель резюме `RESUME_LIVE` (0 — только сухой прогон) — в `.env`, через `scripts/deploy.sh --applier`; предохранитель `APPLY_LIVE` — в `.env`, меняется через `scripts/deploy.sh --applier`; шаги живого отклика — `docker compose logs -f applier`.
+- Робот-отклик: `cd applier && npm test` (чистые функции на фикстурах и записи откликов), `node scripts/applier.mjs status | recon | record | apply <id> --letter-file f` (всегда сухой прогон, `dry: true`), `recon --resume` — разведка резюме на hh (часть D), `cv` — чтение резюме hh (только GET), `cv-dry <файл.json>` — сухой прогон записи резюме (формы hh, снимки, без сохранения); `applier/sim/run.sh` — живой сценарий на поддельном hh в контейнере без сети (26 сценариев, перед каждым изменением `apply.mjs`), `recon --chooser <id>` — окно отклика и выбор резюме (без отправки), `apply <id> --letter-file f --resume <хеш>` — сухой прогон с выбором резюме, `applier/sim/run.sh resume` — разведка, чтение и запись резюме (8 сценариев); предохранитель резюме `RESUME_LIVE` (0 — только сухой прогон) — в `.env`, через `scripts/deploy.sh --applier`; предохранитель `APPLY_LIVE` — в `.env`, меняется через `scripts/deploy.sh --applier`; шаги живого отклика — `docker compose logs -f applier`.
 - Тест веб-форм — на своих тестовых формах, не на работодателях.
 - Запуск: 3–5 откликов в день с подтверждением, потом больше.
 
@@ -377,6 +390,7 @@ docs/letter-example.md              образцы писем (не в git; в n
 docs/profile.json                   профиль для profile-import / profile-export (не в git)
 docs/onboarding.md                  установка для всех: профиль в settings, пресеты, онбординг, мастер
 docs/recommendations.md             рекомендации по резюме: Upgrade, анализ, экспорт на hh (W13)
+docs/resumes.md                     несколько резюме: данные, общее и своё, бот, этапы
 docs/stages/stage-N.md              устройство этапов и ручная сборка
 docs/git-flow.md                    ветки, PR, релизы, правила коммитов
 docs/bot-menu.md                    меню бота: кнопки, панель, вкладки, callback_data, ограничения
@@ -392,6 +406,7 @@ n8n/w8-clock/*.js                   код Code-нод W8 («часы» сбор
 n8n/w9-robot/*.js                   код Code-нод W9 (робот-отклик: план 🚀/⛔, ворота очереди, исход, капча, блоки)
 n8n/w11-profile/*.js                код Code-нод W11 (онбординг: PDF → нейросеть → профиль; ⚙️ → 👤)
 n8n/w13-resume/*.js                 код Code-нод W13 (рекомендации по резюме: план, вопросы, правки, откат, файл)
+scripts/test-shared.mjs, test-w11.mjs, test-w13.mjs, test-w2.mjs, test-w9.mjs  тесты общего кода и сценариев W2, W9, W11, W13 без n8n: node --test scripts/test-*.mjs
 n8n/shared/*.js                     общий код Code-нод (карточка, письмо, разбор страницы hh, меню, расписание W1, робот-отклик,
                                     поисковый запрос hh, признак AI-вакансии, время человека time.js, профиль profile.js,
                                     справочник ролей hh hh-roles.js, запрос к нейросети и разбор ответа llm.js,

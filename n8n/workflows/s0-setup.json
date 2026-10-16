@@ -239,6 +239,14 @@
             {
               "name": "hh_chat_id",
               "type": "string"
+            },
+            {
+              "name": "resume_id",
+              "type": "string"
+            },
+            {
+              "name": "resume_name",
+              "type": "string"
             }
           ]
         },

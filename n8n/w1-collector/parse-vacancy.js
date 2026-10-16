@@ -14,11 +14,23 @@ const responses = $input.all().map((i) => i.json);
 
 // @include n8n/shared/settings.js
 
+// @include n8n/shared/resumes.js
+
 // Правила, выключенные в настройках бота (⚙️ → 🧹 Фильтр → Правила): only_rf, no_stack. «Нет React и Vue» и
-// «AI не на JS/TS» — только у пресета frontend (13.10.2026)
+// «AI не на JS/TS» — только у пресета frontend (13.10.2026). Несколько резюме: пресет и выключенные правила — свои
+// у каждого резюме (вакансия несёт resume_id; пусто — основное)
 const settings = loadSettings($('Settings').all());
-const off = new Set(settings['filter.rules_off']);
-if (!('no_stack' in filterRulesFor(settings['profile.preset']))) off.add('no_stack');
+const offByResume = new Map();
+function offFor(resumeId) {
+  const id = resumeId && resumeById(settings, resumeId) ? resumeId : 'r1';
+  if (!offByResume.has(id)) {
+    const rs = resumeSettings(settings, id);
+    const off = new Set(rs['filter.rules_off']);
+    if (!('no_stack' in filterRulesFor(rs['profile.preset']))) off.add('no_stack');
+    offByResume.set(id, off);
+  }
+  return offByResume.get(id);
+}
 
 // «Работа только из РФ». Совпавший кусок пишем в reasons, чтобы ложные срабатывания было видно
 const RF_ONLY = [
@@ -38,6 +50,7 @@ return rows.map((row, i) => {
     return { json: { ...row, status: 'detailed', error: `страница: пришла вакансия ${v.vacancyId}` } };
   }
 
+  const off = offFor(row.resume_id);
   const description = htmlToText(v.description);
   const skills = (v.keySkills ?? []).join(', ');
   const contract = contractOf(v);

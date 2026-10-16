@@ -16,8 +16,13 @@
 
 // @include n8n/shared/settings.js
 
-const rows = $('Claim').all().map((i) => i.json);
-const settings = loadSettings($('Settings').all());
+// @include n8n/shared/resumes.js
+
+const claimed = $('Claim').all().map((i) => i.json);
+const allSettings = loadSettings($('Settings').all());
+// Тело функции — без отступа: многострочные шаблонные строки промпта нельзя сдвигать, иначе изменится текст
+// промпта и prompt_v
+function buildFor(settings, rows) {
 const resume = resumeText(settings);
 if (!resume) throw new Error('Пустое резюме: пришли PDF боту или импортируй профиль (docs/onboarding.md)');
 
@@ -225,3 +230,18 @@ for (const c of SYSTEM.slice(0, SYSTEM.indexOf('Резюме кандидата:
 const promptV = hash.toString(36);
 
 return rows.map((r) => ({ json: { id: r.id, provider, model, prompt_v: promptV, body: body(r) } }));
+}
+
+// Несколько резюме (16.10.2026, docs/resumes.md): у каждого резюме свой текст, факты и правила — системный промпт
+// строится на группу вакансий одного резюме (resume_id пусто — основное). Резюме вне хеша prompt_v: у одного
+// резюме всё как прежде
+const groups = new Map();
+for (const r of claimed) {
+  const id = r.resume_id && resumeById(allSettings, r.resume_id) ? r.resume_id : '';
+  groups.set(id, [...(groups.get(id) ?? []), r]);
+}
+const built = new Map();
+for (const [id, group] of groups) {
+  for (const item of buildFor(resumeSettings(allSettings, id || 'r1'), group)) built.set(item.json.id, item);
+}
+return claimed.map((r) => built.get(r.id));

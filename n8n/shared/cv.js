@@ -135,7 +135,7 @@ function cvSpan(text, from, to, lo = 0, hi = text.length) {
 // Описание места — от from до to; компания, даты и должность ищутся в заголовке места: между концом прошлого места и
 // началом описания (должность может встретиться и в «О себе»). Не нашлось — раздел остаётся текстом, причина — в
 // problems. → { cv, problems } или { error: mark | lossy }
-function cvFromAnchors(text, a) {
+function cvFromAnchors(text, a, id = 'r1') {
   if (CV_BAD.test(text)) return { error: 'mark' };
   const problems = [];
   const ranges = [];
@@ -207,7 +207,7 @@ function cvFromAnchors(text, a) {
   const cv = {
     v: 1,
     places,
-    resumes: [{ id: 'r1', hh: null, template, title: field('title'), about: field('about'), keySkills: [] }],
+    resumes: [{ id, hh: null, template, title: field('title'), about: field('about'), keySkills: [] }],
   };
   return cvRender(cv) === text ? { cv, problems } : { error: 'lossy' };
 }

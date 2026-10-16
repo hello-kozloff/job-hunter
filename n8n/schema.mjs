@@ -63,6 +63,9 @@ export const TABLES = {
     ['hh_state', 'string'], // 6.2, W10: sent | viewed | invited | rejected
     ['hh_state_at', 'string'],
     ['hh_chat_id', 'string'],
+    // несколько резюме (16.10.2026, docs/resumes.md): чьим поиском найдена вакансия; '' — основное (r1)
+    ['resume_id', 'string'],
+    ['resume_name', 'string'], // название резюме на момент сбора — для строки «📄» в карточке
   ],
   // Чёрный список компаний — заполняет пользователь в UI n8n.
   // company: кусок названия компании или её id на hh (только цифры)

@@ -10,6 +10,7 @@
 
 // @include n8n/shared/card.js
 // @include n8n/shared/settings.js
+// @include n8n/shared/resumes.js
 // @include n8n/shared/robot.js
 // @include n8n/shared/letter.js
 
@@ -48,6 +49,11 @@ if (!row.id) {
   } else if (!robotEligible(row)) {
     out.toast = row.has_test ? '🧩 У вакансии тест — откликнитесь сами' : 'Робот не может откликнуться на эту вакансию';
     out.layout = 'manual';
+  } else if (!robotResume(s, row).ok) {
+    // Несколько резюме: резюме вакансии не связано с резюме на hh — робот откликнулся бы не тем
+    out.toast = '📄 Резюме не связано с hh — откликнитесь сами';
+    out.layout = 'manual';
+    view = { ...row, apply_result: 'no_resume', apply_note: robotResume(s, row).reason };
   } else {
     out.ok = true;
     out.save = 'enqueue';

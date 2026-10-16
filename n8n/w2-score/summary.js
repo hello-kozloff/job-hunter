@@ -8,6 +8,10 @@
 //   были оценки — «🔎 Сбор» сверху итога «📊 Оценено N» (live = false — остаётся в чате);
 //   оценок нет  — «🔎 Сбор» одним живым сообщением без звука (live = true — следующее сообщение о сборе его заменит);
 //   тревоги     — отдельным сообщением.
+// Нейросеть не ответила (503 «высокий спрос», таймаут, сеть — 16.10.2026 Gemini делал так несколько раз за день): сбой
+// временный, «Release» вернёт строки в очередь, и следующий запуск их оценит. Тревога со звуком — только если она не
+// отвечает LLM_ALERT_AFTER запусков подряд; раньше — строка в тихом сообщении о сборе. Ошибка ключа или доступа,
+// лимит 429 — по-прежнему сразу тревогой.
 
 // @include n8n/shared/time.js
 
@@ -38,6 +42,24 @@ const claimed = all('Claim').length;
 // Итог оценки; что отсеял фильтр W1 — в блоке «🔎 Сбор»
 const scored = results.filter((r) => r.outcome === 'scored');
 const state = $getWorkflowStaticData('global');
+
+// Временные сбои нейросети и сколько запусков подряд она не отвечает (ни одной оценки): static data llmFails
+const TRANSIENT = /^сеть:|^сервер нейросети: HTTP 5\d\d/;
+const LLM_ALERT_AFTER = 3;
+const retries = results.filter((r) => r.outcome === 'retry');
+const transient = retries.filter((r) => TRANSIENT.test(r.problem));
+if (scored.length) state.llmFails = 0;
+else if (transient.length) state.llmFails = (state.llmFails ?? 0) + 1;
+const llmFails = state.llmFails ?? 0;
+const byProblem = (list) => {
+  const groups = {};
+  for (const r of list) groups[r.problem] = (groups[r.problem] ?? 0) + 1;
+  return Object.entries(groups);
+};
+// Строка в тихом сообщении: сбой замечен, повторю сам
+const llmNote = byProblem(transient)
+  .map(([problem, n]) => `⚠️ Нейросеть: ${esc(problem)}. Не оценено ${n} — повторю в следующий запуск.`)
+  .join('\n');
 if (firstQuiet) {
   const f = (state.first ??= { apply: 0, maybe: 0, skip: 0, n: 0 });
   for (const r of scored) {
@@ -70,16 +92,18 @@ if (firstQuiet) {
   const parts = [`🟢 ${count('apply')}`, `🟡 ${count('maybe')}`, `🔴 ${count('skip')}`];
   if (count('error')) parts.push(`⚠️ ${count('error')}`);
   // Теневой режим выключен — skip без карточек (W2 «Quiet skips»)
-  let quiet = 0;
+  let quietSkips = 0;
   try {
-    quiet = $('Quiet skips').all().length;
+    quietSkips = $('Quiet skips').all().length;
   } catch {
     // теневой режим включён — ветка не выполнялась
   }
-  const text = `📊 Оценено ${scored.length}: ${parts.join(' · ')}${quiet ? `\n🔴 ${quiet} без карточек — теневой режим выключен, они в меню на вкладке ❌` : ''}`;
-  messages.push({ text: report ? `${report}\n\n${text}` : text, silent: quiet, report: Boolean(report), live: false });
+  const text = `📊 Оценено ${scored.length}: ${parts.join(' · ')}${quietSkips ? `\n🔴 ${quietSkips} без карточек — теневой режим выключен, они в меню на вкладке ❌` : ''}${llmNote ? `\n${llmNote}` : ''}`;
+  // Без звука: тихие часы (23:00–09:00 по местному) и итог с вакансиями без карточек. До 16.10.2026 тихие часы здесь
+  // не работали: счётчик skip без карточек назывался quiet, как и тихие часы, и затенял их
+  messages.push({ text: report ? `${report}\n\n${text}` : text, silent: quiet || quietSkips > 0, report: Boolean(report), live: false });
 } else if (report) {
-  messages.push({ text: report, silent: true, report: true, live: true });
+  messages.push({ text: llmNote ? `${report}\n\n${llmNote}` : report, silent: true, report: true, live: true });
 }
 
 // Тревоги
@@ -94,10 +118,17 @@ if (quota.length) {
       (perDay && provider === 'Gemini' ? '\nЕсли повторяется каждый день — переключить на Claude: ⚙️ Настройки → 🤖 Нейросеть (нужен ANTHROPIC_API_KEY в .env).' : ''),
   );
 }
-const problems = {};
-for (const r of results.filter((x) => x.outcome === 'retry')) problems[r.problem] = (problems[r.problem] ?? 0) + 1;
-for (const [problem, n] of Object.entries(problems)) {
+// Нужно действие (ключ, доступ, неожиданный ответ) — сразу
+for (const [problem, n] of byProblem(retries.filter((r) => !TRANSIENT.test(r.problem)))) {
   alerts.push(`⚠️ Нейросеть: ${esc(problem)}. Не оценено ${n} — повторю в следующий запуск.`);
+}
+// Временный сбой не проходит: громко на LLM_ALERT_AFTER-м запуске подряд и потом раз в 8 запусков
+if (transient.length && llmFails >= LLM_ALERT_AFTER && (llmFails - LLM_ALERT_AFTER) % 8 === 0) {
+  const [[problem]] = byProblem(transient);
+  alerts.push(
+    `⚠️ Нейросеть не отвечает уже ${llmFails} запусков подряд: ${esc(problem)}. Не оценено ${transient.length} — оценю, когда ответит.\n` +
+      'Если не проходит часами — ⚙️ Настройки → 🤖 Нейросеть.',
+  );
 }
 const failed = sent.filter((s) => !s.result?.message_id);
 if (failed.length) {

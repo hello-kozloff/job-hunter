@@ -182,6 +182,26 @@ function profileRows(draft, { resume, signature, contact, tz }) {
   };
 }
 
+// Несколько резюме (docs/resumes.md): факты о самом человеке не зависят от резюме. Новое резюме про другую профессию
+// может их не называть (пол, город, имя) — берём у основного, чтобы письма и правила не потеряли пол и город
+const PERSON_FACTS = ['name', 'first_name', 'name_gen', 'gender', 'city', 'country', 'country_gen', 'citizenship', 'english', 'education'];
+function inheritPerson(facts, main = {}) {
+  const out = { ...facts, contacts: { ...(facts.contacts ?? {}) } };
+  for (const key of PERSON_FACTS) if (!out[key] && main[key]) out[key] = main[key];
+  for (const key of ['telegram', 'email']) if (!out.contacts[key] && main.contacts?.[key]) out.contacts[key] = main.contacts[key];
+  return out;
+}
+
+// Черновик → данные одного резюме (resume.<id>): то же, что profileRows пишет в глобальные ключи, но только поля
+// самого резюме (n8n/shared/settings.js → RESUME_FIELDS). Подпись, контакт и пояс — общие, в резюме не пишутся;
+// keep — поля, которые правка черновика не трогает (дополнительно, образцы писем, свои спорные случаи)
+function resumeFromDraft(draft, { resume, tz, keep = {} }) {
+  const rows = profileRows(draft, { resume, signature: '', contact: '', tz });
+  const data = {};
+  for (const [field, key] of Object.entries(RESUME_FIELDS)) if (key in rows) data[field] = rows[key];
+  return { ...data, ...keep };
+}
+
 // «Вот что я понял» — сводка черновика для панели онбординга. estimate — { label: число вакансий за период }
 function profileSummary(draft, estimate = []) {
   const f = draft.facts;

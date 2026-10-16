@@ -11,13 +11,25 @@
 // сохраняется целиком, profile.ready = true, первый сбор.
 // Готовый профиль: ⚙️ → 👤 (view), правка одного поля сразу в settings, новое резюме (replace), правка нейросетью
 // и «Всё заново» — через предпросмотр (review: ✅ Сохранить / ❌ Отмена).
-// Static data (global): draft, estimate, text, pending { text, fileName }, step, mode, signature, contact, tz, panelId.
+// Несколько резюме (docs/resumes.md): ⚙️ → 📄 Резюме — список, карточка резюме (rm:o:<id>), включить и выключить поиск,
+// название, копия, удаление, новое резюме (PDF или текст) и новый текст. Правка, дополнение и образцы писем в карточке
+// пишут в resume.<id> (n8n/shared/resumes.js → resumeRows), у основного резюме (r1) — прежние глобальные ключи.
+// Импорт резюме с hh (docs/resumes.md): «📥 Импорт с hh» → список резюме hh с галочками → по одному: робот читает
+// резюме, нейросеть разбирает, человек смотрит «Новое резюме разобрано» и жмёт ✅ / ❌ → «Дальше». Очередь идёт по
+// нажатиям человека (static data imp), а не цепочкой запусков.
+// Static data (global): draft, estimate, text, pending { text, fileName, target }, step, mode (onboarding | replace | revise
+// | create), signature, contact, tz, panelId; target — резюме, чью карточку открыли ('' — основное);
+// await { kind: create | replace, id, at } — ждём PDF («➕ Новое резюме», «📄 Заменить текст»);
+// imp { sid, list, selected, queue, current, saved, skipped } — импорт с hh; draftHh { hash, title } — резюме hh,
+// из которого получен черновик.
 
 // @include n8n/shared/time.js
 
 // @include n8n/shared/card.js
 
 // @include n8n/shared/settings.js
+
+// @include n8n/shared/resumes.js
 
 // @include n8n/shared/hh-roles.js
 
@@ -27,10 +39,17 @@
 
 // @include n8n/shared/profile.js
 
+// @include n8n/shared/hh-resume.js
+
 const job = $('Job').first().json;
 const plan = $('Plan').first().json;
 const s = loadSettings($('Settings').all());
 const state = $getWorkflowStaticData('global');
+// ⚙️ → 👤 открывает основное резюме: цель правок сбрасывается
+if (job.op === 'view') {
+  delete state.target;
+  delete state.await;
+}
 const ready = s['profile.ready'];
 const frontend = s['profile.preset'] === 'frontend';
 const now = Date.now();
@@ -42,16 +61,29 @@ const ran = (name) => {
   }
 };
 
-const out = { save: null, collect: false, view: null, prompt: null, deleteIds: [], toast: '', freeze: null };
+const out = { save: null, collect: false, view: null, prompt: null, awaitPrompt: false, deleteIds: [], toast: '', freeze: null };
 // Панель — сообщение с нажатой кнопкой; новый PDF — «📄 Читаю резюме…»; ответ на вопрос — панель из static data
 const panelId = job.messageId || ran('Reading')?.result?.message_id || state.panelId || 0;
 const show = (layout, text, b = {}) => {
   out.view = { layout, text, b, messageId: panelId };
 };
 const clear = () => {
-  for (const key of ['draft', 'estimate', 'text', 'pending', 'step', 'mode', 'signature', 'contact', 'tz']) delete state[key];
+  for (const key of ['draft', 'estimate', 'text', 'pending', 'step', 'mode', 'signature', 'contact', 'tz', 'draftHh']) delete state[key];
 };
-if (job.op === 'input') out.deleteIds = [job.userMessageId, job.promptId].filter(Boolean);
+// Вопрос и ответ человека убираем из чата, кроме текста нового резюме с ошибкой: его не жалко вставить заново, но
+// и не нужно стирать, пока не ясно, дошёл ли он до нейросети (проблему Plan показывает до этого шага)
+if (job.op === 'input' && !(job.field === 'newresume' && plan.problem)) {
+  out.deleteIds = [job.userMessageId, job.promptId].filter(Boolean);
+}
+
+// Резюме, чью карточку открыли: '' — основное. Настройки резюме (с подменой полей) — resumeSettings
+const targetNow = () => (state.target && state.target !== 'r1' && resumeById(s, state.target) ? state.target : '');
+const rsOf = (id) => resumeSettings(s, id || 'r1');
+// Записать и сразу учесть в s: следующий экран покажет новые значения
+const apply = (save) => {
+  out.save = { ...(out.save ?? {}), ...save };
+  Object.assign(s, save);
+};
 
 // ---------- Виды ----------
 
@@ -104,12 +136,150 @@ function profileView(note = '') {
     `✍️ Подпись: ${esc(s['profile.signature'] || '—')} · 📇 ${esc(s['profile.contact'] || 'контакта нет')}`,
     `🕐 ${esc(TZ)} (${tzLabel(TZ)}), сейчас ${localHM(now)}`,
     `📄 Резюме: ${s['profile.resume'].length} знаков · ➕ дополнительно: ${extra ? `${extra.length} знаков` : 'нет'} · ✉️ образцы писем: ${s['letters.examples'] ? 'есть' : 'нет'}`,
+    resumeList(s).length > 1 ? `📚 Всего резюме: ${resumeList(s).length}, ищут ${activeResumes(s).length} — кнопка «📄 Резюме»` : null,
     '',
     'Новое резюме — просто пришли PDF в чат. «✏️ Поправить» — напиши словами, что изменить.',
     note ? `\n${note}` : null,
   ];
   show('pf profile', lines.filter((l) => l !== null).join('\n'));
 }
+// Несколько резюме: список, карточка, удаление, ожидание файла (раскладки rm … в scripts/build-workflows.mjs)
+const wordsOf = (rs) => [...rs['search.in_name'], ...rs['search.anywhere']].slice(0, 5).join(' · ') || '—';
+function listView(note = '') {
+  const list = resumeList(s);
+  const lines = [
+    `📄 <b>Резюме</b> (${list.length} из ${MAX_RESUMES})`,
+    '',
+    ...list.map((r) => `${r.active ? '🟢' : '⏸'} <b>${esc(r.name)}</b>${r.id === 'r1' ? ' · основное' : ''}${r.hh ? ' · 🔗 hh' : ''}\n    ${esc(wordsOf(rsOf(r.id)))}`),
+    '',
+    `Поиск идёт по каждому включённому резюме (до ${MAX_SEARCH_RESUMES} за сбор). Если вакансию нашли два резюме, она достаётся первому в списке. Оценка нейросетью и письмо — по резюме вакансии. Подпись, контакт, часовой пояс и чёрный список — общие: ⚙️ → 👤 Профиль.`,
+    note ? `\n${note}` : null,
+  ];
+  const b = {};
+  list.forEach((r, i) => {
+    b[`r${i}`] = { text: `${r.active ? '🟢' : '⏸'} ${r.name}`, cb: `rm:o:${r.id}` };
+    // Включить и выключить поиск прямо из списка (l — вернуться к списку)
+    b[`t${i}`] = { text: r.active ? '⏸' : '▶️', cb: `rm:${r.active ? 'off' : 'on'}:${r.id}:l` };
+  });
+  show(`rm list${list.length}`, lines.filter((l) => l !== null).join('\n'), b);
+}
+function cardView(id, note = '') {
+  const r = resumeById(s, id);
+  if (!r) return listView('⚠️ Такого резюме нет');
+  const rs = rsOf(id);
+  const f = rs['profile.facts'];
+  const rules = rs['llm.rules'];
+  const lines = [
+    `📄 <b>${esc(r.name)}</b> · ${r.active ? '🟢 поиск включён' : '⏸ поиск выключен'}`,
+    '',
+    f.position ? `${esc(f.position)}${f.years ? ` · ${f.years} г.` : ''}` : null,
+    `🔎 ${esc(describeSearch(rs).filters)}`,
+    `• в названии: ${esc(rs['search.in_name'].join(' · ') || '—')}${rs['search.anywhere'].length ? ` · везде: ${esc(rs['search.anywhere'].join(' · '))}` : ''}`,
+    rs['filter.stop_words'].length ? `• мимо, если в названии: ${esc(rs['filter.stop_words'].join(' · '))}` : null,
+    `📜 Правила: 🟢 ${rules.apply?.length ?? 0} · 🟡 ${rules.maybe?.length ?? 0} · 🔴 ${rules.skip?.length ?? 0}`,
+    `📄 Текст: ${rs['profile.resume'].length} знаков · ➕ дополнительно: ${rs['profile.extra'] ? `${rs['profile.extra'].length} знаков` : 'нет'} · ✉️ образцы писем: ${rs['letters.examples'] ? 'есть' : 'нет'}`,
+    r.hh ? `🔗 hh: «${esc(r.hh.title)}»` : '🔗 hh: не привязано',
+    '',
+    'Подпись, контакт и пояс — общие, в ⚙️ → 👤 Профиль. «✏️ Поправить» — напиши словами, что изменить в поиске и правилах этого резюме.',
+    note ? `\n${note}` : null,
+  ];
+  show('rm card', lines.filter((l) => l !== null).join('\n'), {
+    toggle: { text: r.active ? '⏸ Выключить поиск' : '▶️ Включить поиск', cb: `rm:${r.active ? 'off' : 'on'}:${id}` },
+    ren: `rm:ren:${id}`,
+    txt: `rm:txt:${id}`,
+    clone: `rm:clone:${id}`,
+    del: `rm:del:${id}`,
+    rec: `rs:r:${id}`,
+  });
+}
+function deleteView(id) {
+  const r = resumeById(s, id);
+  show('rm delete', `🗑 <b>Удалить резюме «${esc(r?.name ?? id)}»?</b>\nВакансии, которые оно нашло, останутся в списке; оценка и письма по ним пойдут по основному резюме.`, {
+    yes: `rm:del:${id}:y`,
+    no: `rm:o:${id}`,
+  });
+}
+// ---------- Импорт резюме с hh ----------
+const IMP_ROWS = 6;
+const ddmm = (iso) => (/^\d{4}-\d{2}-\d{2}/.test(String(iso ?? '')) ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}` : '');
+const impMark = (r) => (r.linked ? '✅' : state.imp.selected.includes(r.hash) ? '☑️' : '⬜');
+const impFree = () => MAX_RESUMES - resumeList(s).length;
+function impSelectView(note = '') {
+  const st = state.imp;
+  const rows = st.list.slice(0, IMP_ROWS);
+  const count = st.selected.filter((hash) => st.list.some((r) => r.hash === hash && !r.linked)).length;
+  const lines = [
+    `📥 <b>Импорт с hh</b> — резюме на hh: ${st.list.length}`,
+    '',
+    ...rows.map(
+      (r) =>
+        `${impMark(r)} <b>${esc(r.title || 'без названия')}</b>${r.access === 'no_one' ? ' · 🙈 скрыто от работодателей' : ''}${ddmm(r.updated) ? ` · обновлено ${ddmm(r.updated)}` : ''}${r.linked ? `\n    уже в боте: «${esc(resumeById(s, r.linked)?.name ?? r.linked)}»` : ''}`,
+    ),
+    st.list.length > IMP_ROWS ? `…и ещё ${st.list.length - IMP_ROWS} — показаны первые ${IMP_ROWS}` : null,
+    '',
+    `Отметь, какие забрать (свободно мест: ${impFree()} из ${MAX_RESUMES}). Каждое резюме я разберу нейросетью и покажу, что понял: в бота оно попадёт только после твоего «✅». «🔗 Это основное» — связать единственное отмеченное резюме с основным (роботу это нужно, чтобы откликаться нужным резюме).`,
+    note ? `\n${note}` : null,
+  ];
+  const b = {
+    go: { text: count ? `📥 Импортировать (${count})` : '📥 Импортировать', cb: `rm:i:${st.sid}:go` },
+    bind: `rm:i:${st.sid}:b`,
+  };
+  rows.forEach((r, i) => {
+    b[`i${i}`] = { text: `${impMark(r)} ${clip(r.title || 'без названия', 36)}`, cb: `rm:i:${st.sid}:${i}` };
+  });
+  show(`rm imp${rows.length}`, lines.filter((l) => l !== null).join('\n'), b);
+}
+// Названия на hh меняют (в том числе 📤 из бота): у связанных резюме сохраняем текущее — по нему робот найдёт резюме
+// в окне отклика
+function impRefreshTitles() {
+  const st = state.imp;
+  let changed = false;
+  const next = resumeList(s).map((r) => {
+    const onHh = r.hh && st.list.find((x) => x.hash === r.hh.hash);
+    if (!onHh?.title || onHh.title === r.hh.title) return r;
+    changed = true;
+    return { ...r, hh: { hash: r.hh.hash, title: clip(onHh.title, 200) } };
+  });
+  if (changed) apply({ resumes: next });
+}
+// Следующее резюме из очереди: человек решает, когда идти дальше
+function impNextView(note) {
+  const st = state.imp;
+  const next = st.list.find((r) => r.hash === st.queue[0]);
+  show('rm imp next', [note, '', `Дальше: «${esc(next?.title ?? '')}» (осталось ${st.queue.length})`].filter((l) => l !== null).join('\n'), {
+    next: { text: `▶️ Дальше: ${clip(next?.title ?? '', 30)}`, cb: `rm:i:${st.sid}:next` },
+    x: `rm:i:${st.sid}:x`,
+  });
+}
+// Не вышло: робот не прочитал резюме или нейросеть не разобрала
+function impErrorView(why, title) {
+  const st = state.imp;
+  show('rm imp error', `📥 <b>«${esc(title)}»</b>\n⚠️ Не вышло: ${esc(why)}.`, {
+    retry: `rm:i:${st.sid}:retry`,
+    skip: `rm:i:${st.sid}:skip`,
+    x: `rm:i:${st.sid}:x`,
+  });
+}
+// Конец импорта: итог и список резюме
+function impFinish(note = '') {
+  const st = state.imp;
+  const names = (list) => list.map((n) => `«${esc(n)}»`).join(', ');
+  const parts = [st?.saved.length && `сохранено ${st.saved.length}: ${names(st.saved)}`, st?.skipped.length && `пропущено ${st.skipped.length}: ${names(st.skipped)}`].filter(Boolean);
+  delete state.imp;
+  listView([`📥 Импорт завершён${parts.length ? `: ${parts.join('; ')}` : ''}.`, note].filter(Boolean).join('\n'));
+}
+// Пропустили резюме (❌ на разборе): дальше по очереди или конец
+function impAfterSkip(title) {
+  const st = state.imp;
+  if (!st) return listView('Отменил — новое резюме не создано.');
+  st.skipped.push(title);
+  st.current = null;
+  if (st.queue.length && nextResumeId(s)) return impNextView(`⏭ Пропустил «${esc(title)}».`);
+  return impFinish();
+}
+
+// Основное резюме — прежняя панель профиля, остальные — карточка
+const home = (note = '') => (targetNow() ? cardView(targetNow(), note) : profileView(note));
 function reviewView(note) {
   show('pf review', [note, '', profileSummary(state.draft, state.estimate ?? []), '', 'Сохранить?'].join('\n'));
 }
@@ -124,8 +294,10 @@ const PROMPT_HELP = {
   signature: () => `Как подписывать письма. Сейчас: ${signatureNow() || '—'}`,
   contact: () => `Строка в конце письма, например «Для быстрой связи тг: @ivan» или «Почта: ivan@mail.ru». Сейчас: ${contactNow() || '—'}`,
   tz: 'Пришли город («Белград», «Алматы») или смещение («UTC+2»).',
-  extra: () => `То, чего нет в PDF: свои проекты, фриланс, подработки. Заменит прежний текст, «-» — убрать. Сейчас: ${s['profile.extra'] ? `${s['profile.extra'].length} знаков` : 'нет'}`,
-  examples: () => `1–3 своих сопроводительных письма одним сообщением — бот будет писать в их стиле. «-» — убрать. Сейчас: ${s['letters.examples'] ? 'есть' : 'нет'}`,
+  extra: () => `То, чего нет в PDF: свои проекты, фриланс, подработки. Заменит прежний текст, «-» — убрать. Сейчас: ${rsOf(targetNow())['profile.extra'] ? `${rsOf(targetNow())['profile.extra'].length} знаков` : 'нет'}`,
+  examples: () => `1–3 своих сопроводительных письма одним сообщением — бот будет писать в их стиле. «-» — убрать. Сейчас: ${rsOf(targetNow())['letters.examples'] ? 'есть' : 'нет'}`,
+  rname: () => `Как назвать резюме (до 60 знаков), например «Дизайнер» или «Бухгалтер». Сейчас: ${resumeById(s, targetNow())?.name ?? '—'}`,
+  newresume: 'Пришли резюме PDF-файлом (на hh: «Мои резюме» → резюме → «Скачать» → PDF) или вставь его текст сюда, ответом на это сообщение. Telegram принимает текст до 4096 знаков, длиннее — только PDF.',
 };
 function ask(field) {
   if (!PROFILE_PROMPTS[field]) return;
@@ -186,43 +358,269 @@ function setField(field, value) {
     return nextStep();
   }
   const name = { signature: 'profile.signature', contact: 'profile.contact', tz: 'profile.tz', extra: 'profile.extra', examples: 'letters.examples' }[field];
-  if (field === 'gender') out.save = { 'profile.facts': { ...s['profile.facts'], gender: value } };
-  else if (name) out.save = { [name]: value };
-  // Показать уже новое значение
-  if (out.save) Object.assign(s, out.save);
-  profileView('✅ Записал');
+  // «Дополнить» и «Образцы писем» — своё у каждого резюме; подпись, контакт и пояс — общие
+  if (targetNow() && ['extra', 'examples'].includes(field)) apply(resumeRows(s, targetNow(), { [field]: value }));
+  else if (field === 'gender') apply({ 'profile.facts': { ...s['profile.facts'], gender: value } });
+  else if (name) apply({ [name]: value });
+  home('✅ Записал');
 }
 
 // ---------- Что пришло ----------
 
 const pdf = ran('PDF text');
+const hhr = ran('HH resume');
 const parsed = ran('Parse profile');
 const estimated = ran('Estimate parse');
 const extractMode = ran('Build extract')?.mode;
 
+// ---------- Операции с резюме (⚙️ → 📄 Резюме) ----------
+
+const RM_ID = /^r[1-5]$/;
+// Название без повторов: «Дизайнер», «Дизайнер 2»
+function uniqueName(name, list) {
+  const taken = new Set(list.map((r) => r.name.toLowerCase()));
+  let candidate = name;
+  for (let n = 2; taken.has(candidate.toLowerCase()); n++) candidate = `${name} ${n}`;
+  return candidate;
+}
+const limitNote = `⚠️ Уже ${MAX_RESUMES} резюме — это предел. Удали ненужное.`;
+
+// Новое резюме из разобранного черновика: свой поиск, свои правила, пол, город и имя — как у основного (parse-profile)
+function saveNewResume() {
+  const id = nextResumeId(s);
+  if (!id) {
+    clear();
+    return listView(limitNote);
+  }
+  if (!state.text) {
+    clear();
+    return plain('⚠️ Потерял текст резюме — пришли PDF ещё раз: «➕ Новое резюме».');
+  }
+  const list = resumeList(s);
+  // Импортированное с hh: название и привязка — как на hh (роботу нужно знать, каким резюме откликаться)
+  const from = state.draftHh;
+  const name = uniqueName(clip(from?.title || state.draft.facts.position || `Резюме ${id.slice(1)}`, 60), list);
+  apply({
+    resumes: [...list, { id, name, active: true, hh: from ? { hash: from.hash, title: clip(from.title, 200) } : null }],
+    [`resume.${id}`]: resumeFromDraft(state.draft, { resume: state.text, tz: s['profile.tz'] || TZ }),
+  });
+  clear();
+  state.target = id;
+  const created = '✅ Резюме создано, поиск включён: первый сбор по нему — в ближайшие полчаса, придут карточки за последние сутки. Поправить поиск и правила — «✏️ Поправить».';
+  const imported = created.replace('создано', 'импортировано');
+  if (!from || !state.imp) return cardView(id, from ? imported : created);
+  const st = state.imp;
+  st.saved.push(name);
+  st.current = null;
+  if (st.queue.length && nextResumeId(s)) return impNextView(`✅ Сохранил «${esc(name)}»: поиск включён, первый сбор — в ближайшие полчаса.`);
+  // Единственное резюме — сразу карточка, несколько — итог
+  if (st.saved.length === 1 && !st.skipped.length) {
+    delete state.imp;
+    return cardView(id, imported);
+  }
+  return impFinish(st.queue.length ? `⚠️ Мест больше нет (${MAX_RESUMES}) — остальные не импортировал.` : '');
+}
+
+// Правка или новый текст не основного резюме: пишем в resume.<id>, подпись, контакт и пояс не трогаем;
+// дополнение, образцы писем, стиль писем и свои спорные случаи правка черновика не стирает
+function saveResumeEdit(id) {
+  const rs = rsOf(id);
+  const text = state.mode === 'replace' ? (state.pending?.text ?? rs['profile.resume']) : rs['profile.resume'];
+  apply(
+    resumeRows(
+      s,
+      id,
+      resumeFromDraft(state.draft, {
+        resume: text,
+        tz: s['profile.tz'] || TZ,
+        keep: { extra: rs['profile.extra'], examples: rs['letters.examples'], prompt: rs['letters.prompt'], cases: rs['llm.cases'] },
+      }),
+    ),
+  );
+  clear();
+  state.target = id;
+  cardView(id, '✅ Сохранил');
+}
+
+// rm:<действие>[:<id>[:<y|l>]] — W3 «Route» кладёт действие в job.field, остальное в job.value
+// Ушли с панели ожидания PDF: вопрос «➕ Новое резюме» без ответа не нужен, и PDF больше не ждём
+function dropPrompt() {
+  if (state.promptId) out.deleteIds.push(state.promptId);
+  delete state.promptId;
+  delete state.await;
+}
+
+// rm:i:<sid>:<n|b|x|go|next|retry|skip>: галочка, «это основное», стоп; go / next / retry / skip читают резюме
+// через робота (Plan, route hh), сюда доходят только когда читать нечего
+function impOp() {
+  const [sid = '', arg = ''] = job.value.split(':');
+  const st = state.imp;
+  if (!st || st.sid !== sid) return listView('⚠️ Импорт устарел — открой «📥 Импорт с hh» ещё раз');
+  if (/^\d$/.test(arg)) {
+    const r = st.list[Number(arg)];
+    if (!r) return impSelectView();
+    if (r.linked) return impSelectView(`ℹ️ «${esc(r.title)}» уже в боте: «${esc(resumeById(s, r.linked)?.name ?? r.linked)}»`);
+    if (st.selected.includes(r.hash)) st.selected = st.selected.filter((hash) => hash !== r.hash);
+    else if (st.selected.length >= impFree()) return impSelectView(`⚠️ Свободно мест: ${impFree()} — больше отметить нельзя`);
+    else st.selected.push(r.hash);
+    return impSelectView();
+  }
+  if (arg === 'b') {
+    const main = resumeById(s, 'r1');
+    if (main?.hh) return impSelectView(`ℹ️ Основное резюме уже связано с «${esc(main.hh.title)}»`);
+    const picked = st.selected.map((hash) => st.list.find((r) => r.hash === hash)).filter((r) => r && !r.linked);
+    if (picked.length !== 1) return impSelectView('⚠️ Отметь ровно одно резюме — то, что на hh является основным');
+    const [r] = picked;
+    apply({ resumes: resumeList(s).map((x) => (x.id === 'r1' ? { ...x, hh: { hash: r.hash, title: clip(r.title, 200) } } : x)) });
+    r.linked = 'r1';
+    st.selected = st.selected.filter((hash) => hash !== r.hash);
+    return impSelectView(`🔗 Основное резюме связано с «${esc(r.title)}»`);
+  }
+  if (arg === 'x') return impFinish(st.queue.length ? 'Остальные не импортировал.' : '');
+  if (arg === 'go' && !st.queue.length && !st.current) return impSelectView('⚠️ Отметь хотя бы одно резюме, которого ещё нет в боте');
+  // next / skip / go без чтения: очередь кончилась или мест больше нет
+  return impFinish(st.queue.length && !nextResumeId(s) ? `⚠️ Мест больше нет (${MAX_RESUMES}) — остальные не импортировал.` : '');
+}
+
+function rmOp() {
+  const [id = '', arg = ''] = job.value.split(':');
+  const list = resumeList(s);
+  const known = RM_ID.test(id) && list.some((r) => r.id === id);
+  const name = resumeById(s, id)?.name ?? id;
+  state.panelId = panelId;
+  switch (job.field) {
+    case 'list':
+      dropPrompt();
+      delete state.target;
+      return listView();
+    case 'o':
+      if (!known) return listView('⚠️ Такого резюме нет');
+      dropPrompt();
+      if (id === 'r1') {
+        delete state.target;
+        return profileView();
+      }
+      state.target = id;
+      return cardView(id);
+    case 'on':
+    case 'off': {
+      if (!known) return listView('⚠️ Такого резюме нет');
+      const next = list.map((r) => (r.id === id ? { ...r, active: job.field === 'on' } : r));
+      const back = (note) => {
+        if (arg === 'l') return listView(note);
+        return id === 'r1' ? profileView(note) : cardView(id, note);
+      };
+      if (!next.some((r) => r.active)) return back('⚠️ Нужно хотя бы одно включённое резюме — иначе искать нечего');
+      apply({ resumes: next });
+      return back(job.field === 'on' ? '▶️ Поиск включён' : '⏸ Поиск выключен');
+    }
+    case 'new':
+      if (!nextResumeId(s)) return listView(limitNote);
+      // Прежний вопрос «➕ Новое резюме» (если не ответили) убираем: останется один
+      if (state.promptId) out.deleteIds.push(state.promptId);
+      delete state.promptId;
+      state.await = { kind: 'create', at: now, panel: panelId };
+      out.awaitPrompt = true;
+      show(
+        'rm wait',
+        '➕ <b>Новое резюме</b>\nПришли PDF файлом или вставь текст ответом на вопрос ниже. У него будут свой поиск и свои правила оценки; подпись, контакт и пояс — общие. Пол, город и имя возьму из основного резюме, если в новом их нет.',
+      );
+      return ask('newresume');
+    case 'ren':
+      if (!known || id === 'r1') return listView('⚠️ Такого резюме нет');
+      state.target = id;
+      ask('rname');
+      return cardView(id);
+    case 'clone': {
+      if (!known) return listView('⚠️ Такого резюме нет');
+      const copyId = nextResumeId(s);
+      if (!copyId) return listView(limitNote);
+      apply({
+        resumes: [...list, { id: copyId, name: uniqueName(clip(`${name} (копия)`, 60), list), active: false, hh: null }],
+        [`resume.${copyId}`]: resumeData(rsOf(id)),
+      });
+      state.target = copyId;
+      return cardView(copyId, '📋 Копия готова. Поиск выключен, чтобы она не искала то же, что оригинал: поправь («✏️ Поправить») и включи.');
+    }
+    case 'del': {
+      if (!known || id === 'r1') return listView('⚠️ Основное резюме удалить нельзя');
+      if (arg !== 'y') {
+        state.target = id;
+        return deleteView(id);
+      }
+      let next = list.filter((r) => r.id !== id);
+      // Нужно хотя бы одно включённое: иначе сбор нечего искать
+      if (!next.some((r) => r.active)) next = next.map((r) => (r.id === 'r1' ? { ...r, active: true } : r));
+      // Разметка и версии для отката (W13) уходят вместе с резюме: следующее резюме с тем же номером начнёт с чистого листа
+      apply({ resumes: next, [`resume.${id}`]: null, [`resume.${id}.cv`]: null, [`resume.${id}.history`]: [] });
+      delete state.target;
+      return listView(`🗑 Удалил «${esc(name)}».`);
+    }
+    case 'imp':
+      // Сюда доходит только отказ Plan (мест нет): список резюме hh читает робот (route hh)
+      return listView(limitNote);
+    case 'i':
+      return impOp();
+    case 'txt':
+      if (!known || id === 'r1') return listView('⚠️ Такого резюме нет');
+      state.target = id;
+      state.await = { kind: 'replace', id, at: now, panel: panelId };
+      return show('rm wait', `📄 <b>Новый текст для «${esc(name)}»</b>\nПришли PDF файлом. Потом спрошу: заново собрать поиск и правила или заменить только текст.`);
+    default:
+      return listView();
+  }
+}
+
 if (plan.problem) {
   plain(`⚠️ ${esc(plan.problem)}`, true);
+} else if (hhr?.hhError) {
+  // Робот не прочитал hh: список — «Повторить» с начала, резюме — повторить это, пропустить или остановить
+  if (hhr.mode === 'list') {
+    delete state.imp;
+    show('rm hh error', `📥 <b>Импорт с hh</b>\n⚠️ Не вышло: ${esc(hhWhy(hhr.hhError))}.`);
+  } else {
+    impErrorView(hhWhy(hhr.hhError), state.imp?.current?.title ?? 'резюме с hh');
+  }
+} else if (hhr?.hh === 'list') {
+  impRefreshTitles();
+  impSelectView();
 } else if (job.op === 'not_pdf') {
   plain('📎 Это не PDF. Пришли резюме в PDF: на hh — «Мои резюме» → резюме → «Скачать» → PDF.', true);
 } else if (pdf?.problem) {
   plain(`⚠️ ${esc(pdf.problem)}`);
 } else if (pdf?.replace) {
   state.panelId = panelId;
-  if (frontend) {
-    show('pf replace text', `📄 Новое резюме${state.pending?.fileName ? ` «${esc(state.pending.fileName)}»` : ''}.\nУ тебя пресет «Фронтенд»: поиск и правила настроены вручную — обновлю только текст резюме.`);
+  const file = state.pending?.fileName ? ` «${esc(state.pending.fileName)}»` : '';
+  const forResume = state.pending?.target ? resumeById(s, state.pending.target) : null;
+  const asNew = '➕ <b>Как новое резюме</b> — отдельное резюме со своим поиском и правилами.';
+  if (forResume) {
+    show(
+      'pf replace',
+      [
+        `📄 Новый текст${file} для резюме «${esc(forResume.name)}».`,
+        '🔄 <b>Всё заново</b> — разберу его и пересоберу поиск и правила этого резюме; подпись, контакт, пояс, письма и чёрный список останутся.',
+        '📄 <b>Только текст</b> — заменю текст резюме, остальное не трогаю.',
+        asNew,
+      ].join('\n'),
+    );
+  } else if (frontend) {
+    show('pf replace text', `📄 Новое резюме${file}.\nУ тебя пресет «Фронтенд»: поиск и правила настроены вручную — обновлю только текст резюме.\n${asNew}`);
   } else {
     show(
       'pf replace',
       [
-        `📄 Новое резюме${state.pending?.fileName ? ` «${esc(state.pending.fileName)}»` : ''}.`,
+        `📄 Новое резюме${file}.`,
         '🔄 <b>Всё заново</b> — разберу его и пересоберу поиск и правила; подпись, контакт, пояс, письма и чёрный список останутся.',
         '📄 <b>Только текст</b> — заменю текст резюме, остальное не трогаю.',
+        asNew,
       ].join('\n'),
     );
   }
 } else if (parsed && !parsed.ok) {
   // Нейросеть не справилась: в онбординге — прислать PDF ещё раз, в правке — показать прежний черновик
-  if (extractMode === 'revise' && state.draft && state.step) {
+  if (hhr?.importing) {
+    impErrorView(`нейросеть не разобрала резюме (${parsed.problem})`, hhr.importing.title);
+  } else if (extractMode === 'revise' && state.draft && state.step) {
     if (onboarding) summaryView(`⚠️ Не вышло поправить: ${esc(parsed.problem)}. Попробуй сформулировать иначе.`);
     else reviewView(`⚠️ Не вышло поправить: ${esc(parsed.problem)}.`);
   } else {
@@ -237,21 +635,35 @@ if (plan.problem) {
     state.step = 'summary';
     summaryView(extractMode === 'revise' ? '✏️ Поправил. Всё верно? Если нет — «✏️ Поправить» ещё раз.' : '');
   } else {
-    state.mode = extractMode === 'revise' ? 'revise' : 'replace';
+    // Новое резюме (create): «➕ Новое резюме», «➕ Как новое резюме», импорт с hh и правка такого черновика до сохранения
+    const creating = Boolean(plan.create || pdf?.create || hhr?.create);
+    state.mode = creating ? 'create' : extractMode === 'revise' ? 'revise' : 'replace';
     state.step = 'review';
+    // Черновик из резюме hh: сохраним со связью (правка черновика связь не меняет, новое резюме не из hh — снимает)
+    if (hhr?.importing) state.draftHh = hhr.importing;
+    else if (extractMode !== 'revise') delete state.draftHh;
     reviewView(
-      extractMode === 'revise'
-        ? '✏️ <b>Поправил профиль</b>. Подпись, контакт, пояс и письма — без изменений.'
-        : '📄 <b>Новое резюме разобрано.</b> Подпись, контакт, пояс, письма и чёрный список останутся прежними.',
+      creating
+        ? extractMode === 'revise'
+          ? '✏️ <b>Поправил новое резюме</b>. Сохраню отдельным резюме: у него свой поиск и правила.'
+          : hhr?.importing
+            ? `📥 <b>Резюме с hh разобрано</b>: «${esc(hhr.importing.title)}»${state.imp?.queue.length ? ` (после него — ещё ${state.imp.queue.length})` : ''}. Сохраню отдельным резюме, связанным с ним: у него свой поиск и правила оценки. Роли, формат работы, зарплату и стаж взял с hh. Подпись, контакт, пояс и чёрный список — общие.`
+            : '🆕 <b>Новое резюме разобрано.</b> Сохраню отдельным резюме: у него свой поиск и правила оценки. Подпись, контакт, пояс и чёрный список — общие.'
+        : extractMode === 'revise'
+          ? '✏️ <b>Поправил профиль</b>. Подпись, контакт, пояс и письма — без изменений.'
+          : '📄 <b>Новое резюме разобрано.</b> Подпись, контакт, пояс, письма и чёрный список останутся прежними.',
     );
   }
+} else if (job.op === 'rm') {
+  if (ready) rmOp();
+  else plain('📄 Несколько резюме — после основного: сначала пришли резюме в PDF.');
 } else if (job.op === 'view') {
   profileView();
 } else if (job.op === 'ok') {
   // В кнопке — шаг, на котором её показали: двойное нажатие или старая панель не перескочат шаг
   if (onboarding && (!job.value || job.value === state.step)) nextStep();
   else if (onboarding) showStep();
-  else profileView();
+  else home();
 } else if (job.op === 'set' && job.field === 'gender' && ['m', 'f'].includes(job.value)) {
   setField('gender', job.value);
 } else if (job.op === 'set' && job.field === 'tz' && validTz(job.value)) {
@@ -267,43 +679,71 @@ if (plan.problem) {
     const tz = parseTz(text);
     if (tz) setField('tz', tz);
     else if (onboarding) tzView(`⚠️ Не понял «${esc(clip(text, 40))}». Пришли город или смещение вида UTC+2.`);
-    else profileView(`⚠️ Не понял часовой пояс «${esc(clip(text, 40))}». Пришли город или смещение вида UTC+2.`);
+    else home(`⚠️ Не понял часовой пояс «${esc(clip(text, 40))}». Пришли город или смещение вида UTC+2.`);
   } else if (job.field === 'extra') setField('extra', text === '-' ? '' : text.slice(0, 4000));
   else if (job.field === 'examples') setField('examples', text === '-' ? '' : text.slice(0, 4000));
+  else if (job.field === 'rname') {
+    const id = targetNow();
+    const list = resumeList(s);
+    const name = clip(text, 60);
+    if (!id) home('⚠️ Не понял, какое резюме переименовать');
+    else if (!name) cardView(id, '⚠️ Название пустое — прежнее осталось');
+    else {
+      apply({ resumes: list.map((r) => (r.id === id ? { ...r, name: uniqueName(name, list.filter((x) => x.id !== id)) } : r)) });
+      cardView(id, '✅ Переименовал. У вакансий, найденных раньше, в карточке остаётся прежнее название.');
+    }
+  }
 } else if (job.op === 'replace') {
   if (job.value === 'text' && state.pending?.text) {
-    out.save = { 'profile.resume': state.pending.text };
-    Object.assign(s, out.save);
+    // Новый текст: основного резюме — profile.resume, другого — resume.<id>.resume
+    const id = state.pending.target;
+    apply(id ? resumeRows(s, id, { resume: state.pending.text }) : { 'profile.resume': state.pending.text });
     clear();
-    profileView('✅ Текст резюме обновлён');
+    if (id) state.target = id;
+    home('✅ Текст резюме обновлён');
   } else {
     clear();
-    profileView(job.value === 'no' ? 'Новое резюме не сохранил.' : '');
+    home(job.value === 'no' ? 'Новое резюме не сохранил.' : '');
   }
 } else if (job.op === 'confirm') {
-  if (job.value === 'yes' && state.draft && ['replace', 'revise'].includes(state.mode)) {
-    if (frontend) {
-      // Пресет frontend: правила и поиск — в коде и настройках владельца, из правки берём только факты и «О кандидате»
-      out.save = { 'profile.facts': state.draft.facts, 'profile.about': state.draft.about };
-    } else {
-      out.save = profileRows(state.draft, {
-        resume: state.mode === 'replace' ? state.pending?.text ?? s['profile.resume'] : s['profile.resume'],
-        signature: s['profile.signature'],
-        contact: s['profile.contact'],
-        tz: s['profile.tz'] || TZ,
-      });
-      // Свои спорные случаи человек вписал сам — новое резюме их не стирает
-      delete out.save['llm.cases'];
+  const editId = (state.mode === 'replace' ? state.pending?.target : targetNow()) || '';
+  if (job.value === 'yes' && state.draft && ['replace', 'revise', 'create'].includes(state.mode)) {
+    if (state.mode === 'create') saveNewResume();
+    else if (editId) saveResumeEdit(editId);
+    else {
+      if (frontend) {
+        // Пресет frontend: правила и поиск — в коде и настройках владельца, из правки берём только факты и «О кандидате»
+        out.save = { 'profile.facts': state.draft.facts, 'profile.about': state.draft.about };
+      } else {
+        out.save = profileRows(state.draft, {
+          resume: state.mode === 'replace' ? state.pending?.text ?? s['profile.resume'] : s['profile.resume'],
+          signature: s['profile.signature'],
+          contact: s['profile.contact'],
+          tz: s['profile.tz'] || TZ,
+        });
+        // Свои спорные случаи человек вписал сам — новое резюме их не стирает
+        delete out.save['llm.cases'];
+      }
+      Object.assign(s, out.save);
+      clear();
+      profileView('✅ Сохранил');
     }
-    Object.assign(s, out.save);
-    clear();
-    profileView('✅ Сохранил');
   } else {
+    const wasCreate = state.mode === 'create';
+    const fromHh = state.draftHh;
     clear();
-    profileView('Отменил — профиль прежний.');
+    if (fromHh && state.imp) impAfterSkip(fromHh.title);
+    else if (wasCreate) listView('Отменил — новое резюме не создано.');
+    else home('Отменил — профиль прежний.');
   }
 } else {
-  profileView();
+  home();
+}
+
+// PDF для нового резюме или нового текста пришёл: панель «Пришли PDF» и вопрос к ней убираем из чата
+if (pdf && state.cleanup) {
+  out.deleteIds.push(...Object.values(state.cleanup).filter(Boolean));
+  delete state.cleanup;
 }
 
 return [{ json: out }];

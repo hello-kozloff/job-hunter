@@ -15,7 +15,7 @@
 
 // @include n8n/shared/llm.js
 
-// Задание — от той ноды, что выполнилась: «PDF text» (новый PDF) или «Plan»
+// Задание — от той ноды, что выполнилась: «PDF text» (новый PDF), «HH resume» (резюме с hh) или «Plan»
 function ran(name) {
   try {
     return $(name).first().json;
@@ -23,7 +23,7 @@ function ran(name) {
     return null; // нода в этом запуске не выполнялась
   }
 }
-const plan = ran('PDF text')?.toLlm ? ran('PDF text') : $('Plan').first().json;
+const plan = [ran('PDF text'), ran('HH resume')].find((node) => node?.toLlm) ?? $('Plan').first().json;
 const settings = loadSettings($('Settings').all());
 const provider = settings['llm.provider'];
 const model = llmModel(provider);

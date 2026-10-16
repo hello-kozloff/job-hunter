@@ -16,6 +16,8 @@
 
 // @include n8n/shared/search.js
 
+// @include n8n/shared/resumes.js
+
 // @include n8n/shared/schedule.js
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -85,7 +87,28 @@ const rejectedLines = rejected
   .map((r) => `🚫 <a href="${esc(r.url)}">${esc(r.title)}</a> — ${esc(cut(String(r.reasons ?? ''), 120))}`);
 if (rejected.length > SHOW) rejectedLines.push(`и ещё ${rejected.length - SHOW}`);
 
-const { words, filters } = describeSearch(settings);
+// Что искали — по каждому резюме (при нескольких — с названием резюме)
+const several = resumeList(settings).length > 1;
+const searched = activeResumes(settings)
+  .slice(0, MAX_SEARCH_RESUMES)
+  .map((r) => ({ r, rs: resumeSettings(settings, r.id) }));
+const searchedText = searched
+  .map(({ r, rs }) => {
+    const { words, filters } = describeSearch(rs);
+    return `${several ? `📄 ${esc(r.name)}\n` : ''}${esc(words)}\n${esc(filters)}`;
+  })
+  .join('\n\n');
+// Одинаковые адреса (как в «Plan») — одна ссылка, у первого резюме
+const seenLinks = new Set();
+const searchLinks = searched.flatMap(({ r, rs }) =>
+  searchQueries(rs).flatMap((q, i, list) => {
+    const url = searchUrl(0, rs, q.params);
+    if (seenLinks.has(url)) return [];
+    seenLinks.add(url);
+    const what = list.length > 1 ? `поиск «${esc(q.label)}»` : 'этот поиск';
+    return [`🔗 <a href="${esc(url)}">Открыть ${what}${several ? ` (${esc(r.name)})` : ''} на hh</a>`];
+  }),
+);
 // Расписание — из настроек бота (⚙️ → 🕐 Сбор)
 const next = nextCollect(Date.now(), scheduleFrom(settings));
 const report = [
@@ -93,10 +116,8 @@ const report = [
   requestLine,
   countLine,
   ...rejectedLines,
-  `<blockquote expandable>${esc(words)}\n${esc(filters)}</blockquote>`,
-  ...searchQueries(settings).map(
-    (q, i, list) => `🔗 <a href="${esc(searchUrl(0, settings, q.params))}">Открыть ${list.length > 1 ? `поиск «${esc(q.label)}»` : 'этот поиск'} на hh</a>`,
-  ),
+  `<blockquote expandable>${searchedText}</blockquote>`,
+  ...searchLinks,
   next ? `Следующий сбор ${localMsk(next)}` : '⏸ Сбор на паузе — дальше только «🔄 Собрать сейчас» в ⚙️ Настройках',
 ].join('\n');
 

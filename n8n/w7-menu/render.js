@@ -16,6 +16,7 @@
 // @include n8n/shared/card.js
 // @include n8n/shared/menu.js
 // @include n8n/shared/settings.js
+// @include n8n/shared/resumes.js
 // @include n8n/shared/hh-roles.js
 
 // @include n8n/shared/search.js
