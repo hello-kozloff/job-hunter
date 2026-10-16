@@ -70,8 +70,15 @@ function resumeData(s) {
   return Object.fromEntries(Object.entries(RESUME_FIELDS).map(([field, key]) => [field, s[key]]));
 }
 
+// Ключи settings с разметкой (cv) и версиями для отката (history) резюме id — их ведёт W13. У основного — прежние
+// cv и resume.history, у r2–r5 — свои resume.<id>.cv и resume.<id>.history (не в resume.<id>: см. settings.js)
+const resumeKeys = (id) =>
+  !id || id === 'r1' ? { cv: 'cv', history: 'resume.history' } : { cv: `resume.${id}.cv`, history: `resume.${id}.history` };
+
 // Настройки для резюме id: основное и неизвестное (удалённое, без данных) — сами s, остальные — копия s
-// с подменёнными полями (чего нет в resume.<id> — нейтральное значение RESUME_NEUTRAL)
+// с подменёнными полями (чего нет в resume.<id> — нейтральное значение RESUME_NEUTRAL). Подменяются и cv, и
+// resume.history (их читает W13). Копию не передавать в resumeList/resumeById/activeResumes: основное резюме берёт
+// привязку к hh из cv, а в копии он чужой — список всегда по исходным настройкам
 function resumeSettings(s, id) {
   if (!id || id === 'r1') return s;
   const data = s[`resume.${id}`];
@@ -80,6 +87,9 @@ function resumeSettings(s, id) {
   for (const [field, key] of Object.entries(RESUME_FIELDS)) {
     out[key] = field in data ? data[field] : RESUME_NEUTRAL[field];
   }
+  const keys = resumeKeys(id);
+  out.cv = s[keys.cv] ?? null;
+  out['resume.history'] = s[keys.history] ?? [];
   return out;
 }
 
@@ -90,4 +100,41 @@ function resumeRows(s, id, patch) {
     return Object.fromEntries(Object.entries(patch).map(([field, value]) => [RESUME_FIELDS[field], value]));
   }
   return { [`resume.${id}`]: { ...(s[`resume.${id}`] ?? {}), ...patch } };
+}
+
+// Что записать в settings после правки резюме id в W13 (save — { 'profile.resume' | 'profile.extra' | cv |
+// 'resume.history': значение }): основное — как есть, r2–r5 — текст и «Дополнительно» в resume.<id> (с прежними
+// полями), разметка и версии — в свои ключи
+function resumeSaveRows(s, id, save) {
+  if (!id || id === 'r1') return save;
+  const keys = resumeKeys(id);
+  const out = {};
+  const patch = {};
+  for (const [key, value] of Object.entries(save)) {
+    if (key === 'cv') out[keys.cv] = value;
+    else if (key === 'resume.history') out[keys.history] = value;
+    else {
+      const field = Object.keys(RESUME_FIELDS).find((f) => RESUME_FIELDS[f] === key);
+      if (field) patch[field] = value;
+    }
+  }
+  return Object.keys(patch).length ? { ...out, ...resumeRows(s, id, patch) } : out;
+}
+
+// Вакансии резюме id: вакансию ведёт то резюме, которое её нашло; без резюме или с удалённым — основное.
+// Одно резюме — все строки как есть. s — исходные настройки
+function resumeVacancies(s, rows, id) {
+  const list = resumeList(s);
+  if (list.length < 2) return rows;
+  const known = new Set(list.map((r) => r.id));
+  return rows.filter((r) => (known.has(r.resume_id) ? r.resume_id : 'r1') === (id || 'r1'));
+}
+
+// Резюме, с которым работает W13 (рекомендации): target — выбор человека (static data), удалённое и без данных —
+// основное. all — исходные настройки (loadSettings). → { id, name, s — настройки резюме, link — привязка к hh
+// ({ hash, title } | null), several — резюме больше одного }
+function resumeScope(all, target) {
+  const id = target && target !== 'r1' && resumeById(all, target) && all[`resume.${target}`] ? target : 'r1';
+  const r = resumeById(all, id);
+  return { id, name: r?.name ?? '', s: resumeSettings(all, id), link: r?.hh ?? null, several: resumeList(all).length > 1 };
 }

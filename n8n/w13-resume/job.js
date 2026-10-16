@@ -3,6 +3,7 @@
 // Нода: Code, режим «Run Once for All Items».
 // Выход: { op, sid, index, value, field, text, chatId, queryId, messageId, userMessageId, promptId }
 //   rs:view → view · rs:up → upgrade · rs:file → file · rs:undo → undo (rs:undo:y — откатить)
+//   Несколько резюме (docs/resumes.md): rs:list → targets (выбор резюме) · rs:r:<id> → target (value id: работаем с ним)
 //   ru:<sid>:<y|e|n> → plan: верно | не так | отмена
 //   rq:<sid>:go → start · rq:<sid>:x → stop · rq:<sid>:<вопрос>:<0-7|t|k|d> → answer: вариант | свой ответ | пропустить | готово
 //   rp:<sid>:<правка>:<y|r|a|e|n> → patch: применить | заменить | дописать | иначе | не надо
@@ -32,6 +33,10 @@ let m;
 if ((m = data.match(/^rs:(view|an|up|file|undo)(?::(y))?$/))) {
   out.op = { view: 'view', an: 'analyze', up: 'upgrade', file: 'file', undo: 'undo' }[m[1]];
   out.value = m[2] ?? '';
+} else if (data === 'rs:list') {
+  out.op = 'targets';
+} else if ((m = data.match(/^rs:r:(r[1-5])$/))) {
+  Object.assign(out, { op: 'target', value: m[1] });
 } else if ((m = data.match(/^ru:([a-z0-9]{4}):([yen])$/))) {
   Object.assign(out, { op: 'plan', sid: m[1], value: m[2] });
 } else if ((m = data.match(/^rq:([a-z0-9]{4}):(go|x)$/))) {

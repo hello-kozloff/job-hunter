@@ -19,8 +19,11 @@ const lib = load(
     'n8n/shared/resumes.js',
     'n8n/shared/profile.js',
     'n8n/shared/hh-resume.js',
+    'n8n/shared/skills.js',
+    'n8n/shared/resume.js',
+    'n8n/shared/cv.js',
   ],
-  'SETTINGS, RESUME_FIELDS, loadSettings, validSetting, resumeList, resumeById, activeResumes, nextResumeId, resumeData, resumeSettings, resumeRows, resumeSearchable, searchQueries, inheritPerson, resumeFromDraft, draftFromAnswer, hhDate, hhDuration, hhResumeText, applyHhFacts, hhOutcome, hhWhy',
+  'SETTINGS, RESUME_FIELDS, loadSettings, validSetting, resumeList, resumeById, activeResumes, nextResumeId, resumeData, resumeSettings, resumeRows, resumeKeys, resumeSaveRows, resumeVacancies, resumeScope, cvFromAnchors, cvRender, resumeSearchable, searchQueries, inheritPerson, resumeFromDraft, draftFromAnswer, hhDate, hhDuration, hhResumeText, applyHhFacts, hhOutcome, hhWhy',
 );
 const rows = (obj) => Object.entries(obj).map(([name, value]) => ({ name, value_json: JSON.stringify(value) }));
 
@@ -278,4 +281,105 @@ test('hhOutcome / hhWhy: ответ робота → ошибка или тел�
   assert.match(lib.hhWhy('http:502'), /ошибка робота \(http:502\)/);
   assert.match(lib.hhWhy('down'), /робот не отвечает/);
   assert.match(lib.hhWhy('empty'), /почти пустое/);
+});
+
+// ---------- W13 по резюме (этап 6): разметка и версии откатов — отдельные ключи r2–r5 ----------
+
+const duoSettings = (extra = {}) =>
+  lib.loadSettings(
+    rows({
+      'profile.resume': 'main text',
+      resumes: [
+        { id: 'r1', name: 'Main', active: true, hh: null },
+        { id: 'r2', name: 'Designer', active: true, hh: { hash: 'HASH2', title: 'Designer on hh' } },
+      ],
+      'resume.r2': { resume: 'designer text', extra: 'e2' },
+      ...extra,
+    }),
+  );
+const cvFor = (id, hh = null) => ({ v: 1, places: [], resumes: [{ id, hh, template: '⟦title⟧ rest', title: 'T', about: '', keySkills: [] }] });
+const version = (resume) => ({ at: '2026-10-16T10:00:00.000Z', by: 'upgrade', note: 'x', resume, extra: '' });
+
+test('resumeKeys: main resume keeps cv and resume.history, r2–r5 get their own keys; all are in the schema', () => {
+  assert.deepEqual(lib.resumeKeys('r1'), { cv: 'cv', history: 'resume.history' });
+  assert.deepEqual(lib.resumeKeys(''), { cv: 'cv', history: 'resume.history' });
+  assert.deepEqual(lib.resumeKeys('r3'), { cv: 'resume.r3.cv', history: 'resume.r3.history' });
+  for (const id of ['r2', 'r3', 'r4', 'r5']) {
+    assert.ok(lib.SETTINGS[`resume.${id}.cv`], `resume.${id}.cv`);
+    assert.ok(lib.SETTINGS[`resume.${id}.history`], `resume.${id}.history`);
+  }
+});
+
+test('overlay of r2 carries its own cv and history; the main resume keeps the global ones', () => {
+  const s = duoSettings({ cv: cvFor('r1'), 'resume.history': [version('main old')], 'resume.r2.cv': cvFor('r2'), 'resume.r2.history': [version('designer old')] });
+  const rs = lib.resumeSettings(s, 'r2');
+  assert.equal(rs.cv.resumes[0].id, 'r2');
+  assert.equal(rs['resume.history'][0].resume, 'designer old');
+  assert.equal(rs['profile.resume'], 'designer text');
+  assert.equal(lib.resumeSettings(s, 'r1'), s);
+  assert.equal(s.cv.resumes[0].id, 'r1', 'the base is not touched');
+  // нет своих данных — пусто, а не чужое
+  const bare = lib.resumeSettings(duoSettings({ cv: cvFor('r1'), 'resume.history': [version('main old')] }), 'r2');
+  assert.equal(bare.cv, null);
+  assert.deepEqual(bare['resume.history'], []);
+});
+
+test('a broken version in resume.r2.history does not wipe the resume itself', () => {
+  const s = duoSettings({ 'resume.r2.history': [{ at: 1, resume: 5 }] });
+  assert.deepEqual(s['resume.r2.history'], [], 'only the history falls back to the default');
+  assert.equal(s['resume.r2'].resume, 'designer text');
+});
+
+test('resumeSaveRows: main — as is; r2 — text into the blob, markup and versions into own keys', () => {
+  const s = duoSettings();
+  const save = { 'profile.resume': 'new', 'resume.history': [version('old')], cv: cvFor('r2') };
+  assert.equal(lib.resumeSaveRows(s, 'r1', save), save);
+  assert.equal(lib.resumeSaveRows(s, '', save), save);
+  const rows2 = lib.resumeSaveRows(s, 'r2', save);
+  assert.deepEqual(Object.keys(rows2).sort(), ['resume.r2', 'resume.r2.cv', 'resume.r2.history']);
+  assert.deepEqual(rows2['resume.r2'], { resume: 'new', extra: 'e2' }, 'the blob keeps its other fields');
+  assert.equal(rows2['resume.r2.history'][0].resume, 'old');
+  assert.equal(rows2['resume.r2.cv'].resumes[0].id, 'r2');
+  // правка «Дополнительно» и только разметки
+  assert.deepEqual(lib.resumeSaveRows(s, 'r2', { 'profile.extra': 'e3' }), { 'resume.r2': { resume: 'designer text', extra: 'e3' } });
+  assert.deepEqual(Object.keys(lib.resumeSaveRows(s, 'r2', { cv: cvFor('r2') })), ['resume.r2.cv']);
+  // всё, что записали, проходит проверку схемы
+  for (const [name, value] of Object.entries(rows2)) assert.ok(lib.validSetting(lib.SETTINGS[name], value), name);
+});
+
+test('resumeScope: the chosen resume, else the main one; link from the list', () => {
+  const s = duoSettings();
+  const two = lib.resumeScope(s, 'r2');
+  assert.equal(two.id, 'r2');
+  assert.equal(two.name, 'Designer');
+  assert.deepEqual(two.link, { hash: 'HASH2', title: 'Designer on hh' });
+  assert.equal(two.several, true);
+  assert.equal(two.s['profile.resume'], 'designer text');
+  const main = lib.resumeScope(s, undefined);
+  assert.equal(main.id, 'r1');
+  assert.equal(main.s, s);
+  assert.equal(main.link, null);
+  // удалённое, неизвестное и резюме без данных — основное
+  assert.equal(lib.resumeScope(s, 'r4').id, 'r1');
+  assert.equal(lib.resumeScope(duoSettings({ 'resume.r2': null }), 'r2').id, 'r1');
+  assert.equal(lib.resumeScope(lib.loadSettings(rows({})), 'r2').several, false);
+});
+
+test('resumeVacancies: a vacancy belongs to the resume that found it; no or deleted resume — the main one', () => {
+  const s = duoSettings();
+  const list = [{ id: 1 }, { id: 2, resume_id: '' }, { id: 3, resume_id: 'r2' }, { id: 4, resume_id: 'r9' }];
+  assert.deepEqual(lib.resumeVacancies(s, list, 'r1').map((r) => r.id), [1, 2, 4]);
+  assert.deepEqual(lib.resumeVacancies(s, list, 'r2').map((r) => r.id), [3]);
+  const one = lib.loadSettings(rows({}));
+  assert.equal(lib.resumeVacancies(one, list, 'r1'), list, 'one resume: all rows as is');
+});
+
+test('cvFromAnchors puts the resume id into the markup', () => {
+  const text = 'Дизайнер\n\nFigma и прототипы.';
+  const a = { title: 'Дизайнер', about: null, places: [] };
+  assert.equal(lib.cvFromAnchors(text, a).cv.resumes[0].id, 'r1');
+  const r2 = lib.cvFromAnchors(text, a, 'r2').cv;
+  assert.equal(r2.resumes[0].id, 'r2');
+  assert.equal(lib.cvRender(r2), text);
+  assert.ok(lib.validSetting(lib.SETTINGS['resume.r2.cv'], r2));
 });

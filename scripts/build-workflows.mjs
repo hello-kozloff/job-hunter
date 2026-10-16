@@ -594,6 +594,7 @@ const PROFILE_LAYOUTS = [
         ['📋 Копия', panelButton('clone')],
         ['🗑 Удалить', panelButton('del')],
       ],
+      [['💡 Рекомендации по резюме', panelButton('rec')]],
       [['⬅️ Резюме', 'rm:list']],
     ],
   ],
@@ -855,6 +856,52 @@ const RESUME_LAYOUTS = [
     ],
   ],
 ];
+// Несколько резюме (docs/resumes.md): та же панель с кнопкой «Другое резюме» (с hh-разделами — rootm, у резюме без связи
+// с hh — rootm0) и выбор резюме (по числу резюме, 2–5). Раскладки — в конце: порядок = LAYOUTS в render.js
+RESUME_LAYOUTS.push(
+  [
+    'rs rootm',
+    [
+      [
+        ['🔍 Анализ резюме', 'rs:an'],
+        ['⬆️ Upgrade резюме', 'rs:up'],
+      ],
+      [
+        ['💼 Опыт работы', 'rx:view'],
+        ['🧰 Навыки hh', 'rk:view'],
+      ],
+      [['📤 Обновить на hh', 're:go']],
+      [
+        ['📄 Резюме файлом', 'rs:file'],
+        ['↩️ Откатить', 'rs:undo'],
+      ],
+      [['📄 Другое резюме', 'rs:list']],
+      [['⬅️ Настройки', 's:root']],
+    ],
+  ],
+  [
+    'rs rootm0',
+    [
+      [
+        ['🔍 Анализ резюме', 'rs:an'],
+        ['⬆️ Upgrade резюме', 'rs:up'],
+      ],
+      [
+        ['📄 Резюме файлом', 'rs:file'],
+        ['↩️ Откатить', 'rs:undo'],
+      ],
+      [['📄 Другое резюме', 'rs:list']],
+      [['⬅️ Настройки', 's:root']],
+    ],
+  ],
+  ...[2, 3, 4, 5].map((n) => [
+    `rs pick${n}`,
+    [
+      ...Array.from({ length: n }, (_, i) => [[panelButton(`r${i}.text`), panelButton(`r${i}.cb`)]]),
+      [['⬅️ Рекомендации', 'rs:view']],
+    ],
+  ]),
+);
 
 // W3: состояние после нажатия кнопки, которое посчитали ноды «Apply choice», «Apply sent» и «Apply cancel»
 const CHOICE = "$('Apply choice').first().json";

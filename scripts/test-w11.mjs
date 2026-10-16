@@ -286,6 +286,7 @@ test('card of the second resume and ⚙️ → 👤 resets the target', async ()
   assert.match(out.view.text, /Дизайнер<\/b> · 🟢 поиск включён/);
   assert.match(out.view.text, /дополнительно: 11 знаков/);
   assert.equal(out.view.b.toggle.cb, 'rm:off:r2');
+  assert.equal(out.view.b.rec, 'rs:r:r2', '«💡 Рекомендации по резюме» opens W13 on this resume');
   assert.equal(w.state.target, 'r2');
   out = await w.step({ op: 'view' });
   assert.equal(out.view.layout, 'pf profile');
@@ -353,6 +354,8 @@ test('delete asks first; the main resume cannot be deleted', async () => {
   out = await w.step({ op: 'rm', field: 'del', value: 'r2:y' });
   assert.equal(listOf(w).length, 1);
   assert.equal(w.settings['resume.r2'], null);
+  assert.equal(w.settings['resume.r2.cv'], null, 'the markup (W13) goes with the resume');
+  assert.deepEqual(w.settings['resume.r2.history'], [], 'so do the versions for undo');
   assert.equal(out.view.layout, 'rm list1');
   out = await w.step({ op: 'rm', field: 'del', value: 'r1:y' });
   assert.equal(listOf(w).length, 1);

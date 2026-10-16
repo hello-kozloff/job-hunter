@@ -28,6 +28,13 @@ const LAYOUTS = [
   're item',
   're sum',
   're sumdry',
+  // Несколько резюме
+  'rs rootm',
+  'rs rootm0',
+  'rs pick2',
+  'rs pick3',
+  'rs pick4',
+  'rs pick5',
 ];
 const step = $('Step').first().json;
 const job = $('Job').first().json;

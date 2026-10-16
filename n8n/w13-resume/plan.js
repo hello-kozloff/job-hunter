@@ -27,12 +27,18 @@
 //   ли запись (RESUME_LIVE), items — разделы, которые на hh другие (n8n/shared/cv.js → cvExportItems), ii, dry,
 //   results, after, writeError }.
 // panelId (static data) — сообщение-панель, которую правим.
+// Несколько резюме (docs/resumes.md): static data target — резюме, с которым работаем (выбор: rs:list → rs:r:<id>, по
+// умолчанию основное r1; удалённое — снова основное). Настройки подменяются на его данные (resumeSettings: текст,
+// «Дополнительно», факты, разметка cv и версии для отката), сессия помнит target; привязка к hh — из списка резюме
+// (r2–r5 без неё с hh не работают: робот не знает, какое резюме читать).
 
 // @include n8n/shared/time.js
 
 // @include n8n/shared/card.js
 
 // @include n8n/shared/settings.js
+
+// @include n8n/shared/resumes.js
 
 // @include n8n/shared/skills.js
 
@@ -41,8 +47,15 @@
 // @include n8n/shared/cv.js
 
 const job = $('Job').first().json;
-const s = loadSettings($('Settings').all());
+const all = loadSettings($('Settings').all());
 const state = $getWorkflowStaticData('global');
+const scope = resumeScope(all, state.target);
+// Резюме, с которым работали, удалили: возвращаемся к основному, начатая правка теряет смысл
+if ((state.target ?? 'r1') !== scope.id) {
+  state.target = scope.id;
+  state.session = null;
+}
+const s = scope.s;
 const sess = state.session ?? null;
 const out = { route: 'step', mode: '', rows: false, wait: null, comment: '', keep: false, stale: false, hhHash: '', writeBody: null };
 const panel = job.messageId || state.panelId || 0;
@@ -53,11 +66,12 @@ function llm(mode, text, messageId = panel, comment = '', keep = false) {
   Object.assign(out, { route: 'llm', mode, comment, keep, wait: messageId ? { messageId, text } : null });
   if (state.session) state.session.last = { mode, comment, keep };
 }
-const live = Boolean(sess) && job.sid === sess.sid;
+const live = Boolean(sess) && job.sid === sess.sid && (sess.target ?? 'r1') === scope.id;
 function newSession(kind, d) {
   return {
     sid: Math.random().toString(36).slice(2, 6).padEnd(4, '0'),
     kind,
+    target: scope.id,
     at: new Date().toISOString(),
     base: resumeHash(d),
     original: d,
@@ -127,15 +141,23 @@ function splitStart(withHh, back) {
   out.rows = true;
   const d = resumeDraft(s);
   if (!s['profile.ready'] || !d.resume) return;
-  state.session = { ...newSession('split', d), hh: null, hhError: '', cv: null, problems: [], fields: [], fi: 0, skills: null, back };
+  state.session = { ...newSession('split', d), hh: null, hhError: '', hhHash: '', cv: null, problems: [], fields: [], fi: 0, skills: null, back };
   if (withHh) readHh();
   else llm('split', '⏳ Раскладываю резюме по разделам… Это до минуты.');
 }
+// С резюме hh можно сверяться, если оно связано с ботом. Основное без связи читает то, что hh показывает работодателям
+// (так оно и связывается); у r2–r5 без связи читать нечего: робот прочитал бы чужое резюме
+const canHh = () => scope.id === 'r1' || Boolean(scope.link);
 function readHh() {
+  if (!canHh()) {
+    out.rows = true;
+    return llm('split', '⏳ Раскладываю резюме по разделам… Это до минуты.');
+  }
   out.route = 'robot';
   out.mode = 'split';
   out.rows = true;
-  out.hhHash = s.cv?.resumes?.[0]?.hh?.hash ?? '';
+  out.hhHash = scope.link?.hash ?? '';
+  state.session.hhHash = out.hhHash;
   out.wait = panel ? { messageId: panel, text: '⏳ Читаю резюме на hh и раскладываю по разделам… Это до минуты.' } : null;
   // «🔄 Повторить» после сбоя нейросети — снова раскладка, резюме hh уже в сессии
   state.session.last = { mode: 'split', comment: '', keep: false };
@@ -157,7 +179,16 @@ function togglePick(i) {
   else k.picked = [...k.picked, x.name];
 }
 
-if (job.op === 'split') {
+if (job.op === 'targets') {
+  // Выбор резюме — Step покажет список
+} else if (job.op === 'target') {
+  // Работаем с другим резюме: начатая правка прежнего теряет смысл; панель — Step, с покрытием навыков (rows)
+  if (job.value !== scope.id && resumeScope(all, job.value).id === job.value) {
+    state.target = job.value;
+    state.session = null;
+  }
+  out.rows = true;
+} else if (job.op === 'split') {
   splitStart(job.value !== 'n', 'root');
 } else if (job.op === 'splitctl') {
   if (!live || sess.kind !== 'split') stale();
@@ -205,12 +236,13 @@ if (job.op === 'split') {
   if (!cvFresh(s)) splitStart(true, 'exp');
 } else if (job.op === 'export') {
   // 📤 Обновить на hh: разметка живая и связана с резюме hh — сначала свежее чтение hh, потом сравнение («Step»)
-  if (cvFresh(s) && s.cv.resumes[0].hh) {
+  if (cvFresh(s) && scope.link) {
     state.session = {
       ...newSession('export', resumeDraft(s)),
       cv: JSON.parse(JSON.stringify(s.cv)),
       hh: null,
       hhError: '',
+      hhHash: scope.link.hash,
       live: false,
       items: [],
       ii: 0,
@@ -220,7 +252,7 @@ if (job.op === 'split') {
       writeError: '',
     };
     out.route = 'robot';
-    out.hhHash = s.cv.resumes[0].hh.hash;
+    out.hhHash = scope.link.hash;
     out.wait = panel ? { messageId: panel, text: '⏳ Читаю резюме на hh, чтобы сравнить с ботом…' } : null;
   }
 } else if (job.op === 'item') {

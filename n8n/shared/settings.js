@@ -112,6 +112,16 @@ const SETTINGS = {
   'resume.r3': { default: null, resumeData: true },
   'resume.r4': { default: null, resumeData: true },
   'resume.r5': { default: null, resumeData: true },
+  // Рекомендации по резюме r2–r5 (W13, этап 6): разметка и версии для отката — отдельными ключами, а не в resume.<id>:
+  // тот проверяется целиком, и одна битая версия обнулила бы всё резюме. У основного — cv и resume.history выше
+  'resume.r2.cv': { default: null, cv: true },
+  'resume.r2.history': { default: [], history: 5 },
+  'resume.r3.cv': { default: null, cv: true },
+  'resume.r3.history': { default: [], history: 5 },
+  'resume.r4.cv': { default: null, cv: true },
+  'resume.r4.history': { default: [], history: 5 },
+  'resume.r5.cv': { default: null, cv: true },
+  'resume.r5.history': { default: [], history: 5 },
 };
 
 // Встроенные спорные случаи промпта W2: как узнать их в списке пользователя, решение по умолчанию

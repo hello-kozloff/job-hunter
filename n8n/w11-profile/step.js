@@ -189,6 +189,7 @@ function cardView(id, note = '') {
     txt: `rm:txt:${id}`,
     clone: `rm:clone:${id}`,
     del: `rm:del:${id}`,
+    rec: `rs:r:${id}`,
   });
 }
 function deleteView(id) {
@@ -550,7 +551,8 @@ function rmOp() {
       let next = list.filter((r) => r.id !== id);
       // Нужно хотя бы одно включённое: иначе сбор нечего искать
       if (!next.some((r) => r.active)) next = next.map((r) => (r.id === 'r1' ? { ...r, active: true } : r));
-      apply({ resumes: next, [`resume.${id}`]: null });
+      // Разметка и версии для отката (W13) уходят вместе с резюме: следующее резюме с тем же номером начнёт с чистого листа
+      apply({ resumes: next, [`resume.${id}`]: null, [`resume.${id}.cv`]: null, [`resume.${id}.history`]: [] });
       delete state.target;
       return listView(`🗑 Удалил «${esc(name)}».`);
     }

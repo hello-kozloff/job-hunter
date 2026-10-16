@@ -95,7 +95,7 @@ if (req.mode === 'plan') {
 }
 if (req.mode === 'split') {
   const about = a.about?.from && a.about?.to ? a.about : null;
-  const r = cvFromAnchors(sess.draft.resume, { title: a.title, about, places: a.places });
+  const r = cvFromAnchors(sess.draft.resume, { title: a.title, about, places: a.places }, sess.target ?? 'r1');
   if (r.error === 'mark') return fail('в резюме есть знаки ⟦ ⟧, разложить его не могу');
   if (r.error) return fail('разметка не сошлась с текстом резюме — попробуй ещё раз');
   const c = r.cv;

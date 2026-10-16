@@ -165,7 +165,9 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
                  (📥: робот читает список резюме hh → галочки → по одному: разбор нейросетью → ✅ → «Дальше»; роли, формат, зарплата, стаж — с hh).
                  Основное резюме r1 — прежние глобальные ключи settings, r2–r5 — resume.<id> (resumes — список); W1 ищет по каждому
                  включённому (до 3), вакансия несёт resume_id/resume_name, фильтры (пресет, стоп-слова), оценка W2 и письма W5 —
-                 по резюме вакансии (n8n/shared/resumes.js → resumeSettings); подпись, контакт, пояс, нейросеть, чёрный список общие
+                 по резюме вакансии (n8n/shared/resumes.js → resumeSettings); подпись, контакт, пояс, нейросеть, чёрный список общие.
+                 W13 (💡, 📤) работает с одним резюме за раз: «📄 Другое резюме» на панели или «💡» в карточке резюме (rs:list,
+                 rs:r:<id>, static data target); разметка и версии отката r2–r5 — resume.<id>.cv и resume.<id>.history
 [W13 Resume]   рекомендации по резюме (15.10.2026, docs/recommendations.md): ⚙️ → 💡 → W3 → W13: панель с покрытием навыков
                  вакансий; 🔍 анализ — отчёт глазами ATS и роботов hh (статистика навыков и названий из таблицы) → до 8
                  вопросов кнопками (недостающие навыки галочками, фильтры hh — только подсказка) → правки; ⬆️ Upgrade —
@@ -201,7 +203,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - таблица `blacklist`: `company, comment`;
 - таблица `runs` — журнал сборов W1: `started_at, finished_at, kind` (schedule | catchup | bot | manual), `status` (running | ok | error), `found, uniq, fresh, rejected, scoring, pages, cards, error`;
 - таблица `settings` — настройки из бота: `name, value_json` (только изменения; значения по умолчанию — в коде); с 13.10.2026 там же профиль человека: `profile.*` (резюме, факты, подпись, контакт, пресет), `llm.rules`, `letters.*` (`docs/onboarding.md`); с 15.10.2026 — `resume.history` (версии резюме для отката, W13) и `cv` (разделы резюме: разметка поверх `profile.resume`, W13);
-- 16.10.2026 (несколько резюме, `docs/resumes.md`): таблица `settings` — `resumes` (список резюме) и `resume.r2` … `resume.r5` (данные резюме: текст, факты, правила, поиск, фильтр, письма); `vacancies` — `resume_id`, `resume_name` (пусто у основного резюме);
+- 16.10.2026 (несколько резюме, `docs/resumes.md`): таблица `settings` — `resumes` (список резюме) и `resume.r2` … `resume.r5` (данные резюме: текст, факты, правила, поиск, фильтр, письма), `resume.r2.cv` … `resume.r5.cv` и `resume.r2.history` … `resume.r5.history` (разметка и версии отката W13); `vacancies` — `resume_id`, `resume_name` (пусто у основного резюме);
 - таблица `alerts` — тревоги W4: `alert_key, workflow, message, first_at, last_at, hits, is_open, tg_message_id`;
 - имена колонок обходят служебные слова SQL (key, value, trigger, count, unique, open);
 - `id, createdAt, updatedAt` — встроенные.
@@ -404,7 +406,7 @@ n8n/w8-clock/*.js                   код Code-нод W8 («часы» сбор
 n8n/w9-robot/*.js                   код Code-нод W9 (робот-отклик: план 🚀/⛔, ворота очереди, исход, капча, блоки)
 n8n/w11-profile/*.js                код Code-нод W11 (онбординг: PDF → нейросеть → профиль; ⚙️ → 👤)
 n8n/w13-resume/*.js                 код Code-нод W13 (рекомендации по резюме: план, вопросы, правки, откат, файл)
-scripts/test-shared.mjs, test-w11.mjs  тесты общего кода и сценариев W11 без n8n: node --test scripts/test-*.mjs
+scripts/test-shared.mjs, test-w11.mjs, test-w13.mjs, test-w2.mjs, test-w9.mjs  тесты общего кода и сценариев W2, W9, W11, W13 без n8n: node --test scripts/test-*.mjs
 n8n/shared/*.js                     общий код Code-нод (карточка, письмо, разбор страницы hh, меню, расписание W1, робот-отклик,
                                     поисковый запрос hh, признак AI-вакансии, время человека time.js, профиль profile.js,
                                     справочник ролей hh hh-roles.js, запрос к нейросети и разбор ответа llm.js,
