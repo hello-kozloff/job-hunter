@@ -230,7 +230,7 @@ Step → Save? → Save rows → Save resume (upsert settings)
 - `resume.history` хранит и разметку; откат возвращает её вместе с текстом. Версия без разметки разметку не трогает: та станет неживой и оживёт при откате обратно.
 
 **Чтение hh роботом** (S2, `applier/src/flows/resume.mjs`, `POST /resume/read {hash?}`, CLI `node scripts/applier.mjs cv`):
-- «Мои резюме» → страница резюме (по умолчанию — видимое работодателям, иначе первое) → `applicantResume` из InitialState → `{ resumes, resume: { hash, title, about, keySkills, places[{ hhId, company, position, description, start, end }], access, status, updated, limits } }` (`parseResume`, `applier/src/hh/resume.mjs`);
+- «Мои резюме» → страница резюме (по умолчанию — видимое работодателям, иначе первое) → `applicantResume` из InitialState → `{ resumes, resume: { hash, title, about, keySkills, places[{ hhId, company, position, description, start, end }], roles[{ id, text }], formats, salary, months, access, status, updated, limits } }` (`parseResume`, `applier/src/hh/resume.mjs`); `roles`, `formats`, `salary`, `months` (16.10.2026) — то, что человек выбрал на hh сам, для импорта в бота (`docs/resumes.md`); имя, пол и контакты не отдаются;
 - только GET, строгий предохранитель; замок `resume-read` (занят откликом — 409, блок — 423); капча — блок, как у отклика; не вошли — `{ ok: false, error: 'login' }`;
 - бэкап прочитанного резюме целиком — `/data/resume/<hash>-<время>.json`, 30 дней;
 - фейк (`APPLIER_FAKE=1`) отдаёт синтетическое резюме;

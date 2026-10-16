@@ -86,6 +86,12 @@ const hhResume = {
   skills: [{ string: 'О себе: React.' }],
   keySkills: [{ string: 'React' }, { string: ' TypeScript ' }, { string: '' }],
   accessType: [{ string: 'clients' }],
+  professionalRole: [{ string: 96, id: 96, text: 'Программист, разработчик' }, { string: 'x' }],
+  workFormats: [{ string: 'REMOTE' }, { string: 'HYBRID' }],
+  salary: [{ amount: 200000.4, currency: 'RUR' }],
+  totalExperience: [{ string: 61 }],
+  firstName: [{ string: 'Иван' }],
+  gender: [{ string: 'male' }],
   experience: [
     { id: 2092614619, companyName: 'Руб Икс', position: 'Senior Frontend Developer', description: 'Карты.', startDate: '2025-08-01', endDate: '2026-09-01' },
     { id: 'x', companyName: 'WillSkill', position: 'Middle', description: '', startDate: '2022-12-01', endDate: null },
@@ -106,6 +112,15 @@ test('parseResume: поля hh [{ string }] → строки, места, пре
   assert.deepEqual(r.limits, { title: 100, about: 32768, keySkills: 30, keySkill: 100, position: 512, description: 32768, titleNotIn: ['Другое резюме'] });
   assert.equal(parseResume(null), null);
   assert.equal(parseResume({ title: [] }), null);
+  // для импорта: роли hh, формат работы, зарплата, стаж; имя и пол не отдаём
+  assert.deepEqual(r.roles, [{ id: '96', text: 'Программист, разработчик' }]);
+  assert.deepEqual(r.formats, ['REMOTE', 'HYBRID']);
+  assert.deepEqual(r.salary, { amount: 200000, currency: 'RUR' });
+  assert.equal(r.months, 61);
+  assert.ok(!('name' in r) && !('gender' in r) && !('firstName' in r), 'личные данные не отдаются');
+  const bare = parseResume({ _attributes: { hash: B } });
+  assert.deepEqual([bare.roles, bare.formats, bare.salary, bare.months], [[], [], null, 0]);
+  assert.equal(parseResume({ _attributes: { hash: B }, salary: [{ amount: 0, currency: 'RUR' }], totalExperience: [{ string: 'abc' }] }).salary, null);
   assert.deepEqual(parseResume({ _attributes: { hash: B } }).limits, { ...RESUME_LIMITS, titleNotIn: [] });
 });
 

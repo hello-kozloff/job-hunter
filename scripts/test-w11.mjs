@@ -534,3 +534,375 @@ test('settings root: one resume — no resume line; several — a line and a not
   out = await settingsView(main(), 'search');
   assert.ok(!/основного резюме/.test(out.text), 'no note for one resume');
 });
+
+// ---------- Импорт резюме с hh ----------
+const HA = 'a'.repeat(38);
+const HB = 'b'.repeat(38);
+const HC = 'c'.repeat(38);
+const HD = 'd'.repeat(38);
+const hhListBody = (hashes) => ({
+  ok: true,
+  resumes: hashes.map(([hash, title, access = 'clients']) => ({ hash, title, access, status: 'published', updated: '2026-10-12T10:00:00.000Z' })),
+  resume: { hash: hashes[0][0], title: hashes[0][1] },
+});
+const hhDetail = (hash, title, extra = {}) => ({
+  hash,
+  title,
+  about: 'Веду учёт, сдаю отчётность, закрываю месяц. Опыт в производстве и торговле.',
+  keySkills: ['1С:Бухгалтерия', 'НДС', 'Первичка'],
+  places: [
+    { hhId: 1, company: 'Студия', position: 'Бухгалтер', description: 'Первичка, банк, закрытие периода.', start: '2023-02-01', end: '' },
+    { hhId: 2, company: 'Торг', position: 'Помощник бухгалтера', description: 'Сверки с контрагентами.', start: '2020-01-01', end: '2023-01-01' },
+  ],
+  roles: [{ id: '18', text: 'Бухгалтер' }],
+  formats: ['REMOTE'],
+  salary: { amount: 90000, currency: 'RUR' },
+  months: 61,
+  ...extra,
+});
+const ok = (body) => ({ statusCode: 200, body });
+const accountantAnswer = {
+  facts: { name: '', first_name: '', gender: 'unknown', position: 'Бухгалтер', position_gen: 'бухгалтера', level: 'middle', years: 3, skills: ['1С'], companies: ['Студия'], english: '', city: '', country: '', formats: ['ON_SITE'], salary_amount: 0, salary_currency: '' },
+  about: ['Бухгалтер, 5 лет'],
+  search: { roles: ['34'], in_name: ['бухгалтер', 'бухгалтер на участок', 'accountant'], anywhere: [], stop_words: ['кассир'] },
+  rules: { skip: ['главный бухгалтер'], maybe: [], apply: ['первичка и банк'], ignore: [] },
+};
+const llmReply = (answer) => ({ statusCode: 200, body: { candidates: [{ content: { parts: [{ text: JSON.stringify(answer) }] } }] } });
+
+// Мир импорта: список резюме hh прочитан, выбор на панели
+async function importWorld(extraSettings = {}) {
+  const w = world(main({ cv: { v: 1, places: [], resumes: [{ id: 'r1', hh: { hash: HA, title: 'Frontend (hh)' }, template: '', title: '', about: '', keySkills: [] }] }, ...extraSettings }));
+  const job = w.jobOf({ op: 'rm', field: 'imp' });
+  const plan = await w.run('n8n/w11-profile/plan.js', { job });
+  const hh = await w.run('n8n/w11-profile/hh-resume.js', { job, plan, input: ok(hhListBody([[HA, 'Frontend (hh)'], [HB, 'Бухгалтер'], [HC, 'Бухгалтер (копия)', 'no_one']])) });
+  const out = await w.run('n8n/w11-profile/step.js', { job, plan, nodes: { 'HH resume': hh } });
+  return { w, plan, hh, out };
+}
+// Нажатие rm:i:<sid>:<действие>: Plan решает, читать ли через робота (route hh) или показать экран (Step)
+async function pressImport(w, arg, extra = {}) {
+  const job = w.jobOf({ op: 'rm', field: 'i', value: `${w.state.imp?.sid ?? 'zzzz'}:${arg}`, ...extra });
+  const plan = await w.run('n8n/w11-profile/plan.js', { job });
+  if (plan.route === 'hh') return { plan, job };
+  const out = await w.run('n8n/w11-profile/step.js', { job, plan });
+  w.save(out);
+  return { plan, job, out };
+}
+// Чтение резюме роботом, разбор нейросетью, экран «разобрано» (то, что делает цепочка Read hh → … → Step)
+async function readAndParse(w, plan, job, { answer = accountantAnswer, hhReply, llm } = {}) {
+  const hhRes = await w.run('n8n/w11-profile/hh-resume.js', { job, plan, input: hhReply ?? ok({ ok: true, resumes: [], resume: hhDetail(plan.hash, plan.importing.title) }) });
+  if (!hhRes.toLlm) {
+    const out = await w.run('n8n/w11-profile/step.js', { job, plan, nodes: { 'HH resume': hhRes } });
+    w.save(out);
+    return { hhRes, out };
+  }
+  const parsed = (
+    await w.run('n8n/w11-profile/parse-profile.js', {
+      job,
+      plan,
+      nodes: { 'Build extract': { provider: 'gemini', mode: 'extract' }, 'HH resume': hhRes },
+      input: llm ?? llmReply(answer),
+    })
+  );
+  const out = await w.run('n8n/w11-profile/step.js', { job, plan, nodes: { 'HH resume': hhRes, 'Parse profile': parsed, 'Build extract': { mode: 'extract' } } });
+  w.save(out);
+  return { hhRes, parsed, out };
+}
+
+test('import: «📥 Импорт с hh» — робот читает список, панель с галочками, уже связанные отмечены', async () => {
+  const { w, plan, hh, out } = await importWorld();
+  assert.equal(plan.route, 'hh');
+  assert.equal(plan.mode, 'list');
+  assert.match(plan.wait.text, /Читаю список резюме на hh/);
+  assert.equal(hh.hh, 'list');
+  assert.equal(w.state.imp.list.length, 3);
+  assert.equal(w.state.imp.list[0].linked, 'r1', 'основное уже связано с первым резюме hh');
+  assert.equal(w.state.imp.list[1].linked, '');
+  assert.equal(out.view.layout, 'rm imp3');
+  assert.match(out.view.text, /резюме на hh: 3/);
+  assert.match(out.view.text, /✅ <b>Frontend \(hh\)<\/b>/);
+  assert.match(out.view.text, /уже в боте: «Frontend-разработчик»/);
+  assert.match(out.view.text, /⬜ <b>Бухгалтер<\/b>/);
+  assert.match(out.view.text, /🙈 скрыто от работодателей/);
+  assert.equal(out.view.b.i1.cb, `rm:i:${w.state.imp.sid}:1`);
+  assert.equal(out.view.b.go.cb, `rm:i:${w.state.imp.sid}:go`);
+  assert.equal(out.view.b.go.text, '📥 Импортировать');
+});
+
+test('import: галочки — отметить, снять, уже связанное не отмечается, больше свободных мест нельзя', async () => {
+  const { w } = await importWorld();
+  let r = await pressImport(w, '1');
+  assert.match(r.out.view.text, /☑️ <b>Бухгалтер<\/b>/);
+  assert.equal(r.out.view.b.go.text, '📥 Импортировать (1)');
+  r = await pressImport(w, '1');
+  assert.match(r.out.view.text, /⬜ <b>Бухгалтер<\/b>/);
+  r = await pressImport(w, '0');
+  assert.match(r.out.view.text, /уже в боте/);
+  assert.deepEqual(w.state.imp.selected, []);
+  // место только одно: у основного и трёх других резюме остаётся 1
+  w.settings.resumes = [1, 2, 3, 4].map((n) => ({ id: `r${n}`, name: `R${n}`, active: true, hh: null }));
+  r = await pressImport(w, '1');
+  assert.deepEqual(w.state.imp.selected, [HB]);
+  r = await pressImport(w, '2');
+  assert.match(r.out.view.text, /Свободно мест: 1/);
+  assert.deepEqual(w.state.imp.selected, [HB]);
+});
+
+test('import: устаревшая панель и чужие нажатия не ломают', async () => {
+  const { w } = await importWorld();
+  const job = w.jobOf({ op: 'rm', field: 'i', value: 'zzzz:go' });
+  const plan = await w.run('n8n/w11-profile/plan.js', { job });
+  assert.equal(plan.route, 'step');
+  const out = await w.run('n8n/w11-profile/step.js', { job, plan });
+  assert.equal(out.view.layout, 'rm list1');
+  assert.match(out.view.text, /Импорт устарел/);
+  const empty = world(main());
+  const j2 = empty.jobOf({ op: 'rm', field: 'i', value: 'abcd:go' });
+  const p2 = await empty.run('n8n/w11-profile/plan.js', { job: j2 });
+  assert.equal(p2.route, 'step', 'без начатого импорта читать нечего');
+});
+
+test('import: «Импортировать» без галочек — подсказка, не чтение', async () => {
+  const { w } = await importWorld();
+  const r = await pressImport(w, 'go');
+  assert.equal(r.plan?.route, 'step');
+  assert.equal(r.out.view.layout, 'rm imp3');
+  assert.match(r.out.view.text, /Отметь хотя бы одно резюме/);
+});
+
+test('import: «🔗 Это основное» связывает основное, только если оно не связано и отмечено одно', async () => {
+  const { w } = await importWorld({ cv: null });
+  // основное не связано (cv нет)
+  let r = await pressImport(w, 'b');
+  assert.match(r.out.view.text, /Отметь ровно одно резюме/);
+  await pressImport(w, '1');
+  await pressImport(w, '2');
+  r = await pressImport(w, 'b');
+  assert.match(r.out.view.text, /Отметь ровно одно резюме/, 'два отмеченных');
+  await pressImport(w, '2');
+  r = await pressImport(w, 'b');
+  assert.match(r.out.view.text, /Основное резюме связано с «Бухгалтер»/);
+  assert.deepEqual(w.settings.resumes[0].hh, { hash: HB, title: 'Бухгалтер' });
+  assert.equal(w.state.imp.list[1].linked, 'r1');
+  r = await pressImport(w, 'b');
+  assert.match(r.out.view.text, /уже связано с «Бухгалтер»/);
+});
+
+test('import: чтение резюме — текст как на hh, факты hh, ошибки робота', async () => {
+  const { w } = await importWorld();
+  await pressImport(w, '1');
+  const { plan, job } = await pressImport(w, 'go');
+  assert.equal(plan.route, 'hh');
+  assert.equal(plan.mode, 'detail');
+  assert.equal(plan.hash, HB);
+  assert.deepEqual(plan.importing, { hash: HB, title: 'Бухгалтер' });
+  assert.match(plan.wait.text, /Читаю «Бухгалтер» на hh… \(1 из 1\)/);
+  assert.equal(plan.inherit.city, 'Казань', 'факты о человеке — из основного');
+  const hh = await w.run('n8n/w11-profile/hh-resume.js', { job, plan, input: ok({ ok: true, resumes: [], resume: hhDetail(HB, 'Бухгалтер') }) });
+  assert.equal(hh.toLlm, true);
+  assert.equal(hh.create, true);
+  assert.match(hh.text, /^Бухгалтер\n\nОпыт работы — 5 лет 1 месяц\n\nКлючевые навыки\n1С:Бухгалтерия, НДС, Первичка\n\nОбо мне\n/);
+  assert.match(hh.text, /Места работы\n\nСтудия — февраль 2023 — по настоящее время\nБухгалтер\nПервичка/);
+  assert.match(hh.text, /Торг — январь 2020 — январь 2023\nПомощник бухгалтера/);
+  assert.equal(w.state.text, hh.text);
+  assert.deepEqual(hh.hh, { roles: [{ id: '18', text: 'Бухгалтер' }], formats: ['REMOTE'], salary: { amount: 90000, currency: 'RUR' }, months: 61 });
+  // сбои робота
+  const bad = async (res) => (await w.run('n8n/w11-profile/hh-resume.js', { job, plan, input: res })).hhError;
+  assert.equal(await bad({ error: { message: 'ECONNREFUSED' } }), 'down');
+  assert.equal(await bad({ statusCode: 409, body: { error: 'busy' } }), 'busy');
+  assert.equal(await bad({ statusCode: 423, body: { blocked: { kind: 'captcha' } } }), 'blocked:captcha');
+  assert.equal(await bad({ statusCode: 500, body: null }), 'http:500');
+  assert.equal(await bad({ statusCode: 200, body: { ok: false, error: 'not_found' } }), 'not_found');
+  assert.equal(await bad(ok({ ok: true, resumes: [], resume: hhDetail(HC, 'Другое') })), 'not_found', 'пришло не то резюме');
+  assert.equal(await bad(ok({ ok: true, resumes: [], resume: { hash: HB, title: 'Пусто', about: '', keySkills: [], places: [] } })), 'empty');
+});
+
+test('import: разбор нейросетью — роли, формат, зарплата и стаж с hh, пол и город из основного', async () => {
+  const { w } = await importWorld();
+  await pressImport(w, '1');
+  const { plan, job } = await pressImport(w, 'go');
+  const { parsed, out } = await readAndParse(w, plan, job);
+  const draft = parsed.draft;
+  assert.deepEqual(draft.search.roles, ['18'], 'роль hh вместо угаданной нейросетью');
+  assert.deepEqual(draft.facts.formats, ['REMOTE']);
+  assert.deepEqual(draft.facts.salary, { amount: 90000, currency: 'RUR' });
+  assert.equal(draft.facts.years, 5.1);
+  assert.equal(draft.facts.gender, 'm');
+  assert.equal(draft.facts.city, 'Казань');
+  assert.equal(out.view.layout, 'pf review');
+  assert.match(out.view.text, /Резюме с hh разобрано<\/b>: «Бухгалтер»/);
+  assert.equal(w.state.mode, 'create');
+  assert.deepEqual(w.state.draftHh, { hash: HB, title: 'Бухгалтер' });
+  assert.equal(out.save, null, 'до ✅ ничего не сохранено');
+});
+
+test('import: ✅ сохраняет резюме со связью с hh; единственное — сразу карточка', async () => {
+  const { w } = await importWorld();
+  await pressImport(w, '1');
+  const { plan, job } = await pressImport(w, 'go');
+  await readAndParse(w, plan, job);
+  const out = await w.step({ op: 'confirm', value: 'yes' });
+  assert.equal(out.view.layout, 'rm card');
+  assert.match(out.view.text, /Резюме импортировано/);
+  const added = w.settings.resumes[1];
+  assert.deepEqual([added.id, added.name, added.active], ['r2', 'Бухгалтер', true]);
+  assert.deepEqual(added.hh, { hash: HB, title: 'Бухгалтер' });
+  assert.deepEqual(w.settings['resume.r2'].roles, ['18']);
+  assert.match(w.settings['resume.r2'].resume, /Ключевые навыки/);
+  assert.equal(w.state.imp, undefined, 'импорт закончен');
+  assert.equal(w.state.draftHh, undefined);
+  assert.equal(w.settings['profile.signature'], 'Иван', 'общее не тронуто');
+});
+
+test('import: очередь из двух — ✅, «Дальше», ❌ → итог', async () => {
+  const { w } = await importWorld();
+  await pressImport(w, '1');
+  await pressImport(w, '2');
+  let { plan, job } = await pressImport(w, 'go');
+  assert.equal(plan.hash, HB);
+  assert.match(plan.wait.text, /\(1 из 2\)/);
+  await readAndParse(w, plan, job);
+  let out = await w.step({ op: 'confirm', value: 'yes' });
+  assert.equal(out.view.layout, 'rm imp next');
+  assert.match(out.view.text, /Сохранил «Бухгалтер»/);
+  assert.match(out.view.text, /Дальше: «Бухгалтер \(копия\)» \(осталось 1\)/);
+  assert.equal(out.view.b.next.cb, `rm:i:${w.state.imp.sid}:next`);
+  // ▶️ Дальше
+  ({ plan, job } = await pressImport(w, 'next'));
+  assert.equal(plan.hash, HC);
+  assert.match(plan.wait.text, /\(2 из 2\)/);
+  const second = await readAndParse(w, plan, job);
+  assert.match(second.out.view.text, /Резюме с hh разобрано<\/b>: «Бухгалтер \(копия\)»/);
+  // ❌ — пропустить: очередь кончилась, итог
+  out = await w.step({ op: 'confirm', value: 'no' });
+  assert.equal(out.view.layout, 'rm list2');
+  assert.match(out.view.text, /Импорт завершён: сохранено 1: «Бухгалтер»; пропущено 1: «Бухгалтер \(копия\)»/);
+  assert.equal(w.settings.resumes.length, 2);
+  assert.equal(w.state.imp, undefined);
+});
+
+test('import: сбой робота на резюме — повторить, пропустить, хватит', async () => {
+  const { w } = await importWorld();
+  await pressImport(w, '1');
+  await pressImport(w, '2');
+  let { plan, job } = await pressImport(w, 'go');
+  let r = await readAndParse(w, plan, job, { hhReply: { statusCode: 423, body: { blocked: { kind: 'captcha' } } } });
+  assert.equal(r.out.view.layout, 'rm imp error');
+  assert.match(r.out.view.text, /«Бухгалтер»/);
+  assert.match(r.out.view.text, /робот на паузе \(captcha\)/);
+  // 🔄 повторить то же
+  ({ plan, job } = await pressImport(w, 'retry'));
+  assert.equal(plan.route, 'hh');
+  assert.equal(plan.hash, HB);
+  r = await readAndParse(w, plan, job);
+  assert.equal(r.out.view.layout, 'pf review');
+  // ❌ на разборе → дальше по очереди
+  const out = await w.step({ op: 'confirm', value: 'no' });
+  assert.equal(out.view.layout, 'rm imp next');
+  assert.match(out.view.text, /Пропустил «Бухгалтер»/);
+  // дальше → сбой → ⏭ пропустить → итог; ничего не сохранено
+  ({ plan, job } = await pressImport(w, 'next'));
+  r = await readAndParse(w, plan, job, { hhReply: { error: { message: 'down' } } });
+  assert.equal(r.out.view.layout, 'rm imp error');
+  assert.match(r.out.view.text, /робот не отвечает/);
+  const end = await pressImport(w, 'skip');
+  assert.equal(end.out.view.layout, 'rm list1');
+  assert.match(end.out.view.text, /Импорт завершён: пропущено 2/);
+  assert.equal(w.settings.resumes, undefined, 'ничего не сохранено');
+});
+
+test('import: нейросеть не разобрала — панель сбоя; список не прочитан — «Повторить» с начала', async () => {
+  const { w } = await importWorld();
+  await pressImport(w, '1');
+  const { plan, job } = await pressImport(w, 'go');
+  let r = await readAndParse(w, plan, job, { llm: { statusCode: 503, body: { error: { message: 'high demand' } } } });
+  assert.equal(r.out.view.layout, 'rm imp error');
+  assert.match(r.out.view.text, /нейросеть не разобрала резюме \(нейросеть ответила HTTP 503/);
+  // лимит запросов: подсказка про «Повторить», а не «пришли PDF ещё раз»
+  r = await readAndParse(w, plan, job, { llm: { statusCode: 429, body: { error: { message: 'quota' } } } });
+  assert.match(r.out.view.text, /лимит запросов к нейросети \(429\) — нажми «🔄 Повторить» через минуту/);
+  assert.ok(!/пришли PDF/.test(r.out.view.text));
+  assert.equal(w.state.draftHh, undefined);
+  // список: робот не ответил
+  const w2 = world(main());
+  const job2 = w2.jobOf({ op: 'rm', field: 'imp' });
+  const plan2 = await w2.run('n8n/w11-profile/plan.js', { job: job2 });
+  const hh = await w2.run('n8n/w11-profile/hh-resume.js', { job: job2, plan: plan2, input: { error: { message: 'ECONNREFUSED' } } });
+  assert.equal(hh.hhError, 'down');
+  const out = await w2.run('n8n/w11-profile/step.js', { job: job2, plan: plan2, nodes: { 'HH resume': hh } });
+  assert.equal(out.view.layout, 'rm hh error');
+  assert.match(out.view.text, /робот не отвечает/);
+  assert.equal(w2.state.imp, undefined);
+});
+
+test('import: правка разобранного резюме не теряет связь с hh и не применяет hh повторно', async () => {
+  const { w } = await importWorld();
+  await pressImport(w, '1');
+  const { plan, job } = await pressImport(w, 'go');
+  await readAndParse(w, plan, job);
+  const reviseJob = w.jobOf({ op: 'input', field: 'profile', text: 'ищи ещё главбуха', messageId: 0 });
+  const revisePlan = await w.run('n8n/w11-profile/plan.js', { job: reviseJob });
+  assert.equal(revisePlan.mode, 'revise');
+  assert.equal(revisePlan.create, true);
+  const profile = await loadProfile();
+  const draft = profile.draftFromAnswer({ ...accountantAnswer, search: { ...accountantAnswer.search, roles: ['18', '34'] } }, revisePlan.draft);
+  const out = await w.run('n8n/w11-profile/step.js', { job: reviseJob, plan: revisePlan, nodes: { 'Parse profile': { ok: true, draft }, 'Build extract': { mode: 'revise' } } });
+  assert.equal(out.view.layout, 'pf review');
+  assert.deepEqual(w.state.draftHh, { hash: HB, title: 'Бухгалтер' });
+  await w.step({ op: 'confirm', value: 'yes' });
+  assert.deepEqual(w.settings.resumes[1].hh, { hash: HB, title: 'Бухгалтер' });
+  assert.deepEqual(w.settings['resume.r2'].roles, ['18', '34']);
+});
+
+test('import: брошенный импорт не цепляет hh к следующему новому резюме', async () => {
+  const { w } = await importWorld();
+  await pressImport(w, '1');
+  const { plan, job } = await pressImport(w, 'go');
+  await readAndParse(w, plan, job); // разобрано, но ни ✅, ни ❌
+  assert.ok(w.state.draftHh);
+  // новое резюме из текста: другой черновик
+  await w.step({ op: 'rm', field: 'new' });
+  const textJob = w.jobOf({ op: 'input', field: 'newresume', text: RESUME, messageId: 0 });
+  const textPlan = await w.run('n8n/w11-profile/plan.js', { job: textJob });
+  const parsed = await parseDraft(w, textPlan);
+  await w.run('n8n/w11-profile/step.js', { job: textJob, plan: textPlan, nodes: { 'Parse profile': parsed, 'Build extract': { mode: 'extract' } } });
+  assert.equal(w.state.draftHh, undefined, 'связь с hh снята');
+  await w.step({ op: 'confirm', value: 'yes' });
+  assert.equal(w.settings.resumes[1].hh, null);
+});
+
+test('import: нет свободных мест — список не читаем', async () => {
+  const list = ['r1', 'r2', 'r3', 'r4', 'r5'].map((id) => ({ id, name: id, active: true, hh: null }));
+  const w = world(main({ resumes: list }));
+  const job = w.jobOf({ op: 'rm', field: 'imp' });
+  const plan = await w.run('n8n/w11-profile/plan.js', { job });
+  assert.equal(plan.route, 'step');
+  assert.match(plan.problem, /предел/);
+});
+
+test('import: «⏹ Хватит» в очереди — итог, остальные не импортированы', async () => {
+  const { w } = await importWorld();
+  await pressImport(w, '1');
+  await pressImport(w, '2');
+  const { plan, job } = await pressImport(w, 'go');
+  await readAndParse(w, plan, job);
+  await w.step({ op: 'confirm', value: 'yes' });
+  const stop = await pressImport(w, 'x');
+  assert.equal(stop.out.view.layout, 'rm list2');
+  assert.match(stop.out.view.text, /Импорт завершён: сохранено 1/);
+  assert.match(stop.out.view.text, /Остальные не импортировал/);
+});
+
+test('route: кнопки импорта rm:imp и rm:i:<сессия>:<действие>', async () => {
+  const [a] = await route(press('rm:imp'));
+  assert.equal(a.json.action, 'profile');
+  assert.equal(a.json.op, 'rm');
+  assert.equal(a.json.field, 'imp');
+  for (const arg of ['0', '5', 'b', 'x', 'go', 'next', 'retry', 'skip']) {
+    const [item] = await route(press(`rm:i:ab12:${arg}`));
+    assert.equal(item.json.field, 'i', arg);
+    assert.equal(item.json.value, `ab12:${arg}`, arg);
+  }
+  for (const bad of ['rm:i:ab12:9x', 'rm:i:abc:go', 'rm:i:ab12:', 'rm:i:AB12:go', 'rm:i:ab12:go:x']) {
+    assert.deepEqual(await route(press(bad)), [], bad);
+  }
+});

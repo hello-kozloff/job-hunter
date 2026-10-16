@@ -18,8 +18,9 @@ const lib = load(
     'n8n/shared/search.js',
     'n8n/shared/resumes.js',
     'n8n/shared/profile.js',
+    'n8n/shared/hh-resume.js',
   ],
-  'SETTINGS, RESUME_FIELDS, loadSettings, validSetting, resumeList, resumeById, activeResumes, nextResumeId, resumeData, resumeSettings, resumeRows, resumeSearchable, searchQueries, inheritPerson, resumeFromDraft, draftFromAnswer',
+  'SETTINGS, RESUME_FIELDS, loadSettings, validSetting, resumeList, resumeById, activeResumes, nextResumeId, resumeData, resumeSettings, resumeRows, resumeSearchable, searchQueries, inheritPerson, resumeFromDraft, draftFromAnswer, hhDate, hhDuration, hhResumeText, applyHhFacts, hhOutcome, hhWhy',
 );
 const rows = (obj) => Object.entries(obj).map(([name, value]) => ({ name, value_json: JSON.stringify(value) }));
 
@@ -200,4 +201,70 @@ test('resumeFromDraft gives valid resume data, without shared settings', () => {
 
 test('all RESUME_FIELDS point to existing settings', () => {
   for (const key of Object.values(lib.RESUME_FIELDS)) assert.ok(lib.SETTINGS[key], key);
+});
+
+test('hhDate / hhDuration: даты и стаж по-русски', () => {
+  assert.equal(lib.hhDate('2025-08-01'), 'август 2025');
+  assert.equal(lib.hhDate('2020-01-15'), 'январь 2020');
+  assert.equal(lib.hhDate(''), '');
+  assert.equal(lib.hhDate('вчера'), '');
+  assert.equal(lib.hhDuration(61), '5 лет 1 месяц');
+  assert.equal(lib.hhDuration(12), '1 год');
+  assert.equal(lib.hhDuration(26), '2 года 2 месяца');
+  assert.equal(lib.hhDuration(11), '11 месяцев');
+  assert.equal(lib.hhDuration(0), '');
+});
+
+test('hhResumeText: название, стаж, навыки, «Обо мне», места — новые первыми; пустое не пишется', () => {
+  const text = lib.hhResumeText({
+    title: 'Бухгалтер',
+    months: 30,
+    keySkills: ['1С', 'НДС'],
+    about: 'Опыт в торговле.',
+    places: [
+      { company: 'Студия', position: 'Бухгалтер', description: 'Первичка.', start: '2023-02-01', end: '' },
+      { company: 'Торг', position: '', description: '', start: '', end: '2023-01-01' },
+    ],
+  });
+  assert.equal(
+    text,
+    'Бухгалтер\n\nОпыт работы — 2 года 6 месяцев\n\nКлючевые навыки\n1С, НДС\n\nОбо мне\nОпыт в торговле.\n\nМеста работы\n\nСтудия — февраль 2023 — по настоящее время\nБухгалтер\nПервичка.\n\nТорг — январь 2023',
+  );
+  assert.equal(lib.hhResumeText({ title: 'Только название' }), 'Только название');
+  const long = lib.hhResumeText({ title: 'Т', about: 'о'.repeat(40000), places: [{ company: 'К', position: 'П', description: '', start: '2020-01-01', end: '' }] });
+  assert.equal(long.length, 30000, 'не длиннее поля резюме');
+  assert.ok(lib.validSetting(lib.SETTINGS['resume.r2'], { resume: long }));
+});
+
+test('applyHhFacts: роли, формат, зарплата и стаж с hh; чужое и пустое не трогает', () => {
+  const draft = () => ({ facts: { formats: ['ON_SITE'], salary: null, years: 3 }, search: { roles: ['34'] } });
+  const d = lib.applyHhFacts(draft(), { roles: [{ id: '18', text: 'Бухгалтер' }, { id: '99999', text: 'нет такой' }, { id: '96' }, { id: '12' }, { id: '34' }], formats: ['REMOTE', 'HYBRID', 'WHATEVER'], salary: { amount: 90000.6, currency: 'RUR' }, months: 61 });
+  assert.deepEqual(d.search.roles, ['18', '96', '12'], 'только известные роли hh, не больше трёх');
+  assert.deepEqual(d.facts.formats, ['REMOTE', 'HYBRID']);
+  assert.deepEqual(d.facts.salary, { amount: 90001, currency: 'RUR' });
+  assert.equal(d.facts.years, 5.1);
+  const same = lib.applyHhFacts(draft(), { roles: [], formats: [], salary: null, months: 0 });
+  assert.deepEqual(same, draft(), 'ничего не пришло — черновик не меняется');
+  const badMoney = lib.applyHhFacts(draft(), { salary: { amount: 1000, currency: 'XXX' } });
+  assert.equal(badMoney.facts.salary, null);
+  assert.equal(lib.applyHhFacts(draft(), { months: 2000 }).facts.years, 60, 'не больше 60 лет');
+  assert.deepEqual(lib.applyHhFacts(draft()), draft());
+});
+
+test('hhOutcome / hhWhy: ответ робота → ошибка или тело, причина по-русски', () => {
+  assert.deepEqual(lib.hhOutcome({ error: { message: 'x' } }), { error: 'down' });
+  assert.deepEqual(lib.hhOutcome(undefined), { error: 'down' });
+  assert.deepEqual(lib.hhOutcome({ statusCode: 409 }), { error: 'busy' });
+  assert.deepEqual(lib.hhOutcome({ statusCode: 423, body: { blocked: { kind: 'login' } } }), { error: 'blocked:login' });
+  assert.deepEqual(lib.hhOutcome({ statusCode: 423, body: null }), { error: 'blocked:' });
+  assert.deepEqual(lib.hhOutcome({ statusCode: 502 }), { error: 'http:502' });
+  assert.deepEqual(lib.hhOutcome({ statusCode: 200, body: { ok: false, error: 'captcha' } }), { error: 'captcha' });
+  assert.deepEqual(lib.hhOutcome({ statusCode: 200, body: { ok: false } }), { error: 'layout' });
+  assert.deepEqual(lib.hhOutcome({ statusCode: 200, body: { ok: true, resumes: [] } }), { body: { ok: true, resumes: [] } });
+  assert.match(lib.hhWhy('busy'), /откликается/);
+  assert.match(lib.hhWhy('captcha'), /Общий экран/);
+  assert.match(lib.hhWhy('blocked:captcha'), /робот на паузе \(captcha\)/);
+  assert.match(lib.hhWhy('http:502'), /ошибка робота \(http:502\)/);
+  assert.match(lib.hhWhy('down'), /робот не отвечает/);
+  assert.match(lib.hhWhy('empty'), /почти пустое/);
 });

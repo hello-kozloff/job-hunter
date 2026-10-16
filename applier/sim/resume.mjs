@@ -27,6 +27,10 @@ const applicantResume = () => ({
   title: [{ string: cvState.title }],
   skills: [{ string: cvState.about }],
   keySkills: cvState.skills.map((s) => ({ string: s })),
+  professionalRole: [{ string: 96, id: 96, text: 'Программист, разработчик' }],
+  workFormats: [{ string: 'REMOTE' }],
+  salary: [{ amount: 150000, currency: 'RUR' }],
+  totalExperience: [{ string: 61 }],
   experience: [{ id: 501, companyName: 'Сим Компания', position: cvState.position, description: cvState.description, startDate: '2023-01-01', endDate: null }],
 });
 const escHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
@@ -243,6 +247,11 @@ await scenario('чтение: видимое работодателям резю
   assert.deepEqual(r.resume.keySkills, ['React', 'TypeScript']);
   assert.deepEqual(r.resume.places.map((p) => [p.hhId, p.company, p.position]), [[501, 'Сим Компания', 'Frontend Developer']]);
   assert.equal(r.resume.limits.title, 100);
+  // Для импорта в бота: роли, формат работы, зарплата, стаж
+  assert.deepEqual(r.resume.roles, [{ id: '96', text: 'Программист, разработчик' }]);
+  assert.deepEqual(r.resume.formats, ['REMOTE']);
+  assert.deepEqual(r.resume.salary, { amount: 150000, currency: 'RUR' });
+  assert.equal(r.resume.months, 61);
   assert.deepEqual(seen.filter((s) => s.method !== 'GET'), [], 'не-GET дошёл до hh во время чтения');
   assert.deepEqual(seen.filter((s) => s.method === 'GET' && s.query === '').map((s) => s.path), ['/applicant/resumes', `/resume/${A}`]);
   const saved = JSON.parse(readFileSync(join(RESUME_DIR, r.backup), 'utf8'));
