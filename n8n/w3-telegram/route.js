@@ -24,7 +24,8 @@
 //   { action: 'profile', op, field, value, chatId, queryId, messageId, userMessageId, promptId, text, file, username } —
 //      профиль (W11, 13.10.2026): документ в чате (op pdf | not_pdf, file = { id, name, size }), кнопки pf:* и ответы
 //      на вопросы профиля (PROFILE_PROMPTS, op input).
-//      Несколько резюме (docs/resumes.md): кнопки rm:* — op rm, field — действие, value — id резюме[:флаг].
+//      Несколько резюме (docs/resumes.md): кнопки rm:* — op rm, field — действие, value — id резюме[:флаг];
+//      импорт с hh — rm:imp (field imp) и rm:i:<сессия>:<действие> (field i, value «сессия:действие»).
 //   { action: 'resume', data, op, field, text, chatId, queryId, messageId, userMessageId, promptId } — рекомендации по
 //      резюме (W13, 15.10.2026): кнопки rs: ru: rq: rp: rr: rc: rk: rx: re: (data — как есть, разбирает W13 «Job») и ответы на вопросы
 //      RESUME_PROMPTS (op input).
@@ -59,9 +60,14 @@ if (cb) {
   }
 
   // Несколько резюме (W11, docs/resumes.md): rm:<действие>[:<id>[:<y|l>]] — действие в field, остальное в value
-  const rm = data.match(/^rm:(list|new|o|on|off|ren|clone|del|txt)(?::(r[1-5](?::[yl])?))?$/);
+  const rm = data.match(/^rm:(list|new|o|on|off|ren|clone|del|txt|imp)(?::(r[1-5](?::[yl])?))?$/);
   if (rm) {
     return [{ json: { action: 'profile', op: 'rm', field: rm[1], value: rm[2] ?? '', ...pressed, username: cb.from?.username ?? '' } }];
+  }
+  // Импорт с hh: rm:i:<сессия из 4 знаков>:<номер резюме | b | x | go | next | retry | skip> — value = «сессия:действие»
+  const imp = data.match(/^rm:i:([a-z0-9]{4}):(\d|b|x|go|next|retry|skip)$/);
+  if (imp) {
+    return [{ json: { action: 'profile', op: 'rm', field: 'i', value: `${imp[1]}:${imp[2]}`, ...pressed, username: cb.from?.username ?? '' } }];
   }
 
   // Рекомендации по резюме (W13): callback_data разбирает сам W13

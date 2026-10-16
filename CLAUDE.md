@@ -161,7 +161,8 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
                  → подпись, контакт, пояс → профиль в settings, profile.ready, сразу W1; потом ⚙️ → 👤 Профиль: правка
                  полей, новое резюме, правка нейросетью (предпросмотр); пока profile.ready = false — W8 не собирает
 [W11 + резюме] несколько резюме (16.10.2026, docs/resumes.md): ⚙️ → 📄 Резюме → W3 (rm:*) → W11: список, карточка, поиск вкл/выкл,
-                 название, копия, удаление, новое резюме (PDF или текст → нейросеть → «Новое резюме разобрано»), новый текст.
+                 название, копия, удаление, новое резюме (PDF или текст → нейросеть → «Новое резюме разобрано»), новый текст, импорт с hh
+                 (📥: робот читает список резюме hh → галочки → по одному: разбор нейросетью → ✅ → «Дальше»; роли, формат, зарплата, стаж — с hh).
                  Основное резюме r1 — прежние глобальные ключи settings, r2–r5 — resume.<id> (resumes — список); W1 ищет по каждому
                  включённому (до 3), вакансия несёт resume_id/resume_name, фильтры (пресет, стоп-слова), оценка W2 и письма W5 —
                  по резюме вакансии (n8n/shared/resumes.js → resumeSettings); подпись, контакт, пояс, нейросеть, чёрный список общие
@@ -210,7 +211,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - chat_id — в `.env` как `TG_CHAT_ID`, в нодах `{{ $env.TG_CHAT_ID }}` (Variables в Community edition нет);
 - кнопки ловит W3 через Telegram Trigger (v1.5: проверяет секретный заголовок, Restrict to Chat IDs = TG_CHAT_ID). Публичный HTTPS → контейнер ngrok (`COMPOSE_PROFILES=tunnel`, `ngrok/policy.yml`), `WEBHOOK_URL=https://<NGROK_DOMAIN>/` (→ `N8N_WEBHOOK_URL`);
 - робот-отклик (этап 6): `l:<id>:robot` — 🚀, `l:<id>:stop` — ⛔, `rb:go` и `/go` — ▶️ после блока, ответ на фото капчи → W9; ⚙️ → 🚀 Робот (`s:apply`);
-- несколько резюме (W11, 16.10.2026): `rm:list`, `rm:o:<id>`, `rm:on|off:<id>[:l]`, `rm:new`, `rm:ren:<id>`, `rm:clone:<id>`, `rm:del:<id>[:y]`, `rm:txt:<id>`, `pf:new:add` (`docs/resumes.md`);
+- несколько резюме (W11, 16.10.2026): `rm:list`, `rm:o:<id>`, `rm:on|off:<id>[:l]`, `rm:new`, `rm:ren:<id>`, `rm:clone:<id>`, `rm:del:<id>[:y]`, `rm:txt:<id>`, `rm:imp`, `rm:i:<сессия>:<действие>`, `pf:new:add` (`docs/resumes.md`);
 - профиль (W11, 13.10.2026): `pf:view` (⚙️ → 👤), `pf:ok:<шаг>`, `pf:e:<поле>` (вопрос ForceReply), `pf:g:<m|f>`, `pf:tz:<IANA>`, `pf:new:<all|text|no>`, `pf:yes|no`; документ PDF в чате → W11; ответы на `PROFILE_PROMPTS` → W11;
 - callback_data кнопок: `v:<id строки>:<apply|maybe|skip|earlier|ban|edit>` — карточка (`ban` — «🚫 В ЧС»: компания в `blacklist`, вакансия — ❌ с причиной «чёрный список») (`earlier` — «📨 Уже откликался», 07.10.2026: status = applied без письма и `applied_at`, без «Почему?», вне теневого режима); `l:<id>:<redo|sent|unsent|cancel>` — письмо (`cancel` — «↩️ Отменить отклик», 14.10.2026); панель меню (W7): `p:l:<tab>:<page>`, `p:s`, `p:x`, `p:n` («📋 К вакансиям» под отправленным письмом), `pv:<id>:<choice>:<tab>:<page>` (`score` — «🤖 На оценку» у отсеянной фильтром, 08.10.2026);
 - меню бота (07.10.2026, `docs/bot-menu.md`): кнопки под полем ввода `[📋 Вакансии] [📊 Статистика]` (ставит `/start`), одна живая панель — нажатие пользователя и прошлая панель удаляются, листание правит панель на месте;

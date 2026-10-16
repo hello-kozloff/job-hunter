@@ -12,9 +12,13 @@ const MAX_SEARCH_RESUMES = 3;
 // название из должности в профиле, привязка к hh — из разметки W13
 function resumeList(s) {
   const list = Array.isArray(s.resumes) ? s.resumes : [];
-  // Привязка основного резюме к hh — из разметки W13 (cv): её обновляет 💼, копия в списке устарела бы
+  // Привязка основного резюме к hh: разметка W13 (cv) её создаёт и меняет (💼). Сохранённая в списке — то же резюме hh
+  // с названием посвежее (импорт обновляет названия по списку hh), поэтому при том же хеше берём её; другой хеш — резюме
+  // перепривязали в W13, берём cv
   const mainHh = s.cv?.resumes?.[0]?.hh ?? null;
-  if (list.length) return list.map((r) => (r.id === 'r1' ? { ...r, hh: mainHh ?? r.hh ?? null } : r));
+  if (list.length) {
+    return list.map((r) => (r.id === 'r1' ? { ...r, hh: r.hh && (!mainHh || r.hh.hash === mainHh.hash) ? r.hh : (mainHh ?? r.hh ?? null) } : r));
+  }
   return [
     {
       id: 'r1',

@@ -6,6 +6,7 @@
 const LAYOUTS = [
   'pf summary', 'pf gender', 'pf signature', 'pf contact', 'pf tz', 'pf review', 'pf replace', 'pf replace text', 'pf profile', 'pf plain',
   'rm list1', 'rm list2', 'rm list3', 'rm list4', 'rm list5', 'rm card', 'rm delete', 'rm wait',
+  'rm imp1', 'rm imp2', 'rm imp3', 'rm imp4', 'rm imp5', 'rm imp6', 'rm imp next', 'rm imp error', 'rm hh error',
 ];
 const step = $('Step').first().json;
 const job = $('Job').first().json;

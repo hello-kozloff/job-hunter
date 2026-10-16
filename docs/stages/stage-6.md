@@ -93,7 +93,7 @@ cookie и токена; разведка вырезает токены и дан
 | `POST /login` | открыть вход hh в окне робота |
 | `POST /inbox` | 6.2: отклики и новые сообщения HR, чаты не открываются |
 | `POST /recon {vacancyIds?, inbox?, resume?}` → `GET /job` | разведка без кликов — фоновое задание; `resume` — резюме на hh со строгим предохранителем (часть D «Экспорт на hh», `docs/recommendations.md` → E0) |
-| `POST /resume/read {hash?}` | резюме hh для W13: должность, навыки, «О себе», опыт; только GET, бэкап в `/data/resume` (`docs/recommendations.md` → «Разделы резюме») |
+| `POST /resume/read {hash?}` | резюме hh для W13 и импорта резюме: должность, навыки, «О себе», опыт, роли hh, формат работы, зарплата, стаж; список всех резюме — в `resumes`; только GET, бэкап в `/data/resume` (`docs/recommendations.md` → «Разделы резюме», `docs/resumes.md`) |
 | `POST /resume/write {hash, changes, dry}` | записать разделы резюме формами hh (должность, навыки, «О себе», место работы); без `RESUME_LIVE=1` или с `dry` — сухой прогон: заполнить, снимок, без сохранения |
 | `POST /record {on}` | запись: пользователь откликается сам в окне робота |
 | `GET /shots/:name`, `POST /shot` | скриншот |

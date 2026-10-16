@@ -567,9 +567,12 @@ const PROFILE_LAYOUTS = [
       ]),
       [
         ['➕ Новое резюме', 'rm:new'],
-        ['📋 Копия основного', 'rm:clone:r1'],
+        ['📥 Импорт с hh', 'rm:imp'],
       ],
-      [['⬅️ Профиль', 'pf:view']],
+      [
+        ['📋 Копия основного', 'rm:clone:r1'],
+        ['⬅️ Профиль', 'pf:view'],
+      ],
     ],
   ]),
   [
@@ -604,6 +607,38 @@ const PROFILE_LAYOUTS = [
     ],
   ],
   ['rm wait', [[['❌ Отмена', 'rm:list']]]],
+  // Импорт с hh (docs/resumes.md): список резюме hh с галочками (по числу резюме, до 6), следующее из очереди, сбой
+  ...[1, 2, 3, 4, 5, 6].map((n) => [
+    `rm imp${n}`,
+    [
+      ...Array.from({ length: n }, (_, i) => [[panelButton(`i${i}.text`), panelButton(`i${i}.cb`)]]),
+      [[panelButton('go.text'), panelButton('go.cb')]],
+      [
+        ['🔗 Это основное', panelButton('bind')],
+        ['⬅️ Резюме', 'rm:list'],
+      ],
+    ],
+  ]),
+  ['rm imp next', [[[panelButton('next.text'), panelButton('next.cb')]], [['⏹ Хватит', panelButton('x')]]]],
+  [
+    'rm imp error',
+    [
+      [
+        ['🔄 Повторить', panelButton('retry')],
+        ['⏭ Пропустить', panelButton('skip')],
+      ],
+      [['⏹ Хватит', panelButton('x')]],
+    ],
+  ],
+  [
+    'rm hh error',
+    [
+      [
+        ['🔄 Повторить', 'rm:imp'],
+        ['⬅️ Резюме', 'rm:list'],
+      ],
+    ],
+  ],
 ];
 
 // W13: раскладки панели рекомендаций по резюме (15.10.2026, docs/recommendations.md). Порядок = LAYOUTS в
@@ -3157,10 +3192,32 @@ const workflows = {
       code('W11', 'Plan', 'n8n/w11-profile/plan.js', [660, 0]),
       node('W11', 'Route', 'switch', 3.4, [880, 0], {
         mode: 'expression',
-        numberOutputs: 3,
-        output: "={{ ({ pdf: 0, llm: 1, step: 2 })[$json.route] }}",
+        numberOutputs: 4,
+        output: "={{ ({ pdf: 0, llm: 1, step: 2, hh: 3 })[$json.route] }}",
         options: {},
       }),
+      // Импорт резюме с hh (docs/resumes.md): панель «Читаю…» → робот читает список или одно резюме (только GET) →
+      // одно резюме идёт к нейросети как новое (To LLM?), список и сбой — в «Step»
+      editMessage(
+        'Wait hh',
+        [1100, -650],
+        {
+          chatId: "={{ $('Job').first().json.chatId }}",
+          messageId: "={{ $('Plan').first().json.wait.messageId }}",
+          text: "={{ $('Plan').first().json.wait.text }}",
+          rows: null,
+        },
+        'W11',
+        { onError: 'continueRegularOutput' },
+      ),
+      applierNode('W11', 'Read hh', [1320, -650], {
+        method: 'POST',
+        path: '/resume/read',
+        body: "={{ JSON.stringify({ hash: $('Plan').first().json.hash || '' }) }}",
+        timeout: 120000,
+        full: true,
+      }),
+      code('W11', 'HH resume', 'n8n/w11-profile/hh-resume.js', [1540, -650]),
       // Резюме PDF: «Читаю…» (станет панелью) → файл из Telegram → текст
       telegram('W11', 'Reading', [1100, -400], { text: '📄 Читаю резюме…', fields: { disable_notification: true } }),
       node(
@@ -3336,6 +3393,10 @@ const workflows = {
       ['Route', 'Reading', 0],
       ['Route', 'Build extract', 1],
       ['Route', 'Step', 2],
+      ['Route', 'Wait hh', 3],
+      ['Wait hh', 'Read hh'],
+      ['Read hh', 'HH resume'],
+      ['HH resume', 'To LLM?'],
       ['Reading', 'Get file'],
       ['Get file', 'Extract PDF'],
       ['Extract PDF', 'PDF text'],
