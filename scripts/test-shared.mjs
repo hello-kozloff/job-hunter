@@ -383,3 +383,48 @@ test('cvFromAnchors puts the resume id into the markup', () => {
   assert.equal(lib.cvRender(r2), text);
   assert.ok(lib.validSetting(lib.SETTINGS['resume.r2.cv'], r2));
 });
+
+// Каким резюме вакансия (17.10.2026): подпись в карточке, строка в письме, подпись 🚀. resume_name пишет W1, пока резюме
+// больше одного; без него тексты прежние
+const view = load(['n8n/shared/time.js', 'n8n/shared/card.js', 'n8n/shared/robot.js', 'n8n/shared/letter.js'], 'cardText, letterText, robotButtonText');
+const job = (extra = {}) => ({
+  id: 7, title: 'Fullstack-разработчик', company: 'К', url: 'https://hh.ru/vacancy/1', status: 'waiting', decision: 'maybe', ...extra,
+});
+
+test('card: «📄 Резюме: …» under the company line, for the main resume too; no name — no line', () => {
+  const lines = view.cardText(job({ resume_id: 'r2', resume_name: 'Fullstack-разработчик' })).split('\n');
+  assert.equal(lines[2], '📄 Резюме: Fullstack-разработчик');
+  assert.ok(view.cardText(job({ resume_name: 'Frontend' })).includes('\n📄 Резюме: Frontend\n'), 'the main resume (no resume_id)');
+  assert.ok(!view.cardText(job()).includes('📄'), 'one resume: as before');
+  assert.ok(view.cardText(job({ resume_name: '<b>' })).includes('📄 Резюме: &lt;b&gt;'));
+});
+
+test('letter: «📄 Отклик резюме «…»» is the last line until the response is sent', () => {
+  const letter = (extra) => view.letterText(job({ status: 'approved', ok: true, mode: 'new', letter: 'Здравствуйте!', ...extra }));
+  const plain = letter({});
+  assert.equal(letter({ resume_name: 'Fullstack' }), `${plain}\n📄 Отклик резюме «Fullstack»`, 'otherwise the text is the same');
+  assert.ok(!plain.includes('📄'));
+  const revise = letter({ resume_name: 'Fullstack', mode: 'revise', instruction: 'короче' }).split('\n');
+  assert.equal(revise.at(-1), '📄 Отклик резюме «Fullstack»', 'below the revise hint too');
+  const queued = letter({ resume_name: 'Fullstack', apply_state: 'queued' });
+  assert.match(queued, /⏳ Робот откликается…\n📄 Отклик резюме «Fullstack»$/);
+});
+
+test('letter after the response: the robot names the resume, manual and closed — no resume line', () => {
+  const at = '2026-10-17T08:30:00.000Z';
+  const robot = view.letterText(job({ status: 'applied', apply_by: 'robot', applied_at: at, apply_letter: 'attached', resume_name: 'Fullstack', ok: true, letter: 'x' }));
+  assert.match(robot, /🚀 Отправлено \d\d\.\d\d \d\d:\d\d резюме «Fullstack» · ✉️ письмо приложено$/);
+  assert.ok(!robot.includes('📄'));
+  const noName = view.letterText(job({ status: 'applied', apply_by: 'robot', applied_at: at, apply_letter: 'attached', ok: true, letter: 'x' }));
+  assert.match(noName, /🚀 Отправлено \d\d\.\d\d \d\d:\d\d · ✉️ письмо приложено$/, 'one resume: as before');
+  for (const extra of [{ status: 'applied', apply_by: 'me', applied_at: at }, { status: 'applied', apply_by: 'hh' }, { status: 'archived' }]) {
+    assert.ok(!view.letterText(job({ ...extra, resume_name: 'Fullstack', ok: true, letter: 'x' })).includes('📄'), JSON.stringify(extra));
+  }
+});
+
+test('robotButtonText: the resume when it is known, clipped to 40 characters; otherwise empty (the button keeps its text)', () => {
+  assert.equal(view.robotButtonText(job()), '');
+  assert.equal(view.robotButtonText(job({ resume_name: 'Fullstack-разработчик' })), '🚀 Роботом: Fullstack-разработчик');
+  const long = view.robotButtonText(job({ resume_name: 'Р'.repeat(60) }));
+  assert.equal(long, `🚀 Роботом: ${'Р'.repeat(39)}…`);
+});

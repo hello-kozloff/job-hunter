@@ -167,7 +167,9 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
                  включённому (до 3), вакансия несёт resume_id/resume_name, фильтры (пресет, стоп-слова), оценка W2 и письма W5 —
                  по резюме вакансии (n8n/shared/resumes.js → resumeSettings); подпись, контакт, пояс, нейросеть, чёрный список общие.
                  W13 (💡, 📤) работает с одним резюме за раз: «📄 Другое резюме» на панели или «💡» в карточке резюме (rs:list,
-                 rs:r:<id>, static data target); разметка и версии отката r2–r5 — resume.<id>.cv и resume.<id>.history
+                 rs:r:<id>, static data target); разметка и версии отката r2–r5 — resume.<id>.cv и resume.<id>.history.
+                 Каким резюме вакансия (17.10.2026): «📄 Резюме: …» в карточке, «📄 Отклик резюме «…»» в письме, «🚀 Роботом: …»;
+                 переименование и удаление резюме переписывают его вакансии (W11 «Retag vacancies»; удалённого — основному)
 [W13 Resume]   рекомендации по резюме (15.10.2026, docs/recommendations.md): ⚙️ → 💡 → W3 → W13: панель с покрытием навыков
                  вакансий; 🔍 анализ — отчёт глазами ATS и роботов hh (статистика навыков и названий из таблицы) → до 8
                  вопросов кнопками (недостающие навыки галочками, фильтры hh — только подсказка) → правки; ⬆️ Upgrade —
@@ -203,7 +205,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - таблица `blacklist`: `company, comment`;
 - таблица `runs` — журнал сборов W1: `started_at, finished_at, kind` (schedule | catchup | bot | manual), `status` (running | ok | error), `found, uniq, fresh, rejected, scoring, pages, cards, error`;
 - таблица `settings` — настройки из бота: `name, value_json` (только изменения; значения по умолчанию — в коде); с 13.10.2026 там же профиль человека: `profile.*` (резюме, факты, подпись, контакт, пресет), `llm.rules`, `letters.*` (`docs/onboarding.md`); с 15.10.2026 — `resume.history` (версии резюме для отката, W13) и `cv` (разделы резюме: разметка поверх `profile.resume`, W13);
-- 16.10.2026 (несколько резюме, `docs/resumes.md`): таблица `settings` — `resumes` (список резюме) и `resume.r2` … `resume.r5` (данные резюме: текст, факты, правила, поиск, фильтр, письма), `resume.r2.cv` … `resume.r5.cv` и `resume.r2.history` … `resume.r5.history` (разметка и версии отката W13); `vacancies` — `resume_id`, `resume_name` (пусто у основного резюме);
+- 16.10.2026 (несколько резюме, `docs/resumes.md`): таблица `settings` — `resumes` (список резюме) и `resume.r2` … `resume.r5` (данные резюме: текст, факты, правила, поиск, фильтр, письма), `resume.r2.cv` … `resume.r5.cv` и `resume.r2.history` … `resume.r5.history` (разметка и версии отката W13); `vacancies` — `resume_id` (пусто у основного резюме), `resume_name` (подпись «📄 Резюме»: с 17.10.2026 при 2+ резюме — у всех вакансий, у основного тоже; W11 обновляет при переименовании и удалении резюме);
 - таблица `alerts` — тревоги W4: `alert_key, workflow, message, first_at, last_at, hits, is_open, tg_message_id`;
 - имена колонок обходят служебные слова SQL (key, value, trigger, count, unique, open);
 - `id, createdAt, updatedAt` — встроенные.
@@ -253,6 +255,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - Telegram: сообщение с ForceReply («Почему?») прячет reply keyboard меню, и сама она не возвращается — нужна новая отправка `ReplyKeyboardMarkup` → в `build-workflows.mjs` `MENU_KEYBOARD` у простых сообщений (W3 «Confirm», W2 и W6 «Send summary», W7 приветствие); inline-кнопки сообщения её не несут (одна разметка на сообщение);
 - Data Table Update возвращает только обновлённые строки: ни одна не подошла под условие — выход пустой. На этом строятся атомарные «захваты» (UPDATE с условием вместо «прочитать → проверить → записать»); Delete — операция `deleteRows`; условия фильтра: eq, neq, like, ilike, gt, gte, lt, lte, isEmpty, isNotEmpty, isTrue, isFalse;
 - `$getWorkflowStaticData` работает в Code-ноде (task runner возвращает изменения) и сохраняется у запусков не из редактора, в том числе integrated (дочерний workflow); Data Table Get не умеет skip — для страниц брать всю таблицу или публичный API `/api/v1/data-tables/{id}/rows` (limit + cursor);
+- внутренний REST `/projects/:p/data-tables/:t/rows` отдаёт не больше 250 строк за запрос, даже с `take=5000` (17.10.2026: `requeue`/`recheck` видели только первые 250 вакансий) → листать `skip` (`allRows` в `n8n-api.mjs`); правка строк по фильтру — `PATCH …/rows` с `{ filter, data, dryRun }`;
 
 **ngrok (бесплатный тариф, проверено 07.10.2026):** действие `restrict-ips` платное (`ERR_NGROK_2263`, туннель не стартует) → то же через выражение `inCidrRanges(conn.client_ip, [...])` + `custom-response`; домен вида `*.ngrok-free.dev`; `--url` вместо устаревшего `--domain`; токен — `NGROK_AUTHTOKEN` в environment контейнера. Проверка снаружи: любой адрес не с IP Telegram → 403.
 
@@ -406,7 +409,7 @@ n8n/w8-clock/*.js                   код Code-нод W8 («часы» сбор
 n8n/w9-robot/*.js                   код Code-нод W9 (робот-отклик: план 🚀/⛔, ворота очереди, исход, капча, блоки)
 n8n/w11-profile/*.js                код Code-нод W11 (онбординг: PDF → нейросеть → профиль; ⚙️ → 👤)
 n8n/w13-resume/*.js                 код Code-нод W13 (рекомендации по резюме: план, вопросы, правки, откат, файл)
-scripts/test-shared.mjs, test-w11.mjs, test-w13.mjs, test-w2.mjs, test-w9.mjs  тесты общего кода и сценариев W2, W9, W11, W13 без n8n: node --test scripts/test-*.mjs
+scripts/test-shared.mjs, test-w1.mjs, test-w11.mjs, test-w13.mjs, test-w2.mjs, test-w9.mjs  тесты общего кода и сценариев W1, W2, W9, W11, W13 без n8n: node --test scripts/test-*.mjs
 n8n/shared/*.js                     общий код Code-нод (карточка, письмо, разбор страницы hh, меню, расписание W1, робот-отклик,
                                     поисковый запрос hh, признак AI-вакансии, время человека time.js, профиль profile.js,
                                     справочник ролей hh hh-roles.js, запрос к нейросети и разбор ответа llm.js,
@@ -423,7 +426,8 @@ scripts/deploy.sh                   обёртка deploy.mjs с проверк�
 scripts/lib/env.mjs                 .env: чтение, запись, имя проекта и порты (COMPOSE_PROJECT_NAME, N8N_PORT, …)
 scripts/n8n-api.mjs                 владелец, запуск/публикация workflow, строки таблиц, migrate, blacklist-seed,
                                     tunnel-env, requeue (бэкфилл в обработку), recheck (перепроверить отсеянных
-                                    правилом после его правки), api-key
+                                    правилом после его правки), api-key, resume-labels (подписи резюме у вакансий,
+                                    собранных раньше); строки таблиц REST отдаёт по 250 — allRows листает
 scripts/credentials.mjs             JSON credentials Telegram / Gemini / Claude из .env (только через pipe)
 scripts/run-code-node.mjs           прогон Code-ноды на фикстурах без n8n (--ref, --env, --static)
 scripts/hh-roles.mjs                справочник ролей hh из страницы поиска → n8n/shared/hh-roles.js

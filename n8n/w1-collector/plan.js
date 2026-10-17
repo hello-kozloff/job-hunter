@@ -6,8 +6,9 @@
 // человек сразу получает карточки.
 // Несколько резюме (16.10.2026, docs/resumes.md): запросы — по каждому активному резюме (до MAX_SEARCH_RESUMES) с его
 // словами, ролями и городом; одинаковые адреса склеиваются, вакансию получает первое резюме.
-// Выход: item на запрос { page, label, url, startedAt, resumeId } → «Search hh» (url); startedAt — начало сбора
-// для «Score job»; resumeId — пусто у основного резюме (r1), «Parse search» ставит его (и resumeName) вакансиям.
+// Выход: item на запрос { page, label, url, startedAt, resumeId, resumeName } → «Search hh» (url); startedAt — начало
+// сбора для «Score job»; resumeId — пусто у основного резюме (r1), resumeName — название резюме, пока резюме больше
+// одного (подпись «📄 Резюме» в карточке, у основного тоже), иначе пусто. «Parse search» ставит оба вакансиям.
 
 // @include n8n/shared/settings.js
 
@@ -30,7 +31,14 @@ for (const r of activeResumes(s).slice(0, MAX_SEARCH_RESUMES)) {
     if (seen.has(url)) continue;
     seen.add(url);
     items.push({
-      json: { page: 0, label: several ? `${r.name}: ${q.label}` : q.label, url, startedAt, resumeId: r.id === 'r1' ? '' : r.id, resumeName: r.name },
+      json: {
+        page: 0,
+        label: several ? `${r.name}: ${q.label}` : q.label,
+        url,
+        startedAt,
+        resumeId: r.id === 'r1' ? '' : r.id,
+        resumeName: several ? r.name : '',
+      },
     });
   }
 }

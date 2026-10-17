@@ -1118,8 +1118,12 @@ const sendDocument = (wf, name, position, { caption, fileName }) =>
     { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
   );
 
-// Кнопки письма с роботом: [🚀 Откликнуться роботом] сверху (решение пользователя 10.10.2026)
-const robotLetterButtons = (src) => [[['🚀 Откликнуться роботом', `=l:{{ ${src}.id }}:robot`]], ...letterButtons(src)];
+// Кнопки письма с роботом: [🚀 Откликнуться роботом] сверху (решение пользователя 10.10.2026). При нескольких резюме
+// подпись называет резюме — robot_button (n8n/shared/robot.js → robotButtonText, 17.10.2026); пусто — прежняя подпись
+const robotLetterButtons = (src) => [
+  [[`={{ ${src}.robot_button || '🚀 Откликнуться роботом' }}`, `=l:{{ ${src}.id }}:robot`]],
+  ...letterButtons(src),
+];
 // Вид письма → кнопки: robot (с 🚀) | manual (без 🚀) | wait (в очереди робота: только ⛔) | done (отправлено роботом)
 // | none (закрыта — без кнопок). Telegram-нода не меняет число кнопок на ходу — по ноде на вид
 const LETTER_VIEWS = [
@@ -3429,6 +3433,18 @@ const workflows = {
         { resource: 'message', operation: 'deleteMessage', chatId: '={{ $json.chatId }}', messageId: '={{ $json.messageId }}' },
         { credentials: TELEGRAM_CREDENTIAL, onError: 'continueRegularOutput' },
       ),
+      // Резюме переименовали или удалили — подпись «📄 Резюме» и владелец у его вакансий (17.10.2026, docs/resumes.md).
+      // Последняя ветка: панель уже показана, а сбой записи остановит только её и придёт тревогой W4
+      node('W11', 'Retag?', 'if', 2.3, [5060, 700], ifTrue('W11', '={{ Boolean($json.retag) }}')),
+      node('W11', 'Retag vacancies', 'dataTable', 1.1, [5280, 700], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        matchType: 'allConditions',
+        filters: { conditions: [{ keyName: 'resume_id', keyValue: '={{ $json.retag.from }}' }] },
+        columns: setColumns({ resume_id: '={{ $json.retag.resume_id }}', resume_name: '={{ $json.retag.resume_name }}' }),
+        options: {},
+      }),
     ],
     [
       ['Called by W3', 'Job'],
@@ -3487,6 +3503,8 @@ const workflows = {
       ['Prompt', 'Remember prompt'],
       ['Step', 'Delete ids'],
       ['Delete ids', 'Delete'],
+      ['Step', 'Retag?'],
+      ['Retag?', 'Retag vacancies', 0],
     ],
     { errorWorkflow: IDS.errors },
   ),
