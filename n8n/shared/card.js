@@ -73,8 +73,9 @@ function cardText(r) {
   const who = r.apply_by === 'robot' ? '🚀 Отклик отправлен роботом' : r.apply_by === 'hh' ? '📨 Отклик есть на hh' : '📨 Отклик отправлен';
   const sent =
     r.status === 'applied' && r.my_decision !== 'earlier' ? `${who}${r.applied_at ? ` ${localDate(r.applied_at)}` : ''}` : '';
-  // Несколько резюме (docs/resumes.md): вакансия не основного резюме — его название (пишет W1)
-  const resume = r.resume_id && r.resume_name ? `📄 ${esc(r.resume_name)}` : '';
+  // Несколько резюме (docs/resumes.md): каким резюме вакансия. resume_name пишет W1 всем вакансиям, пока резюме
+  // больше одного (у основного resume_id пустой), и обновляет W11 при переименовании и удалении резюме
+  const resume = r.resume_name ? `📄 Резюме: ${esc(r.resume_name)}` : '';
   return [`<a href="${r.url}"><b>${esc(r.title)}</b></a>`, meta, resume, flags, verdict, mine, sent, FINAL[r.status] ?? '']
     .filter(Boolean)
     .join('\n');

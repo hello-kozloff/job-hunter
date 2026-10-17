@@ -1,8 +1,8 @@
 // W3 · Apply sent — кнопки под письмом «📨 Отправил» и «↩️ Отменить».
 // Нода: Code, режим «Run Once for All Items».
 // Вход: строка вакансии из «Sent row», кнопка — из «Route» (op = sent | unsent; messageId — сообщение с письмом).
-// Выход: { id, sent, busy, status, applied_at, apply_by, robot, letterText, cardText, chatId, letterMessageId, cardId,
-//          queryId, toast, apply_url, url }
+// Выход: { id, sent, busy, status, applied_at, apply_by, robot, robot_button, letterText, cardText, chatId, letterMessageId,
+//          cardId, queryId, toast, apply_url, url }
 //   sent   — status = applied; у письма остаётся только «↩️ Отменить», у карточки кнопки убираются;
 //   unsent — status = approved; письму возвращаются все кнопки (с 🚀, если подходит роботу), карточке — «↩️ Изменить».
 //   busy — вакансия в очереди робота (этап 6): ничего не меняем, только тост. «📨 Отправил» пишет apply_by = me.
@@ -39,6 +39,7 @@ return [
       apply_by: updated.apply_by ?? '',
       // «↩️ Отменить»: письму возвращаются кнопки — с 🚀, если вакансия подходит роботу
       robot: robotEligible({ ...updated, apply_state: '' }),
+      robot_button: robotButtonText(updated),
       letterText: letterText({ ...updated, ok: Boolean(row.letter), problem: 'письма нет', mode: 'new' }),
       cardText: cardText(updated),
       chatId: action.chatId,

@@ -1,9 +1,10 @@
 // W5 · Format letter — сообщение с письмом для Telegram (Parse Mode = HTML), ответом на карточку.
 // Нода: Code, режим «Run Once for All Items».
 // Вход: «Parse letter»; задание — из «Jobs», вакансия — из «Vacancy».
-// Выход: { id, ok, mode, same, letter, instruction, text, replyTo, apply_url, url, letter_notes, robot } → «Send letter» с кнопками
-//   [📝 Отклик на hh] [🔗 Вакансия] / [🔄 Переписать] [📨 Отправил] / [↩️ Отменить отклик]; robot (этап 6: робот включён в ⚙️, вакансия ✅ без
-//   теста и не на сайте работодателя) → «Send letter: robot» — ещё и [🚀 Откликнуться роботом] сверху.
+// Выход: { id, ok, mode, same, letter, instruction, text, replyTo, apply_url, url, letter_notes, robot, robot_button } → «Send letter»
+//   с кнопками [📝 Отклик на hh] [🔗 Вакансия] / [🔄 Переписать] [📨 Отправил] / [↩️ Отменить отклик]; robot (этап 6: робот включён в ⚙️,
+//   вакансия ✅ без теста и не на сайте работодателя) → «Send letter: robot» — ещё и [🚀 Откликнуться роботом] сверху (robot_button —
+//   подпись с резюме при нескольких резюме, n8n/shared/robot.js → robotButtonText).
 
 // @include n8n/shared/time.js
 
@@ -52,6 +53,7 @@ return $input.all().map((item) => {
       url: row.url,
       letter_notes: row.letter_notes ?? '',
       robot,
+      robot_button: robotButtonText(row),
     },
   };
 });

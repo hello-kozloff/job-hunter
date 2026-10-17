@@ -24,6 +24,9 @@
 //                                                      { "имя настройки": значение } (docs/onboarding.md)
 //   node scripts/n8n-api.mjs profile-export [file.json] все строки settings в JSON того же вида (бэкап, перенос);
 //                                                      без файла — в stdout. Там резюме — файл с правами 600
+//   node scripts/n8n-api.mjs resume-labels [--dry] [--move <id,…>]  резюме больше одного: подписи «📄 Резюме» у
+//                                                      вакансий, собранных раньше; вакансии удалённых резюме — основному;
+//                                                      --move — названные строки основному (docs/resumes.md)
 //
 // Вход — N8N_OWNER_EMAIL / N8N_OWNER_PASSWORD из .env.
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -241,14 +244,10 @@ async function lastSearch(cookie) {
 // следующий запуск W1 примет их как новые и прогонит через текущие правила. Вакансии не из выдачи
 // не трогаем — обычный запуск W1 читает одну страницу поиска, и они пропали бы из таблицы насовсем
 async function forgetRows(pick, { dry, nothing, done }) {
-  const cookie = await login();
+  const vacancies = await dataTable('vacancies');
+  const { cookie, base, table } = vacancies;
   const search = await lastSearch(cookie);
-  const personal = await personalProject(cookie);
-  const base = `/projects/${personal.id}/data-tables`;
-  const { json: tables } = await api(base, { cookie });
-  const table = (tables.data ?? tables).find((t) => t.name === 'vacancies');
-  const { json: content } = await api(`${base}/${table.id}/rows?take=5000&skip=0`, { cookie });
-  const rows = (content.data ?? []).filter((r) => pick(r) && search.has(r));
+  const rows = (await allRows(vacancies)).filter((r) => pick(r) && search.has(r));
   const list = () => rows.forEach((r) => console.log(`  ${r.published_at.slice(0, 10)}  ${r.company} — ${r.title}`));
   if (!rows.length) return console.log(`${nothing} (выдача запуска ${search.runId})`);
   if (dry) {
@@ -364,8 +363,22 @@ async function dataTable(name) {
   return { cookie, base, table };
 }
 
-// Схема настроек бота — тот же код, что в Code-нодах (n8n/shared/settings.js)
-const { SETTINGS, validSetting } = new Function(`${readCode(fileURLToPath(new URL('../n8n/shared/settings.js', import.meta.url)))}\nreturn { SETTINGS, validSetting };`)();
+// Все строки таблицы: n8n отдаёт не больше 250 за запрос, сколько бы ни просили в take (проверено 17.10.2026 на 2.42.3)
+async function allRows({ cookie, base, table }) {
+  const out = [];
+  for (;;) {
+    const { json } = await api(`${base}/${table.id}/rows?take=250&skip=${out.length}&sortBy=id:asc`, { cookie });
+    const page = json.data ?? [];
+    out.push(...page);
+    if (!page.length || out.length >= (json.count ?? 0)) return out;
+  }
+}
+
+// Схема настроек бота и список резюме — тот же код, что в Code-нодах (n8n/shared/settings.js, resumes.js)
+const shared = (file) => readCode(fileURLToPath(new URL(`../n8n/shared/${file}`, import.meta.url)));
+const { SETTINGS, validSetting, loadSettings, resumeList } = new Function(
+  `${shared('settings.js')}\n${shared('resumes.js')}\nreturn { SETTINGS, validSetting, loadSettings, resumeList };`,
+)();
 
 // Профиль и настройки из JSON { "имя": значение } → upsert строк settings по name. Значения проверяются схемой:
 // хоть одно не проходит — не пишется ничего. Неизвестное этой версии имя пишется с предупреждением (код его
@@ -403,11 +416,76 @@ async function profileExport(file) {
   console.log(`${file}: ${Object.keys(values).length} настроек`);
 }
 
+// Подписи «📄 Резюме» у вакансий, собранных до 17.10.2026 (docs/resumes.md). Теперь W1 пишет resume_name всем вакансиям,
+// пока резюме больше одного, а W11 обновляет его при переименовании и удалении резюме. Разово:
+//   вакансии основного без подписи — название основного;
+//   вакансии удалённого резюме — основному (оценка, письма и робот их так и ведут, а номер займёт новое резюме);
+//   подпись не совпадает с названием резюме — переименовали раньше или номер занят заново: сам не различит, только
+//   список; --move <id,…> — эти строки основному
+async function resumeLabels(...args) {
+  const dry = args.includes('--dry');
+  const at = args.indexOf('--move');
+  const move = at >= 0 ? String(args[at + 1] ?? '').split(',').map(Number).filter(Boolean) : [];
+  if (at >= 0 && !move.length) throw new Error('usage: resume-labels [--dry] [--move <id,…>]');
+  const stored = await allRows(await dataTable('settings'));
+  const list = resumeList(loadSettings(stored.map((json) => ({ json }))));
+  if (list.length < 2) return console.log('Резюме одно — подписи «📄 Резюме» не нужны');
+  const names = new Map(list.map((r) => [r.id, r.name]));
+  const main = names.get('r1');
+
+  const vacancies = await dataTable('vacancies');
+  const { cookie, base, table } = vacancies;
+  const rows = await allRows(vacancies);
+  const label = rows.filter((r) => !r.resume_id && !r.resume_name);
+  const orphans = rows.filter((r) => r.resume_id && !names.has(r.resume_id));
+  const moved = rows.filter((r) => move.includes(r.id));
+  const odd = rows.filter((r) => r.resume_id && names.has(r.resume_id) && r.resume_name !== names.get(r.resume_id) && !move.includes(r.id));
+  const missing = move.filter((id) => !rows.some((r) => r.id === id));
+  if (missing.length) throw new Error(`Нет вакансий ${missing.map((id) => `/v${id}`).join(', ')} — ничего не записано`);
+
+  const patch = async (group, data) => {
+    for (let i = 0; i < group.length; i += 100) {
+      const filters = group.slice(i, i + 100).map((r) => ({ columnName: 'id', condition: 'eq', value: r.id }));
+      await api(`${base}/${table.id}/rows`, { method: 'PATCH', cookie, body: { filter: { type: 'or', filters }, data } });
+    }
+  };
+  const verb = dry ? 'записалось бы' : 'записано';
+  if (!dry) {
+    await patch(label, { resume_name: main });
+    await patch([...orphans, ...moved], { resume_id: '', resume_name: main });
+  }
+  console.log(`Вакансии основного без подписи: ${label.length} → «${main}» (${verb})`);
+  console.log(`Вакансии удалённых резюме: ${orphans.length} → основному (${verb})`);
+  if (move.length) console.log(`--move: ${moved.length} → основному (${verb})`);
+  const line = (r) => `  /v${r.id} ${r.resume_id} «${r.resume_name ?? ''}» ≠ «${names.get(r.resume_id)}» · ${r.status} · ${r.title}`;
+  if (odd.length) {
+    console.log('Подпись не совпадает с названием резюме — переименовали раньше или номер занят заново.');
+    console.log('Номер занят заново — перенести основному: resume-labels --move <id,…>');
+    odd.forEach((r) => console.log(line(r)));
+  }
+}
+
 const [command, ...args] = process.argv.slice(2);
-const commands = { 'setup-owner': setupOwner, run, publish, unpublish, executions, rows, migrate, 'blacklist-seed': blacklistSeed, 'tunnel-env': tunnelEnv, requeue, recheck, 'api-key': apiKey, 'profile-import': profileImport, 'profile-export': profileExport };
+const commands = {
+  'setup-owner': setupOwner,
+  run,
+  publish,
+  unpublish,
+  executions,
+  rows,
+  migrate,
+  'blacklist-seed': blacklistSeed,
+  'tunnel-env': tunnelEnv,
+  requeue,
+  recheck,
+  'api-key': apiKey,
+  'profile-import': profileImport,
+  'profile-export': profileExport,
+  'resume-labels': resumeLabels,
+};
 if (!commands[command]) {
   console.error(
-    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> [node] | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate | blacklist-seed | tunnel-env | requeue <days> [--dry] | recheck <rule> [--dry] | api-key | profile-import <file.json> | profile-export [file.json]',
+    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> [node] | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate | blacklist-seed | tunnel-env | requeue <days> [--dry] | recheck <rule> [--dry] | api-key | profile-import <file.json> | profile-export [file.json] | resume-labels [--dry] [--move <id,…>]',
   );
   process.exit(2);
 }

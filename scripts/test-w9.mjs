@@ -138,3 +138,102 @@ test('строка робота: резюме не связано с hh, скр�
   );
   assert.equal(robotLine(row({ apply_result: 'hidden' })), '🙈 hh просит открыть резюме этому работодателю — откликнитесь сами');
 });
+
+// Каким резюме откликнется робот — видно в письме и на 🚀 (17.10.2026). resume_name пишет W1, пока резюме больше одного
+test('W5: строка «📄 Отклик резюме» и подпись 🚀 с резюме; без названия — прежние', async () => {
+  const run = (extra) =>
+    runNode('n8n/w5-letter/format-letter.js', {
+      input: [{ id: 7, ok: true, mode: 'new', letter: 'Здравствуйте!' }],
+      nodes: { Jobs: [{ id: 7 }], Vacancy: [vacancy(extra)], Settings: setup() },
+    }).then(([out]) => out);
+  const named = await run({ resume_id: 'r3', resume_name: 'Fullstack' });
+  assert.equal(named.robot, true);
+  assert.equal(named.robot_button, '🚀 Роботом: Fullstack');
+  assert.match(named.text, /\n📄 Отклик резюме «Fullstack»$/);
+  const plain = await run({});
+  assert.equal(plain.robot_button, '', 'одно резюме: кнопка с прежней подписью');
+  assert.ok(!plain.text.includes('📄'));
+});
+
+test('🚀: основное не связано с hh, а другое связано — роботу нельзя (откликнулся бы резюме hh по умолчанию)', async () => {
+  const settings = setup({
+    resumes: [
+      { id: 'r1', name: 'Frontend', active: true, hh: null },
+      { id: 'r3', name: 'Fullstack', active: true, hh: { hash: HB, title: 'Fullstack-разработчик' } },
+    ],
+  });
+  const out = await plan(vacancy({ resume_id: '' }), settings);
+  assert.equal(out.ok, false);
+  assert.equal(out.layout, 'manual');
+  assert.match(out.text, /основное резюме «Frontend» не связано с резюме на hh, а робот откликнулся бы резюме hh по умолчанию/);
+  // Gate снимает такую вакансию из очереди, вакансии связанного резюме уходят
+  const queued = (id, resume_id) => vacancy({ id, resume_id, apply_state: 'queued', updatedAt: new Date().toISOString() });
+  const g = await gate([queued(5, ''), queued(6, 'r3')], settings);
+  assert.deepEqual(g.heal, [{ id: 5, to: '' }]);
+  assert.equal(g.next.id, 6);
+  // W5: без 🚀, с причиной
+  const [letter] = await runNode('n8n/w5-letter/format-letter.js', {
+    input: [{ id: 7, ok: true, mode: 'new', letter: 'Здравствуйте!' }],
+    nodes: { Jobs: [{ id: 7 }], Vacancy: [vacancy()], Settings: settings },
+  });
+  assert.equal(letter.robot, false);
+  assert.match(letter.text, /🤖 Робот не откликается: основное резюме «Frontend» не связано с резюме на hh/);
+  // с hh не связано ни одно резюме — как раньше: роботом можно, резюме по умолчанию
+  const none = setup({ resumes: [{ id: 'r1', name: 'Frontend', active: true, hh: null }, { id: 'r2', name: 'Дизайнер', active: true, hh: null }] });
+  assert.equal((await plan(vacancy({ resume_id: '' }), none)).ok, true);
+});
+
+test('W9 Plan: ⛔ возвращает 🚀 с подписью резюме', async () => {
+  const [out] = await runNode('n8n/w9-robot/plan.js', {
+    input: [vacancy({ resume_id: 'r3', resume_name: 'Fullstack', apply_state: 'queued' })],
+    nodes: { Job: { op: 'stop', id: 7, chatId: '1', messageId: 9, queryId: 'q' }, Settings: setup() },
+  });
+  assert.equal(out.save, 'unqueue');
+  assert.equal(out.layout, 'robot');
+  assert.equal(out.robot_button, '🚀 Роботом: Fullstack');
+});
+
+test('W9 Result: «🚀 Отправлено … резюме «…»» в письме, «📄 Резюме» в карточке; сбой — 🚀 с подписью', async () => {
+  const row = vacancy({ resume_id: 'r3', resume_name: 'Fullstack', apply_state: 'applying', tg_message_id: 54, resume: { hash: HB, title: 'Fullstack-разработчик' } });
+  const result = (body) =>
+    runNode('n8n/w9-robot/result.js', { input: [{ statusCode: 200, body }], nodes: { Job: { chatId: '1' }, Gate: { next: row } } }).then(([out]) => out);
+  const done = await result({ group: 'done', outcome: 'applied', letter: 'attached', resume: { hash: HB, title: 'Fullstack-разработчик', used: true } });
+  assert.equal(done.layout, 'done');
+  assert.match(done.text, /🚀 Отправлено \d\d\.\d\d \d\d:\d\d резюме «Fullstack» · ✉️ письмо приложено/);
+  assert.ok(!done.text.includes('📄 Отклик резюме'));
+  assert.match(done.card.text, /\n📄 Резюме: Fullstack\n/);
+  const failed = await result({ group: 'error', outcome: 'error', note: 'нет кнопки' });
+  assert.equal(failed.layout, 'robot');
+  assert.equal(failed.robot_button, '🚀 Роботом: Fullstack');
+  assert.match(failed.text, /\n📄 Отклик резюме «Fullstack»$/);
+});
+
+test('W3 Apply sent: «↩️ Отменить» возвращает 🚀 с подписью резюме', async () => {
+  const [out] = await runNode('n8n/w3-telegram/apply-sent.js', {
+    nodes: {
+      Route: { op: 'unsent', chatId: '1', messageId: 55, queryId: 'q' },
+      'Sent row': vacancy({ status: 'applied', apply_by: 'me', resume_name: 'Fullstack' }),
+    },
+  });
+  assert.equal(out.robot, true);
+  assert.equal(out.robot_button, '🚀 Роботом: Fullstack');
+});
+
+// Подпись 🚀 в собранных workflow: robot_button, пусто — прежняя подпись
+test('сборка: подпись 🚀 из robot_button, без неё — «🚀 Откликнуться роботом»', () => {
+  const button = (file, node) => {
+    const wf = JSON.parse(readFileSync(fileURLToPath(new URL(`../n8n/workflows/${file}`, import.meta.url)), 'utf8'));
+    const params = wf.nodes.find((n) => n.name === node).parameters;
+    return params.inlineKeyboard?.rows?.[0]?.row?.buttons?.[0]?.text ?? params.replyMarkup?.inlineKeyboard?.rows?.[0]?.row?.buttons?.[0]?.text;
+  };
+  const evaluate = (expr, json) => {
+    const code = String(expr).replace(/^=\{\{\s*/, '').replace(/\s*\}\}$/, '');
+    return new Function('$json', '$', `return ${code}`)(json, () => ({ first: () => ({ json }) }));
+  };
+  for (const [file, node] of [['w5-letter.json', 'Send letter: robot'], ['w9-robot.json', 'Letter: robot'], ['w3-telegram.json', 'Letter: restore robot']]) {
+    const expr = button(file, node);
+    assert.ok(expr, `${file} · ${node}: нет кнопки`);
+    assert.equal(evaluate(expr, { robot_button: '🚀 Роботом: Fullstack' }), '🚀 Роботом: Fullstack', `${file} · ${node}`);
+    assert.equal(evaluate(expr, { robot_button: '' }), '🚀 Откликнуться роботом', `${file} · ${node}`);
+  }
+});
