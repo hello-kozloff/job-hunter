@@ -1,7 +1,7 @@
 // W9 · Plan — 🚀 или ⛔ под письмом: можно ли, куда перевести очередь, что ответить и как перерисовать письмо.
 // Нода: Code, режим «Run Once for All Items». Вход: «Row» — строка вакансии (пустой item — строки нет);
 // «Job» — нажатие; «Settings» — настройки бота.
-// Выход: { id, op, ok, save, toast, layout, chatId, messageId, queryId, text, url, apply_url }
+// Выход: { id, op, ok, save, toast, layout, chatId, messageId, queryId, text, url, apply_url, robot_button }
 //   save: enqueue — '' → queued (✅, письмо есть, нет теста, робот включён); stop — queued → ''; '' — ничего не пишем.
 //   Запись — Update с условием («Enqueue» / «Unqueue»): двойное нажатие или робот, успевший взять вакансию, ничего
 //   не сломают — «Done» это увидит. layout — вид письма: wait (⏳ + ⛔) | robot (с 🚀) | manual (без 🚀) | '' — не трогать.
@@ -30,6 +30,8 @@ const out = {
   queryId: job.queryId,
   url: row.url ?? '',
   apply_url: row.apply_url ?? '',
+  // Подпись 🚀, если письмо вернётся с ним (⛔): при нескольких резюме — каким резюме откликнется робот
+  robot_button: robotButtonText(row),
 };
 let view = { ...row };
 

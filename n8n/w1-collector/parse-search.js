@@ -43,7 +43,8 @@ const contractOf = (v) =>
   ].join(',');
 
 // Вакансия из выдачи → строка таблицы vacancies (имена полей = имена колонок)
-// resumeId — резюме, чьим поиском найдена вакансия (пусто у основного: колонка resume_id тогда не пишется)
+// resumeId — резюме, чьим поиском найдена вакансия (пусто у основного: колонка resume_id тогда не пишется);
+// resumeName — его название, пока резюме больше одного (у основного тоже), иначе пусто и колонка не пишется
 function toRecord(v, resumeId = '', resumeName = '') {
   const pay = v.compensation ?? {};
   const companyId = v.company?.id ? String(v.company.id) : '';
@@ -83,7 +84,8 @@ function toRecord(v, resumeId = '', resumeName = '') {
     apply_type: 'hh',
     published_at: v.publicationTime?.$ ?? '',
     status: 'new',
-    ...(resumeId ? { resume_id: resumeId, resume_name: resumeName } : {}),
+    ...(resumeId ? { resume_id: resumeId } : {}),
+    ...(resumeName ? { resume_name: resumeName } : {}),
   };
 }
 

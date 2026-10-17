@@ -1,7 +1,7 @@
 // W9 · Result — исход отклика робота → строка вакансии, письмо, карточка, скриншот, продолжать ли очередь.
 // Нода: Code, режим «Run Once for All Items». Вход: «Apply» — ответ робота POST /apply (полный: statusCode, body;
 // нет связи — { error }); «Gate» → next — вакансия, которую взяли («Claim»); «Job».
-// Выход: { id, chatId, messageId, layout, text, url, apply_url — вид письма для «View»;
+// Выход: { id, chatId, messageId, layout, text, url, apply_url, robot_button — вид письма для «View»;
 //          row — что записать («Save result»); card — { messageId, text } или null; shot — скриншот при сбое;
 //          sync — задание W7 (перерисовать панель); more — сразу вызвать W9 снова (очередь не пуста) }
 // Группы исходов (applier/src/hh/state.mjs → GROUP): done | manual | closed | block | error | dry; ответы HTTP:
@@ -106,6 +106,8 @@ return [
       layout,
       url: row.url,
       apply_url: row.apply_url,
+      // Сбой — письмо снова с 🚀: при нескольких резюме подпись называет резюме
+      robot_button: robotButtonText(row),
       text: letterText({
         ...next,
         ok: Boolean(row.letter),

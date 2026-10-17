@@ -1,9 +1,11 @@
 // W11 · Step — шаг онбординга и правки профиля (13.10.2026, docs/onboarding.md).
 // Нода: Code, режим «Run Once for All Items».
 // Вход: «Job», «Plan», «Settings», static data и то, что выполнилось до: «PDF text», «Parse profile», «Estimate parse».
-// Выход: { save: { имя: значение } | null, collect, view: { layout, text, b, messageId } | null, prompt: текст | null,
+// Выход: { save: { имя: значение } | null, retag, collect, view: { layout, text, b, messageId } | null, prompt: текст | null,
 //          deleteIds: [], toast }
 //   save — строки settings (upsert, ветка выше «Collect»: W1 должен увидеть новый профиль);
+//   retag — { from, resume_id, resume_name } | null: переписать резюме у вакансий резюме from («Retag vacancies»):
+//          переименовали — новое название, удалили — вакансии переходят основному;
 //   collect — сразу первый сбор (онбординг закончен);
 //   view — панель: messageId — правим это сообщение, 0 — новое;
 //   prompt — вопрос ForceReply (ответ придёт в W11 как op input).
@@ -61,7 +63,7 @@ const ran = (name) => {
   }
 };
 
-const out = { save: null, collect: false, view: null, prompt: null, awaitPrompt: false, deleteIds: [], toast: '', freeze: null };
+const out = { save: null, retag: null, collect: false, view: null, prompt: null, awaitPrompt: false, deleteIds: [], toast: '', freeze: null };
 // Панель — сообщение с нажатой кнопкой; новый PDF — «📄 Читаю резюме…»; ответ на вопрос — панель из static data
 const panelId = job.messageId || ran('Reading')?.result?.message_id || state.panelId || 0;
 const show = (layout, text, b = {}) => {
@@ -194,7 +196,7 @@ function cardView(id, note = '') {
 }
 function deleteView(id) {
   const r = resumeById(s, id);
-  show('rm delete', `🗑 <b>Удалить резюме «${esc(r?.name ?? id)}»?</b>\nВакансии, которые оно нашло, останутся в списке; оценка и письма по ним пойдут по основному резюме.`, {
+  show('rm delete', `🗑 <b>Удалить резюме «${esc(r?.name ?? id)}»?</b>\nВакансии, которые оно нашло, останутся в списке и перейдут основному резюме: оценка, письма и отклик роботом по ним — по основному.`, {
     yes: `rm:del:${id}:y`,
     no: `rm:o:${id}`,
   });
@@ -553,8 +555,11 @@ function rmOp() {
       if (!next.some((r) => r.active)) next = next.map((r) => (r.id === 'r1' ? { ...r, active: true } : r));
       // Разметка и версии для отката (W13) уходят вместе с резюме: следующее резюме с тем же номером начнёт с чистого листа
       apply({ resumes: next, [`resume.${id}`]: null, [`resume.${id}.cv`]: null, [`resume.${id}.history`]: [] });
+      // Вакансии резюме — основному (оценка, письма и робот уже так и считают): номер займёт следующее резюме, и они
+      // не должны достаться ему. Подпись — название основного, пока резюме больше одного (как пишет W1)
+      out.retag = { from: id, resume_id: '', resume_name: next.length > 1 ? (next.find((r) => r.id === 'r1')?.name ?? '') : '' };
       delete state.target;
-      return listView(`🗑 Удалил «${esc(name)}».`);
+      return listView(`🗑 Удалил «${esc(name)}». Его вакансии перешли основному резюме.`);
     }
     case 'imp':
       // Сюда доходит только отказ Plan (мест нет): список резюме hh читает робот (route hh)
@@ -689,8 +694,11 @@ if (plan.problem) {
     if (!id) home('⚠️ Не понял, какое резюме переименовать');
     else if (!name) cardView(id, '⚠️ Название пустое — прежнее осталось');
     else {
-      apply({ resumes: list.map((r) => (r.id === id ? { ...r, name: uniqueName(name, list.filter((x) => x.id !== id)) } : r)) });
-      cardView(id, '✅ Переименовал. У вакансий, найденных раньше, в карточке остаётся прежнее название.');
+      const unique = uniqueName(name, list.filter((x) => x.id !== id));
+      apply({ resumes: list.map((r) => (r.id === id ? { ...r, name: unique } : r)) });
+      // Подпись «📄 Резюме» у вакансий этого резюме — новое название
+      out.retag = { from: id, resume_id: id, resume_name: unique };
+      cardView(id, '✅ Переименовал. Вакансии этого резюме подписаны новым названием (в присланных карточках — после следующего нажатия).');
     }
   }
 } else if (job.op === 'replace') {

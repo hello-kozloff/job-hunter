@@ -319,12 +319,19 @@ test('rename', async () => {
   await w.step({ op: 'rm', field: 'o', value: 'r2' });
   let out = await w.step({ op: 'rm', field: 'ren', value: 'r2' });
   assert.match(out.prompt, /Название резюме/);
+  assert.equal(out.retag, null, 'the question alone changes nothing');
   out = await w.step({ op: 'input', field: 'rname', text: '  UX дизайнер ', messageId: 0, userMessageId: 5, promptId: 6 });
   assert.equal(listOf(w)[1].name, 'UX дизайнер');
   assert.equal(out.view.layout, 'rm card');
-  // повтор названия получает номер
-  await w.step({ op: 'input', field: 'rname', text: 'Frontend', messageId: 0 });
+  // вакансии резюме подписываются новым названием («Retag vacancies»)
+  assert.deepEqual(out.retag, { from: 'r2', resume_id: 'r2', resume_name: 'UX дизайнер' });
+  // повтор названия получает номер — его и пишем вакансиям
+  out = await w.step({ op: 'input', field: 'rname', text: 'Frontend', messageId: 0 });
   assert.equal(listOf(w)[1].name, 'Frontend 2');
+  assert.equal(out.retag.resume_name, 'Frontend 2');
+  // пустое название — ничего не меняем
+  out = await w.step({ op: 'input', field: 'rname', text: '   ', messageId: 0 });
+  assert.equal(out.retag, null);
 });
 
 test('clone: inactive copy with the same data; main can be cloned too', async () => {
@@ -351,15 +358,28 @@ test('delete asks first; the main resume cannot be deleted', async () => {
   assert.equal(out.view.layout, 'rm delete');
   assert.equal(out.view.b.yes, 'rm:del:r2:y');
   assert.equal(listOf(w).length, 2, 'not deleted yet');
+  assert.equal(out.retag, null);
   out = await w.step({ op: 'rm', field: 'del', value: 'r2:y' });
   assert.equal(listOf(w).length, 1);
   assert.equal(w.settings['resume.r2'], null);
   assert.equal(w.settings['resume.r2.cv'], null, 'the markup (W13) goes with the resume');
   assert.deepEqual(w.settings['resume.r2.history'], [], 'so do the versions for undo');
   assert.equal(out.view.layout, 'rm list1');
+  // its vacancies go to the main resume; one resume left — no label, as with one resume from the start
+  assert.deepEqual(out.retag, { from: 'r2', resume_id: '', resume_name: '' });
   out = await w.step({ op: 'rm', field: 'del', value: 'r1:y' });
   assert.equal(listOf(w).length, 1);
   assert.match(out.view.text, /нельзя/);
+  assert.equal(out.retag, null);
+});
+
+test('delete with more resumes left: vacancies go to the main resume under its name; the number can be reused safely', async () => {
+  const w = await withSecond();
+  await w.step({ op: 'rm', field: 'clone', value: 'r1' });
+  assert.equal(listOf(w).length, 3);
+  const out = await w.step({ op: 'rm', field: 'del', value: 'r2:y' });
+  assert.deepEqual(out.retag, { from: 'r2', resume_id: '', resume_name: 'Frontend' });
+  assert.match(out.view.text, /вакансии перешли основному/);
 });
 
 test('deleting the only active resume besides a switched-off main re-enables the main one', async () => {
