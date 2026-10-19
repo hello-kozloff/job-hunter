@@ -91,9 +91,18 @@ function span(ms) {
 
 // ---------- Список ----------
 
-const inTab = (key) => {
+// Вакансии выключенного резюме (20.10.2026, решение пользователя) в списке не показываем: резюме включили — вернулись.
+// Открыть по /v<id> можно; у основного резюме resume_id пустой
+const resumesOff = new Set(
+  resumeList(loadSettings($('Settings').all()))
+    .filter((r) => !r.active)
+    .map((r) => r.id),
+);
+const listed = rows.filter((r) => !resumesOff.has(r.resume_id || 'r1'));
+
+const inTab = (key, from = listed) => {
   const statuses = TABS[key].statuses;
-  return rows.filter((r) => (statuses ? statuses.includes(r.status) : r.status !== 'seen'));
+  return from.filter((r) => (statuses ? statuses.includes(r.status) : r.status !== 'seen'));
 };
 const counts = Object.fromEntries(Object.keys(TABS).map((key) => [key, inTab(key).length]));
 
@@ -124,7 +133,10 @@ function listView(tabKey, pageNo, note = '') {
   const page = Math.min(Math.max(1, Number(pageNo) || 1), pages);
   const lines = items.slice((page - 1) * PAGE, page * PAGE).map((r, i) => itemLines(r, (page - 1) * PAGE + i + 1));
   const { icon, name } = TABS[tab];
-  const head = `📋 <b>Вакансии</b> · ${icon} ${name} — ${items.length}${pages > 1 ? ` · стр. ${page}/${pages}` : ''}`;
+  const hidden = inTab(tab, rows).length - items.length;
+  const head =
+    `📋 <b>Вакансии</b> · ${icon} ${name} — ${items.length}${pages > 1 ? ` · стр. ${page}/${pages}` : ''}` +
+    (hidden ? `\n<i>Скрыто ${hidden} — резюме выключено (⚙️ → 📄 Резюме)</i>` : '');
   const off = { text: '·', cb: 'p:x' };
   return {
     layout: 'list',

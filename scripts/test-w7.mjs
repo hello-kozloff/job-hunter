@@ -87,3 +87,35 @@ test('📊 Статистика: теневой режим — с метки', a
   out = await render({ 'llm.shadow_since': SINCE }, { view: 'stats' });
   assert.match(out.text, /🧪 Теневой режим с 19\.10: 2\/50, совпало 1 \(50%\)/);
 });
+
+// Выключенное резюме (20.10.2026): его вакансии в списке не показываем, счётчики вкладок — без них; включили — вернулись
+test('📋 Вакансии: вакансии выключенного резюме скрыты, в шапке — сколько скрыто', async () => {
+  const rows = [
+    { id: 11, status: 'waiting', title: 'Frontend', company: 'A', url: 'https://hh.ru/vacancy/11', createdAt: '2026-10-19T10:00:00.000Z' },
+    { id: 12, status: 'waiting', title: 'Fullstack (frontend-резюме)', company: 'B', url: 'https://hh.ru/vacancy/12', createdAt: '2026-10-19T10:00:00.000Z', resume_id: '' },
+    { id: 13, status: 'waiting', title: 'Fullstack-разработчик', company: 'C', url: 'https://hh.ru/vacancy/13', createdAt: '2026-10-17T10:00:00.000Z', resume_id: 'r2', resume_name: 'Fullstack-разработчик' },
+    { id: 14, status: 'skipped', title: 'Fullstack', company: 'D', url: 'https://hh.ru/vacancy/14', createdAt: '2026-10-17T10:00:00.000Z', resume_id: 'r2' },
+  ];
+  const resumes = (active) => [
+    { id: 'r1', name: 'Frontend-разработчик', active: true, hh: null },
+    { id: 'r2', name: 'Fullstack-разработчик', active, hh: null },
+  ];
+  const list = (active) =>
+    runNode('n8n/w7-menu/render.js', {
+      nodes: { Job: job({ view: 'list', tab: 'wait' }), Rows: rows, Runs: [{}], Settings: settingRows({ resumes: resumes(active) }) },
+      env: { USER_TZ: 'Asia/Bangkok' },
+    }).then(([out]) => out);
+
+  const off = await list(false);
+  assert.match(off.text, /Ждут решения — 2/);
+  assert.match(off.text, /Скрыто 1 — резюме выключено/);
+  assert.match(off.text, /\/v11/);
+  assert.match(off.text, /\/v12/);
+  assert.doesNotMatch(off.text, /\/v13/);
+  assert.equal(off.b.tabs.find((t) => t.cb.startsWith('p:l:wait')).text, '• ⏳ 2');
+
+  const on = await list(true);
+  assert.match(on.text, /Ждут решения — 3/);
+  assert.match(on.text, /\/v13/);
+  assert.doesNotMatch(on.text, /Скрыто/);
+});
