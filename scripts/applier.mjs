@@ -6,6 +6,9 @@
 //   node scripts/applier.mjs login                   открыть вход hh в окне робота и «Общий экран»; ждёт входа
 //   node scripts/applier.mjs recon <id> [<id>…]      разведка вакансий без кликов → fixtures/applier/recon-…
 //   node scripts/applier.mjs recon --inbox           разведка «Откликов» и чатов (чаты не открываются)
+//   node scripts/applier.mjs recon --negotiations [--pages N]   все «Отклики» листанием, как человек (6–15 с между
+//                                                    страницами): id вакансий и даты откликов → fixtures/applier/
+//                                                    negotiations-…/topics.json для n8n-api.mjs hh-applied (docs/hh-applied.md)
 //   node scripts/applier.mjs recon --chooser <id>    окно отклика и выбор резюме (этап 5): открывает окно, нажимает на
 //                                                    ячейку резюме и выбирает другое; «Откликнуться» не нажимает, ничего
 //                                                    не отправляется (только вакансия, где hh покажет окно, не «в один
@@ -126,15 +129,32 @@ const commands = {
     const chooserAt = args.indexOf('--chooser');
     const chooser = chooserAt >= 0 ? String(args[chooserAt + 1] ?? '').replace(/\D/g, '') : '';
     if (chooserAt >= 0 && !chooser) throw new Error('после --chooser нужен id вакансии hh');
-    const ids = args.filter((a, i) => /^\d+$/.test(a) && i !== chooserAt + 1);
-    if (!ids.length && !inbox && !resume && !chooser) throw new Error('нужны id вакансий hh, --inbox, --resume или --chooser <id>');
-    await api('POST', '/recon', { vacancyIds: ids, inbox, resume, chooser });
+    const negotiations = args.includes('--negotiations');
+    const pagesAt = args.indexOf('--pages');
+    const maxPages = pagesAt >= 0 ? Number(args[pagesAt + 1]) : 0;
+    if (pagesAt >= 0 && !(maxPages > 0)) throw new Error('после --pages нужно число страниц');
+    // Значения флагов — не id вакансий (без флага indexOf = -1: первый аргумент — id)
+    const flagValue = new Set([chooserAt, pagesAt].filter((at) => at >= 0).map((at) => at + 1));
+    const ids = args.filter((a, i) => /^\d+$/.test(a) && !flagValue.has(i));
+    if (!ids.length && !inbox && !resume && !chooser && !negotiations) {
+      throw new Error('нужны id вакансий hh, --inbox, --resume, --negotiations или --chooser <id>');
+    }
+    await api('POST', '/recon', { vacancyIds: ids, inbox, resume, chooser, negotiations, maxPages });
     console.log(
-      `Разведка: ${[ids.length ? `${ids.length} вакансий (20–40 с между ними)` : '', inbox ? 'отклики и чаты' : '', resume ? 'резюме (4–9 с между страницами)' : '', chooser ? `окно отклика вакансии ${chooser}` : ''].filter(Boolean).join(' + ')}…`,
+      `Разведка: ${[ids.length ? `${ids.length} вакансий (20–40 с между ними)` : '', inbox ? 'отклики и чаты' : '', resume ? 'резюме (4–9 с между страницами)' : '', chooser ? `окно отклика вакансии ${chooser}` : '', negotiations ? `все отклики листанием${maxPages ? `, не больше ${maxPages} стр.` : ''} (6–15 с между страницами)` : ''].filter(Boolean).join(' + ')}…`,
     );
     const job = await waitJob();
     if (job.state === 'error') throw new Error(`разведка упала: ${job.error}`);
-    const { vacancies, inbox: box, resume: cv, chooser: choice } = job.result;
+    const { vacancies, inbox: box, resume: cv, chooser: choice, negotiations: list } = job.result;
+    if (list) {
+      console.log(`→ ${list.dir}/topics.json`);
+      console.log(`  откликов на hh: ${list.total ?? '?'} (страниц ${list.pageCount ?? '?'}) · прочитано вакансий: ${list.read}, с датой: ${list.dated}`);
+      for (const p of list.pages) console.log(`  стр. ${p.n}${p.again ? ' (ещё раз)' : ''}: ${p.topics} откликов из ${p.source}, ссылок в разметке ${p.dom}`);
+      if (list.stop) console.log(`  ⛔ остановился: ${list.stop}`);
+      const changed = list.countersAfter && JSON.stringify(list.countersBefore?.new) !== JSON.stringify(list.countersAfter?.new);
+      console.log(`  счётчики «новых» до/после: ${JSON.stringify(list.countersBefore?.new ?? null)} / ${JSON.stringify(list.countersAfter?.new ?? null)}${changed ? ' ⚠️ ИЗМЕНИЛИСЬ' : ''}`);
+      console.log(`  не-GET запросы страниц: ${list.requests.length}${list.requests.length ? `\n    ${[...new Set(list.requests)].join('\n    ')}` : ''}`);
+    }
     if (choice) {
       console.log(`→ ${choice.dir}`);
       if (choice.error || choice.skipped) console.log(`  ${choice.error ? `❌ ${choice.error}` : `⏭ ${choice.skipped}`}`);

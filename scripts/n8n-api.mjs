@@ -25,6 +25,11 @@
 //                                                      { "имя настройки": значение } (docs/onboarding.md)
 //   node scripts/n8n-api.mjs profile-export [file.json] все строки settings в JSON того же вида (бэкап, перенос);
 //                                                      без файла — в stdout. Там резюме — файл с правами 600
+//   node scripts/n8n-api.mjs hh-applied <topics.json> [--dry] [--dup]  сверка с «Откликами» hh (docs/hh-applied.md):
+//                                                      вакансии без отклика, на которые отклик на hh уже есть, → applied
+//                                                      (apply_by = hh, как у робота), их карточки, письма и «Почему?» —
+//                                                      из чата. topics.json — scripts/applier.mjs recon --negotiations;
+//                                                      --dry — только показать; --dup — и совпадения по компании и названию
 //   node scripts/n8n-api.mjs resume-labels [--dry] [--move <id,…>]  резюме больше одного: подписи «📄 Резюме» у
 //                                                      вакансий, собранных раньше; вакансии удалённых резюме — основному;
 //                                                      --move — названные строки основному (docs/resumes.md)
@@ -35,6 +40,7 @@ import { TABLES } from '../n8n/schema.mjs';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { readCode } from './lib/code.mjs';
+import { appliedUpdate, cardRenderer, planHhApplied } from './lib/hh-applied.mjs';
 import { BACKLOG, MAX_PAGES, SEARCH_PERIOD, parsePages, planSweep, reasonKeys, searchPlan, sweepUrl } from './lib/sweep.mjs';
 
 import { readEnv, setEnv, local } from './lib/env.mjs';
@@ -542,6 +548,141 @@ async function resumeLabels(...args) {
   }
 }
 
+// Сверка с «Откликами» hh (20.10.2026, docs/hh-applied.md, scripts/lib/hh-applied.mjs). Пока идёт запись — в runs запись
+// kind = hh-applied, status = running: W1 «Busy» пропускает сбор; в конце запись удаляется — это не сбор (W1 «Last ok»
+// и «последний сбор» в W7 её бы посчитали). Строка меняется, только если она та же, что при
+// чтении (статус, робот и письмо не в работе) — нажатие кнопки в это время не затирается, её карточка остаётся.
+// Telegram удаляет сообщения бота только 48 ч: старше — карточка перерисовывается без кнопок, у письма снимаются кнопки
+async function hhApplied(...args) {
+  const file = args.find((a) => !a.startsWith('--'));
+  if (!file) throw new Error('usage: hh-applied <topics.json> [--dry] [--dup]');
+  const dry = args.includes('--dry');
+  const withDups = args.includes('--dup');
+  const topics = JSON.parse(readFileSync(file, 'utf8'));
+  const vacancies = await dataTable('vacancies');
+  const runs = await dataTable('runs');
+  const { cookie, base, table } = vacancies;
+  const rows = await allRows(vacancies);
+  const settingsRows = await allRows(await dataTable('settings'));
+  const env = readEnv();
+  const cardText = cardRenderer(settingsRows, { USER_TZ: env.USER_TZ ?? '' });
+  const plan = planHhApplied({ rows, topics });
+
+  const day = (iso) => (iso ? String(iso).slice(0, 10).split('-').reverse().slice(0, 2).join('.') : 'дата ?');
+  const line = ({ row, topic, by }) =>
+    `  /v${row.id} ${row.title} — ${row.company} · ${row.status}${row.decision ? ` · 🤖 ${row.decision}` : ''}${row.my_decision ? ` · 👤 ${row.my_decision}` : ''} · 📨 ${day(topic.creationTime)}${by === 'dup' ? ` · на hh /vacancy/${topic.vacancyId}` : ''}`;
+  const byStatus = (list) => Object.entries(Object.groupBy(list, (h) => h.row.status)).map(([k, v]) => `${k} ${v.length}`).join(' · ');
+  console.log(`Откликов в файле: ${topics.length} · вакансий в таблице: ${rows.length}`);
+  console.log(`Без отклика в таблице, отклик на hh есть: ${plan.mark.length}${plan.mark.length ? ` (${byStatus(plan.mark)})` : ''}`);
+  plan.mark.forEach((h) => console.log(line(h)));
+  const decided = plan.mark.filter((h) => ['skipped', 'maybe'].includes(h.row.status));
+  if (decided.length) console.log(`  из них ты отметил ❌ или 🤔, а отклик на hh есть: ${decided.map((h) => `/v${h.row.id}`).join(', ')}`);
+  if (plan.dups.length) {
+    console.log(`Только по компании и названию — копия в другом регионе или новая вакансия: ${plan.dups.length}${withDups ? '' : ' (не пишу без --dup)'}`);
+    plan.dups.forEach((h) => console.log(line(h)));
+  }
+  if (plan.busy.length) {
+    console.log(`Робот или письмо в работе — не трогаю: ${plan.busy.length}`);
+    plan.busy.forEach((h) => console.log(line(h)));
+  }
+  if (plan.rejected.length) {
+    console.log(`Отсеяны фильтром, но отклик есть — статус не меняю: ${plan.rejected.length}`);
+    plan.rejected.forEach((h) => console.log(line(h)));
+  }
+  console.log('Отклики, удалённые на hh, в «Откликах» не видны — сверка их не найдёт');
+  const write = withDups ? [...plan.mark, ...plan.dups] : plan.mark;
+  if (dry) return console.log('--dry: ничего не записано');
+  if (!write.length) return console.log('Записывать нечего');
+
+  const busy = (await allRows(runs)).find(
+    (r) => r.status === 'running' && Date.now() - (Date.parse(r.started_at) || 0) < 10 * 60 * 1000,
+  );
+  if (busy) throw new Error(`Идёт сбор (runs #${busy.id}, ${busy.kind}) — повтори через 10 минут`);
+  const { json: started } = await api(`${runs.base}/${runs.table.id}/insert`, {
+    method: 'POST',
+    cookie,
+    body: { data: [{ started_at: new Date().toISOString(), kind: 'hh-applied', status: 'running' }], returnType: 'all' },
+  });
+  const lock = (Array.isArray(started) ? started : (started?.data ?? []))[0]?.id ?? null;
+  const release = () =>
+    lock &&
+    api(
+      `${runs.base}/${runs.table.id}/rows?filter=${encodeURIComponent(JSON.stringify({ type: 'and', filters: [{ columnName: 'id', condition: 'eq', value: lock }] }))}`,
+      { method: 'DELETE', cookie },
+    );
+
+  const tg = async (method, body) => {
+    await sleep(400);
+    const res = await fetch(`https://api.telegram.org/bot${env.TG_BOT_TOKEN}/${method}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chat_id: env.TG_CHAT_ID, ...body }),
+    });
+    const json = await res.json().catch(() => ({}));
+    return { ok: Boolean(json.ok), error: String(json.description ?? (json.ok ? '' : res.status)) };
+  };
+  // Удалить; нельзя (старше 48 ч) — перерисовать. Сообщения нет — уже удалено
+  const gone = (r) => r.ok || /not found/i.test(r.error);
+  const stats = { written: 0, skipped: 0, deleted: 0, redrawn: 0, failed: [] };
+  try {
+    for (const { row, topic } of write) {
+      const update = appliedUpdate(row, topic);
+      const { json } = await api(`${base}/${table.id}/rows`, {
+        method: 'PATCH',
+        cookie,
+        body: {
+          filter: {
+            type: 'and',
+            filters: [
+              { columnName: 'id', condition: 'eq', value: row.id },
+              { columnName: 'status', condition: 'eq', value: row.status },
+              { columnName: 'apply_state', condition: 'isEmpty', value: null },
+              { columnName: 'letter_lock', condition: 'isEmpty', value: null },
+            ],
+          },
+          data: update,
+          returnData: true,
+        },
+      });
+      const saved = (Array.isArray(json) ? json : (json?.data ?? []))[0];
+      if (!saved) {
+        stats.skipped++;
+        console.log(`  /v${row.id}: строка изменилась за это время — не трогаю`);
+        continue;
+      }
+      stats.written++;
+      if (row.tg_message_id) {
+        const del = await tg('deleteMessage', { message_id: row.tg_message_id });
+        if (gone(del)) stats.deleted++;
+        else {
+          const edit = await tg('editMessageText', {
+            message_id: row.tg_message_id,
+            text: cardText({ ...row, ...update }),
+            parse_mode: 'HTML',
+            disable_web_page_preview: true,
+            reply_markup: { inline_keyboard: [] },
+          });
+          if (edit.ok || /not modified/i.test(edit.error)) stats.redrawn++;
+          else stats.failed.push(`/v${row.id} карточка: ${del.error} / ${edit.error}`);
+        }
+      }
+      if (row.tg_letter_id) {
+        const del = await tg('deleteMessage', { message_id: row.tg_letter_id });
+        if (!gone(del)) {
+          const edit = await tg('editMessageReplyMarkup', { message_id: row.tg_letter_id, reply_markup: { inline_keyboard: [] } });
+          if (!edit.ok && !/not modified/i.test(edit.error)) stats.failed.push(`/v${row.id} письмо: ${del.error} / ${edit.error}`);
+        }
+      }
+      if (row.tg_ask_id) await tg('deleteMessage', { message_id: row.tg_ask_id });
+    }
+  } finally {
+    await Promise.resolve(release()).catch((e) => console.log(`⚠️ замок runs #${lock} не снят: ${e.message} — удали строку руками`));
+  }
+  console.log(`Записано: ${stats.written} → applied · пропущено (изменились): ${stats.skipped}`);
+  console.log(`Карточки: удалено ${stats.deleted}, перерисовано без кнопок ${stats.redrawn} (старше 48 ч)`);
+  if (stats.failed.length) console.log(`Telegram не смог:\n  ${stats.failed.join('\n  ')}`);
+}
+
 const [command, ...args] = process.argv.slice(2);
 const commands = {
   'setup-owner': setupOwner,
@@ -558,10 +699,11 @@ const commands = {
   'profile-import': profileImport,
   'profile-export': profileExport,
   'resume-labels': resumeLabels,
+  'hh-applied': hhApplied,
 };
 if (!commands[command]) {
   console.error(
-    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> [node] | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate | blacklist-seed | tunnel-env | sweep [--days N] [--no-search] [--dry] | api-key | profile-import <file.json> | profile-export [file.json] | resume-labels [--dry] [--move <id,…>]',
+    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> [node] | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate | blacklist-seed | tunnel-env | sweep [--days N] [--no-search] [--dry] | api-key | profile-import <file.json> | profile-export [file.json] | resume-labels [--dry] [--move <id,…>] | hh-applied <topics.json> [--dry] [--dup]',
   );
   process.exit(2);
 }

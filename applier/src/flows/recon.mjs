@@ -10,7 +10,16 @@ import { log } from '../log.mjs';
 import { store } from '../store.mjs';
 import { CHATIK, NEGOTIATIONS_URL, SEL, WATCH, resumeOptionSel, vacancyUrl } from '../hh/selectors.mjs';
 import { RESUMES_URL, editLinks, limitsOf, resumeHashes, resumeUrl } from '../hh/resume.mjs';
-import { initialState, isCaptchaPage, isLoginUrl, negotiationsSummary, redactState, shape, vacancyFacts } from '../hh/state.mjs';
+import {
+  initialState,
+  isCaptchaPage,
+  isLoginUrl,
+  negotiationTopics,
+  negotiationsSummary,
+  redactState,
+  shape,
+  vacancyFacts,
+} from '../hh/state.mjs';
 import { pause, stamp, writeJsonAtomic } from '../util.mjs';
 import {
   captchaShown,
@@ -157,6 +166,151 @@ export async function reconInbox(progress = () => {}) {
   writeJsonAtomic(join(dir, 'summary.json'), out);
   log('recon.inbox', { negotiations: out.negotiations.topics, chats: chats.status, unreadChanged: out.unreadChanged });
   return out;
+}
+
+// «Отклики» целиком (сверка с таблицей, docs/hh-applied.md): листаем как человек. Страница 1 — по адресу, дальше клик
+// по кнопке следующей страницы пейджера (у кнопок нет ссылок), на каждой — чтение с прокруткой и пауза 6–15 с.
+// Обычный предохранитель: запись в /applicant/… и chatik (отказ, удаление, «чат открыт») рвётся, а телеметрия и маячки
+// hh уходят, как у человека (строгий рвал бы и их — так заметнее). Не-GET запросы страниц — в итог.
+// Данные страницы: JSON-ответ hh со списком, пойманный во время клика → свежий InitialState (клик перезагрузил
+// страницу) → id вакансий из ссылок списка (без даты). В конце страница 1 ещё раз: отклик, где работодатель что-то
+// сделал за время чтения, поднимается наверх. Стоп: капча (блок), выход из hh, страница не переключилась
+const MAX_NEGOTIATION_PAGES = 40;
+const pagerButton = (n) => `[data-qa~="number-pages-${n}"]`;
+
+export async function readNegotiations({ maxPages = 0 } = {}, progress = () => {}) {
+  const name = `negotiations-${stamp()}`;
+  const dir = join(RECON_DIR, name);
+  mkdirSync(dir, { recursive: true });
+  const page = await ensure();
+  setGuard(true);
+  guardReset();
+  const out = { dir: `fixtures/applier/${name}`, pages: [], requests: [], stop: null };
+  const byVacancy = new Map();
+  const add = (topics) => {
+    for (const t of topics) {
+      const had = byVacancy.get(t.vacancyId);
+      if (!had || (!had.creationTime && t.creationTime)) byVacancy.set(t.vacancyId, t);
+    }
+  };
+  const onRequest = (req) => {
+    if (req.method() === 'GET' || out.requests.length >= 200) return;
+    const u = new URL(req.url());
+    out.requests.push(`${req.method()} ${u.hostname === 'hh.ru' ? '' : u.hostname}${u.pathname}`);
+  };
+  let caught = [];
+  const onResponse = async (res) => {
+    try {
+      if (!/(^|\.)hh\.ru$/.test(new URL(res.url()).hostname) || !/json/.test(res.headers()['content-type'] ?? '')) return;
+      const got = negotiationTopics(await res.json());
+      if (got.found) caught.push(got);
+    } catch {
+      // не JSON или ответ уже недоступен
+    }
+  };
+  const stopped = async (html = '') => {
+    if (isCaptchaPage(page.url(), html) || (await captchaShown(page))) {
+      store.block('captcha', { shot: await shot('captcha-negotiations') });
+      return 'captcha';
+    }
+    return isLoginUrl(page.url()) ? 'login' : null;
+  };
+  // id вакансий из ссылок списка откликов (запасной путь — без даты отклика)
+  const domTopics = () =>
+    page
+      .evaluate(() => [
+        ...new Set(
+          [...document.querySelectorAll('a[href*="hhtmFrom=negotiation_list"]')]
+            .map((a) => (a.getAttribute('href') ?? '').match(/\/vacancy\/(\d+)/)?.[1])
+            .filter(Boolean),
+        ),
+      ])
+      .then((ids) => ids.map((vacancyId) => ({ topicId: '', vacancyId, creationTime: null, lastModified: null, name: '', companyId: '', company: '' })))
+      .catch(() => []);
+  // Страница 1 по адресу: InitialState со списком, страницами и счётчиками
+  const open = async (step) => {
+    progress({ step });
+    const res = await page.goto(NEGOTIATIONS_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    const html = (await res?.text().catch(() => '')) ?? '';
+    const stop = await stopped(html);
+    if (stop) return { stop };
+    const state = initialState(html);
+    if (state?.userType && state.userType !== 'applicant') return { stop: 'login' };
+    const data = negotiationTopics(state);
+    if (!data.found) {
+      writeFileSync(join(dir, 'page.html'), html, { mode: 0o600 });
+      return { stop: 'нет списка откликов в InitialState (вёрстка hh поменялась?) — page.html' };
+    }
+    return { data, dom: (await domTopics()).length };
+  };
+
+  page.on('request', onRequest);
+  page.on('response', onResponse);
+  try {
+    const first = await open('страница 1');
+    if (first.stop) {
+      out.stop = first.stop;
+      return out;
+    }
+    add(first.data.topics);
+    out.total = first.data.total;
+    out.pageCount = first.data.pageCount;
+    out.countersBefore = first.data.counters;
+    out.pages.push({ n: 1, source: 'state', topics: first.data.topics.length, dom: first.dom });
+    const last = Math.min(first.data.pageCount ?? 1, maxPages > 0 ? maxPages : Infinity, MAX_NEGOTIATION_PAGES);
+    for (let n = 2; n <= last; n++) {
+      progress({ step: `страница ${n} из ${last}` });
+      await humanRead(page);
+      await pause(6000, 15000);
+      const button = page.locator(pagerButton(n)).first();
+      if (!(await visibleWithin(button, 5000))) {
+        out.stop = `нет кнопки страницы ${n}`;
+        break;
+      }
+      caught = [];
+      await button.scrollIntoViewIfNeeded().catch(() => {});
+      await pause(600, 1500);
+      await button.click({ timeout: 10000 });
+      const switched = await visibleWithin(page.locator(`${pagerButton(n)}[data-qa~="number-pages-selected"]`), 15000);
+      await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+      out.stop = await stopped();
+      if (out.stop) break;
+      if (!switched) {
+        out.stop = `страница ${n} не открылась`;
+        break;
+      }
+      const dom = await domTopics();
+      const fromJson = caught.filter((c) => c.topics.length && (c.selected == null || c.selected === n - 1)).at(-1);
+      const fresh = fromJson ? null : negotiationTopics(initialState(await page.content().catch(() => '')));
+      const fromState = fresh?.found && fresh.selected === n - 1 ? fresh : null;
+      const source = fromJson ? 'json' : fromState ? 'state' : 'dom';
+      const topics = fromJson?.topics ?? fromState?.topics ?? dom;
+      add(topics);
+      out.pages.push({ n, source, topics: topics.length, dom: dom.length });
+      log('negotiations.page', { n, source, topics: topics.length, dom: dom.length });
+    }
+    if (!out.stop && last > 1) {
+      await humanRead(page);
+      await pause(6000, 15000);
+      const again = await open('страница 1 ещё раз');
+      if (again.stop) out.stop = again.stop;
+      else {
+        add(again.data.topics);
+        out.countersAfter = again.data.counters;
+        out.pages.push({ n: 1, source: 'state', topics: again.data.topics.length, dom: again.dom, again: true });
+      }
+    }
+    return out;
+  } finally {
+    page.off('request', onRequest);
+    page.off('response', onResponse);
+    out.read = byVacancy.size;
+    out.dated = [...byVacancy.values()].filter((t) => t.creationTime).length;
+    writeJsonAtomic(join(dir, 'topics.json'), [...byVacancy.values()]);
+    writeJsonAtomic(join(dir, 'summary.json'), out);
+    log('negotiations.done', { pages: out.pages.length, read: out.read, total: out.total, stop: out.stop });
+    progress({ step: 'готово' });
+  }
 }
 
 // Резюме (часть D «Экспорт на hh», E0 15.10.2026, docs/recommendations.md): «Мои резюме», страница каждого резюме и
