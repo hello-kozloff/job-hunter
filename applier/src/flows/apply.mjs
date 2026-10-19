@@ -365,10 +365,15 @@ async function liveApply({ page, id, letter, facts, prediction, choice, net, ste
     respond = { ok: true, letter: sentWithLetter ? 'attached' : 'none', confirmed: true };
   }
 
-  // Отклик ушёл. Письмо не ушло вместе с ним (один клик, окно без поля) — прикладываем, иначе в чат отклика
+  // Отклик ушёл. Письмо не ушло вместе с ним (один клик, окно без поля) — прикладываем, иначе в чат отклика.
+  // Сбой на письме — не сбой отклика: отклик уже на hh (19.10.2026 клик по «Приложить» завис, и отправленный отклик
+  // записался ошибкой — бот звал нажать 🚀 ещё раз)
   let how = respond.letter === 'attached' ? 'attached' : 'none';
   if (how !== 'attached' && letter.trim()) {
-    const added = await addLetter(page, letter, net, step);
+    const added = await addLetter(page, letter, net, step).catch((e) => {
+      step('letter-crash', { error: firstLine(e) });
+      return { how: 'none', note: `сбой: ${firstLine(e)}` };
+    });
     how = added.how;
     if (how === 'none') warnings.add(`письмо не приложилось (${added.note}) — добавьте его в чате отклика на hh`);
   }
@@ -447,11 +452,15 @@ async function fillModal(page, letter, facts, warnings, step, choice) {
   const reject = (await bodyText(page)).match(TEXT.rejectWarning)?.[0];
   if (reject) warnings.add(reject);
   const input = page.locator(SEL.letterInput).first();
+  // Письмо необязательное — поле свёрнуто под «Добавить сопроводительное»: раскрываем (19.10.2026 hh сменил кнопку,
+  // и два отклика ушли без письма)
+  let toggled = false;
   if (letter.trim() && !(await visible(input))) {
     const toggle = page.locator(SEL.letterToggle).first();
     if (await visible(toggle)) {
+      await pause(500, 1200);
       await toggle.click({ timeout: 5000 });
-      await visibleWithin(input, 5000);
+      toggled = await visibleWithin(input, 5000);
     }
   }
   let withLetter = false;
@@ -464,7 +473,7 @@ async function fillModal(page, letter, facts, warnings, step, choice) {
   } else if (facts.letterRequired) {
     return { error: 'письмо обязательно, а поля для него в окне нет' };
   }
-  step('modal', { resume: Boolean(title), letter: withLetter });
+  step('modal', { resume: Boolean(title), letter: withLetter, ...(toggled && { toggled }) });
   return { withLetter };
 }
 
@@ -540,17 +549,21 @@ async function textOutcome(page, id, screen, facts, done) {
   return done('error', { note: `hh: ${screen.text}`, shot: name });
 }
 
-// Письмо к уже отправленному отклику: «Приложить сопроводительное письмо» → не вышло — чат отклика. → { how, note }
+// Первая строка ошибки Playwright (дальше — лог вызова на десятки строк)
+const firstLine = (e) => String(e?.message ?? e).split('\n')[0].slice(0, 160);
+
+// Письмо к уже отправленному отклику: «Приложить сопроводительное письмо» → не вышло (в том числе клик завис) — чат
+// отклика. → { how, note }
 async function addLetter(page, letter, net, step) {
   const notes = [];
   const attach = page.locator(SEL.attachLetter).first();
   if (await visibleWithin(attach, 8000)) {
-    const r = await attachLetter(page, attach, letter, net, step);
+    const r = await attachLetter(page, attach, letter, net, step).catch((e) => ({ ok: false, note: `сбой: ${firstLine(e)}` }));
     if (r.ok) return { how: 'attached', note: '' };
     notes.push(`«Приложить»: ${r.note}`);
     await closeDialogs(page);
   } else notes.push('нет «Приложить письмо»');
-  const c = await chatLetter(page, letter, net, step);
+  const c = await chatLetter(page, letter, net, step).catch((e) => ({ ok: false, note: `сбой: ${firstLine(e)}` }));
   if (c.ok) return { how: 'chat', note: '' };
   notes.push(`чат: ${c.note}`);
   return { how: 'none', note: notes.join('; ') };

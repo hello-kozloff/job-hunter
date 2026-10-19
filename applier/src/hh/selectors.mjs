@@ -20,7 +20,9 @@ export const SEL = {
   // Окно отклика: письмо до отправки
   modalSubmit: '[data-qa="vacancy-response-submit-popup"]',
   letterInput: '[data-qa="vacancy-response-popup-form-letter-input"]',
-  letterToggle: '[data-qa="vacancy-response-letter-toggle"]',
+  // Поле письма свёрнуто, когда письмо необязательно: с 19.10.2026 (разведка окна) — кнопка «Добавить сопроводительное»
+  // в подвале окна (add-cover-letter); до того — vacancy-response-letter-toggle. Обязательное письмо — поле сразу
+  letterToggle: '[data-qa="add-cover-letter"], [data-qa="vacancy-response-letter-toggle"]',
   resumeTitle: '[data-qa="resume-title"]',
   // Выбор резюме в окне (запись 16.10.2026, два резюме): ячейка с названием — кнопка (role=button), по нажатию — список
   // опций magritte-select-option-<хеш резюме> (radio). Название в самом окне — resume-title вне списка (в списке свои)

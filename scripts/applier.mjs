@@ -141,6 +141,9 @@ const commands = {
       if (choice.prediction) console.log(`  прогноз hh: ${choice.prediction.type}`);
       if (choice.facts) console.log(`  резюме для отклика: свободных ${choice.facts.resumes.unused.length}, использованных ${choice.facts.resumes.used.length}, скрытых ${choice.facts.resumes.hidden.length}`);
       if (choice.modalOpened !== undefined) console.log(`  окно отклика: ${choice.modalOpened ? 'открылось' : 'не открылось'}; ячейка резюме: ${choice.cell ? 'есть' : 'нет'}`);
+      if (choice.letterInput !== undefined) {
+        console.log(`  поле письма: ${choice.letterInput ? 'есть' : 'нет'}${choice.letterToggle ? ' (после «Добавить сопроводительное»)' : ''}`);
+      }
       for (const [tag, snap] of [['до', choice.before], ['после нажатия на резюме', choice.after]]) {
         if (!snap) continue;
         console.log(`  ${tag}: data-qa ${snap.dataQa.length}; окна: ${snap.dialogs.join(' | ') || '—'}`);

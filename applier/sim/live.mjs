@@ -68,6 +68,19 @@ const SCENARIOS = [
     expect: { outcome: 'applied', via: 'quick', letter: 'attached', posts: ['/applicant/vacancy_response/popup', '/applicant/vacancy_response/edit_ajax'] },
   },
   {
+    name: 'modal-letter-button: письмо необязательное — поле под «Добавить сопроводительное»',
+    type: 'modal',
+    letterButton: true,
+    expect: { outcome: 'applied', via: 'modal', letter: 'attached', posts: [POPUP], trace: { s: 'modal', letter: true, toggled: true } },
+  },
+  {
+    name: 'quick-stuck: после отклика «Приложить» и «Чат» не нажимаются — отклик всё равно отправлен',
+    type: 'quickResponse',
+    edit: [200, {}],
+    attachStuck: true,
+    expect: { outcome: 'applied', via: 'quick', letter: 'none', warning: /письмо не приложилось/, posts: [POPUP] },
+  },
+  {
     name: 'limit: hh ответил «лимит откликов»',
     type: 'modal',
     respond: [400, { error: 'negotiationsLimitExceeded' }],
