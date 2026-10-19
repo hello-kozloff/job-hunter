@@ -7,6 +7,8 @@
 
 // @include n8n/shared/time.js
 
+// @include n8n/shared/shadow.js
+
 // @include n8n/shared/settings.js
 
 // @include n8n/shared/schedule.js
@@ -25,6 +27,7 @@ const now = Date.now();
 const since = now - DAY;
 const at = (s) => Date.parse(s) || 0;
 const rows = $('All rows').all().map((i) => i.json).filter((r) => r.id);
+const settings = loadSettings($('Settings').all());
 const expired = new Set(from('Expire rows').map((r) => r.id));
 const archived = new Set(from('Archive status').map((r) => r.id));
 
@@ -55,10 +58,9 @@ const sent = count(rows, (r) => at(r.applied_at) >= since);
 const tailsWaiting = count(rows, (r) => r.status === 'waiting' && !expired.has(r.id) && !archived.has(r.id));
 const tailsApproved = count(rows, (r) => r.status === 'approved' && !archived.has(r.id));
 
-// Теневой режим: оценки пользователя там, где решение нейросети известно
-// («📨 откликался раньше» — my_decision = earlier — не сравниваем: отклик был до бота)
-const shadow = rows.filter((r) => ['apply', 'maybe', 'skip'].includes(r.my_decision) && ['apply', 'maybe', 'skip'].includes(r.decision));
-const agree = count(shadow, (r) => r.my_decision === r.decision);
+// Теневой режим: оценки пользователя там, где решение нейросети известно, — с метки «🔄 Теневой заново»
+// (n8n/shared/shadow.js)
+const shadow = shadowStats(rows, settings['llm.shadow_since']);
 
 // Сбои: запуски n8n за сутки (публичный API), туннель, хвост оценки нейросетью
 const NAMES = {
@@ -87,7 +89,7 @@ for (const e of errors) errorsBy[NAMES[e.workflowId] ?? e.workflowId] = (errorsB
 const windowEnd = now - 10 * 60 * 1000;
 const windowStart = windowEnd - DAY;
 // Расписание — из настроек бота (⚙️ → 🕐 Сбор). На паузе сборов не ждём — и не тревожим
-const sch = scheduleFrom(loadSettings($('Settings').all()));
+const sch = scheduleFrom(settings);
 const expected = countCollectSlots(windowStart, windowEnd, sch);
 const collected = count(
   $('Runs')
@@ -100,10 +102,11 @@ const collected = count(
     at(r.started_at) <= windowEnd,
 );
 // Ждут оценки дольше 30 мин: W2 запускается сразу после сбора, свежие строки detailed — норма
-// (scoring — W2 сейчас оценивает; застрявшие в scoring вернёт ветка «Unstick»)
+// (scoring — W2 сейчас оценивает; застрявшие в scoring вернёт ветка «Unstick»). Время — когда строка стала detailed
+// (updatedAt), а не создана: строки из очереди и разового догона создавались давно (19.10.2026)
 const pendingScore = count(
   rows,
-  (r) => ['detailed', 'scoring'].includes(r.status) && at(r.createdAt) < now - 30 * 60 * 1000,
+  (r) => ['detailed', 'scoring'].includes(r.status) && at(r.updatedAt) < now - 30 * 60 * 1000,
 );
 const tunnelCode = $input.first().json.statusCode;
 const tunnelOk = !$env.NGROK_DOMAIN || tunnelCode === 403; // 403 = туннель жив, политика не пускает чужих
@@ -121,7 +124,6 @@ if (!tunnelOk) problems.push(`туннель не отвечает (${tunnelCode
 if (pendingScore) problems.push(`ждут оценки нейросетью: ${pendingScore}`);
 
 // Робот-отклик (этап 6): отклики за сутки и его здоровье — если он включён в ⚙️
-const settings = loadSettings($('Settings').all());
 const robotOn = settings['apply.enabled'];
 const robotRows = rows.filter((r) => r.apply_by === 'robot' && at(r.applied_at) >= since);
 const robotManual = count(rows, (r) => ['test', 'external', 'hidden'].includes(r.apply_result) && at(r.updatedAt) >= since);
@@ -147,9 +149,7 @@ const lines = [
   robotLineText,
   `⏳ Хвосты: без решения ${tailsWaiting} · ✅ без отклика ${tailsApproved}`,
   expired.size || archived.size ? `⌛ Устарели: ${expired.size} · 🔒 закрылись на hh: ${archived.size}` : '',
-  shadow.length >= 50
-    ? `🧪 Теневой режим: ${shadow.length}/50, совпало ${agree} (${Math.round((agree / shadow.length) * 100)}%) — пора разбирать, напиши Claude`
-    : `🧪 Теневой режим: ${shadow.length}/50${shadow.length ? `, совпало ${agree} (${Math.round((agree / shadow.length) * 100)}%)` : ''}`,
+  shadow.pairs >= SHADOW_GOAL ? `${shadowLine(shadow)} — пора разбирать, напиши Claude` : shadowLine(shadow),
   sch.paused ? '⏸ Сбор на паузе (⚙️ Настройки → 🕐 Сбор)' : '',
   problems.length
     ? `⚠️ Сбои: ${problems.join(' · ')}`

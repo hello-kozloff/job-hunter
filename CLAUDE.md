@@ -207,7 +207,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - этап 6 (робот-отклик): `apply_state` ('' | queued | applying — очередь W9, статус не меняет), `apply_queued_at`, `apply_tries`, `apply_result`, `apply_letter` (attached | chat | none), `apply_note`, `apply_by` (robot | me | hh); 6.2 — `hh_state`, `hh_state_at`, `hh_chat_id`;
 - таблица `blacklist`: `company, comment`;
 - таблица `runs` — журнал сборов W1: `started_at, finished_at, kind` (schedule | catchup | bot | manual), `status` (running | ok | error), `found, uniq, fresh, rejected, scoring, pages, cards, error`;
-- таблица `settings` — настройки из бота: `name, value_json` (только изменения; значения по умолчанию — в коде); с 13.10.2026 там же профиль человека: `profile.*` (резюме, факты, подпись, контакт, пресет), `llm.rules`, `letters.*` (`docs/onboarding.md`); с 15.10.2026 — `resume.history` (версии резюме для отката, W13) и `cv` (разделы резюме: разметка поверх `profile.resume`, W13);
+- таблица `settings` — настройки из бота: `name, value_json` (только изменения; значения по умолчанию — в коде); с 13.10.2026 там же профиль человека: `profile.*` (резюме, факты, подпись, контакт, пресет), `llm.rules`, `letters.*` (`docs/onboarding.md`); с 15.10.2026 — `resume.history` (версии резюме для отката, W13) и `cv` (разделы резюме: разметка поверх `profile.resume`, W13); с 19.10.2026 — `llm.shadow_since` (с какой минуты считать теневой режим);
 - 16.10.2026 (несколько резюме, `docs/resumes.md`): таблица `settings` — `resumes` (список резюме) и `resume.r2` … `resume.r5` (данные резюме: текст, факты, правила, поиск, фильтр, письма), `resume.r2.cv` … `resume.r5.cv` и `resume.r2.history` … `resume.r5.history` (разметка и версии отката W13); `vacancies` — `resume_id` (пусто у основного резюме), `resume_name` (подпись «📄 Резюме»: с 17.10.2026 при 2+ резюме — у всех вакансий, у основного тоже; W11 обновляет при переименовании и удалении резюме);
 - таблица `alerts` — тревоги W4: `alert_key, workflow, message, first_at, last_at, hits, is_open, tg_message_id`;
 - имена колонок обходят служебные слова SQL (key, value, trigger, count, unique, open);
@@ -303,7 +303,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - разметка key_skills вакансии: «коммерческий опыт / пет-проекты / кандидат пишет сам / нет в профиле» (Flash-Lite путался и писал «готов погрузиться в Docker»); строки резюме про пет-проекты и фриланс вне «Дополнительно» (в «О себе») — тоже пет-проекты (14.10.2026: письма писали «Python в коммерческих проектах»); «SASS/SCSS» — по каждому названию; kuber, k8s → Kubernetes, postgres → PostgreSQL;
 - прежние правила: только факты из профиля; компании по имени, бэкенд — «пет-проекты и фриланс»; цифры — дословно как в профиле, цифрами; без лести и «Интересна именно задача … в проекте X»; конец — «Для быстрой связи тг: @freshraveprince» + «Никита»; без локации, зарплаты и сроков выхода; про AI-инструменты — только для AI-вакансий.
 - Предел: Flash-Lite иногда переписывает строку резюме списком и бывает неуклюж. Сильные Gemini Flash на бесплатном ключе 14.10.2026 отвечали 503, Claude для писем — платно; если писем по-прежнему мало — отдельный провайдер писем (общий `llm.provider` сдвинул бы и оценку в теневом режиме).
-**Теневой режим (этап 3):** карточки на все оценённые вакансии, включая skip; пользователь жмёт ✅/🤔/❌, при расхождении — «Почему?». После 50 оценок — отчёт о совпадениях и решение, выключать ли режим (тогда skip — только в сводке).
+**Теневой режим (этап 3):** карточки на все оценённые вакансии, включая skip; пользователь жмёт ✅/🤔/❌, при расхождении — «Почему?». После 50 оценок — отчёт о совпадениях и решение, выключать ли режим (тогда skip — только в сводке). Счёт с нуля (19.10.2026): ⚙️ → 🤖 → «🔄 Теневой заново» пишет `llm.shadow_since`, совпадения считаются по карточкам после метки (`n8n/shared/shadow.js`), оценки в таблице не меняются; первый сброс — 19.10.2026 (было 112 пар, 38%).
 
 
 
@@ -413,11 +413,12 @@ n8n/w8-clock/*.js                   код Code-нод W8 («часы» сбор
 n8n/w9-robot/*.js                   код Code-нод W9 (робот-отклик: план 🚀/⛔, ворота очереди, исход, капча, блоки)
 n8n/w11-profile/*.js                код Code-нод W11 (онбординг: PDF → нейросеть → профиль; ⚙️ → 👤)
 n8n/w13-resume/*.js                 код Code-нод W13 (рекомендации по резюме: план, вопросы, правки, откат, файл)
-scripts/test-shared.mjs, test-w1.mjs, test-w11.mjs, test-w13.mjs, test-w2.mjs, test-w9.mjs  тесты общего кода и сценариев W1, W2, W9, W11, W13 без n8n: node --test scripts/test-*.mjs
+scripts/test-shared.mjs, test-w1.mjs, test-w11.mjs, test-w13.mjs, test-w2.mjs, test-w6.mjs, test-w7.mjs, test-w9.mjs  тесты общего кода и сценариев W1, W2, W6, W7, W9, W11, W13 без n8n: node --test scripts/test-*.mjs
 n8n/shared/*.js                     общий код Code-нод (карточка, письмо, разбор страницы hh, меню, расписание W1, робот-отклик,
                                     поисковый запрос hh, признак AI-вакансии, время человека time.js, профиль profile.js,
                                     справочник ролей hh hh-roles.js, запрос к нейросети и разбор ответа llm.js,
-                                    названия навыков skills.js, правки резюме и покрытие навыков resume.js, разделы резюме cv.js),
+                                    названия навыков skills.js, правки резюме и покрытие навыков resume.js, разделы резюме cv.js,
+                                    подсчёт теневого режима shadow.js),
                                     подключается строкой // @include
 n8n/w4-errors/*.js                  код Code-нод W4
 n8n/schema.mjs                      схема таблиц vacancies и blacklist

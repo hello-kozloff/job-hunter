@@ -226,6 +226,14 @@ function settingsConfirmView(id) {
   };
 }
 
+// Совпадения теневого режима и с какой минуты они считаются (llm.shadow_since, n8n/shared/shadow.js)
+function shadowNote() {
+  const since = settings['llm.shadow_since'];
+  const { pairs, agree } = shadowStats(rows, since);
+  const from = Date.parse(since) ? `с ${localDate(since)} ${localTime(since)}` : 'по всем карточкам';
+  return `Совпадения ${from}: ${pairs}/${SHADOW_GOAL}${pairs ? `, совпало ${agree} (${Math.round((agree / pairs) * 100)}%)` : ''}. «🔄 Теневой заново» — считать с этой минуты, оценки не меняются`;
+}
+
 function settingsLlmView() {
   const provider = settings['llm.provider'];
   const model = provider === 'claude' ? $env.CLAUDE_MODEL || 'claude-haiku-4-5' : $env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
@@ -236,6 +244,7 @@ function settingsLlmView() {
     settings['llm.shadow']
       ? 'Теневой режим: вкл — карточки на все оценки, включая 🔴'
       : 'Теневой режим: выкл — 🔴 без карточек: только в итоге после сбора и в меню на вкладке ❌',
+    shadowNote(),
     '',
     '<b>Спорные случаи</b> — какое решение ставить:',
     ...(settings['llm.cases'].length

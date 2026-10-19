@@ -58,6 +58,9 @@ const SETTINGS = {
   // Нейросеть (W2, W5): провайдер; теневой режим — карточки и на skip (выкл — skip только в сводке)
   'llm.provider': { default: 'gemini', options: ['gemini', 'claude'] },
   'llm.shadow': { default: true, options: [true, false] },
+  // С какой минуты считать совпадения теневого режима (ISO, 19.10.2026; n8n/shared/shadow.js). Пусто — все карточки.
+  // Пишет кнопка «🔄 Теневой заново» (⚙️ → 🤖): stamp — значение «сейчас»
+  'llm.shadow_since': { default: '', stamp: true },
   // Спорные случаи — список «случай: решение» (✏️, решение пользователя 07.10.2026: текстом, а не кнопками).
   // По умолчанию — четыре встроенных случая промпта W2 с их решениями; отличие от них уходит в промпт
   // «Поправками кандидата» (n8n/w2-score/build-prompt.js)
@@ -201,6 +204,7 @@ function validSetting(spec, value) {
       value.every((c) => CASE_RE.test(c?.case ?? '') && ['apply', 'maybe', 'skip'].includes(c?.decision))
     );
   }
+  if (spec.stamp) return typeof value === 'string' && (value === '' || Number.isFinite(Date.parse(value)));
   if (spec.text) return typeof value === 'string' && value.length <= spec.text;
   if (spec.tz) {
     try {
