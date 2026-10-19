@@ -37,6 +37,7 @@
 | `filter.stop_words` | php\*, laravel, … наставник\* (18) | список слов (✏️), может быть пустым («-») | W1 «Filter search»: стоп-слова в названии |
 | `llm.provider` | `gemini` | gemini · claude | W2 (оценка), W5 (письма); заменяет `LLM_PROVIDER` из `.env` |
 | `llm.shadow` | true | true · false | W2: выкл — skip без карточки («Quiet skips»: status skipped без `my_decision`), в итоге «🔴 N без карточек» |
+| `llm.shadow_since` | пусто (все карточки) | время ISO; пишет кнопка «🔄 Теневой заново» (`stamp` — значение «сейчас») | W6 сводка, W7 📊 и ⚙️ → 🤖: совпадения теневого режима — только по карточкам после метки (`n8n/shared/shadow.js`, 19.10.2026) |
 | `llm.cases` | Vue без React: maybe, fullstack: maybe, AI на JS/TS: apply, React Native: skip | список «случай: решение» (✏️) | W2 «Build prompt» |
 | `apply.enabled` | false | false · true | W5: письмо с [🚀 Откликнуться роботом]; W9: 🚀 при выключенном — тост и письмо без 🚀; выключили — очередь назад в ✅ (W7 «Robot kick» → W9 `dequeue`) |
 | `apply.paused` | false | false · true | W9: очередь копится, робот не отправляет; сняли паузу — W9 `tick` |

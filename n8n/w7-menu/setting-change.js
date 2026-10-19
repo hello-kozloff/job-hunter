@@ -3,6 +3,7 @@
 // Нода: Code, режим «Run Once for All Items». Вход: «Job», «Settings» — строки таблицы settings.
 //   change = { name } — кнопка «▸»: следующее значение по кругу;
 //   change = { name: 'filter.rules_off', toggle } — правило фильтра: выключить или включить;
+//   change = { name } у настройки-метки (stamp: llm.shadow_since — «🔄 Теневой заново») — записать «сейчас»;
 //   input = { name, text } — ответ на вопрос со списком: новый список слов или спорных случаев целиком
 //   (ошибку покажет «Render»).
 // Выход: [{ name, value_json, value, previous }] → «Save setting» (upsert по name) или [] — менять нечего.
@@ -26,6 +27,7 @@ if (job.input && SETTINGS[job.input.name]?.cases) {
 
 const name = job.change?.name;
 if (!name || !SETTINGS[name]) return [];
+if (SETTINGS[name].stamp) return result(name, new Date().toISOString());
 if (job.change.toggle) {
   return FILTER_RULES[job.change.toggle] ? result(name, toggleListItem(s[name], job.change.toggle)) : [];
 }

@@ -12,6 +12,7 @@ const load = (files, exports) =>
 const lib = load(
   [
     'n8n/shared/time.js',
+    'n8n/shared/shadow.js',
     'n8n/shared/card.js',
     'n8n/shared/settings.js',
     'n8n/shared/hh-roles.js',
@@ -23,7 +24,7 @@ const lib = load(
     'n8n/shared/resume.js',
     'n8n/shared/cv.js',
   ],
-  'SETTINGS, RESUME_FIELDS, loadSettings, validSetting, resumeList, resumeById, activeResumes, nextResumeId, resumeData, resumeSettings, resumeRows, resumeKeys, resumeSaveRows, resumeVacancies, resumeScope, cvFromAnchors, cvRender, resumeSearchable, searchQueries, inheritPerson, resumeFromDraft, draftFromAnswer, hhDate, hhDuration, hhResumeText, applyHhFacts, hhOutcome, hhWhy',
+  'SHADOW_GOAL, shadowStats, shadowLine, SETTINGS, RESUME_FIELDS, loadSettings, validSetting, resumeList, resumeById, activeResumes, nextResumeId, resumeData, resumeSettings, resumeRows, resumeKeys, resumeSaveRows, resumeVacancies, resumeScope, cvFromAnchors, cvRender, resumeSearchable, searchQueries, inheritPerson, resumeFromDraft, draftFromAnswer, hhDate, hhDuration, hhResumeText, applyHhFacts, hhOutcome, hhWhy',
 );
 const rows = (obj) => Object.entries(obj).map(([name, value]) => ({ name, value_json: JSON.stringify(value) }));
 
@@ -427,4 +428,30 @@ test('robotButtonText: the resume when it is known, clipped to 40 characters; ot
   assert.equal(view.robotButtonText(job({ resume_name: 'Fullstack-разработчик' })), '🚀 Роботом: Fullstack-разработчик');
   const long = view.robotButtonText(job({ resume_name: 'Р'.repeat(60) }));
   assert.equal(long, `🚀 Роботом: ${'Р'.repeat(39)}…`);
+});
+
+// Теневой режим с нуля (19.10.2026): метка llm.shadow_since и подсчёт пар (n8n/shared/shadow.js)
+test('llm.shadow_since: пусто или дата; битое значение — по умолчанию (все карточки)', () => {
+  const spec = lib.SETTINGS['llm.shadow_since'];
+  assert.ok(lib.validSetting(spec, ''));
+  assert.ok(lib.validSetting(spec, '2026-10-19T08:00:00.000Z'));
+  assert.ok(!lib.validSetting(spec, 'вчера'));
+  assert.ok(!lib.validSetting(spec, 0));
+  assert.equal(lib.loadSettings(rows({ 'llm.shadow_since': 'вчера' }))['llm.shadow_since'], '');
+});
+
+test('shadowStats: пары apply/maybe/skip с карточкой после метки; earlier и error не считаются', () => {
+  const rowsOf = [
+    { decision: 'apply', my_decision: 'apply', card_at: '2026-10-10T00:00:00.000Z' },
+    { decision: 'skip', my_decision: 'apply', card_at: '2026-10-20T00:00:00.000Z' },
+    { decision: 'maybe', my_decision: 'maybe', createdAt: '2026-10-21T00:00:00.000Z' },
+    { decision: 'apply', my_decision: 'earlier', card_at: '2026-10-21T00:00:00.000Z' },
+    { decision: 'error', my_decision: 'skip', card_at: '2026-10-21T00:00:00.000Z' },
+    { decision: 'apply', my_decision: '', card_at: '2026-10-21T00:00:00.000Z' },
+  ];
+  assert.deepEqual(lib.shadowStats(rowsOf, ''), { since: '', pairs: 3, agree: 2 });
+  assert.deepEqual(lib.shadowStats(rowsOf, '2026-10-19T00:00:00.000Z'), { since: '2026-10-19T00:00:00.000Z', pairs: 2, agree: 1 });
+  assert.deepEqual(lib.shadowStats(rowsOf, 'битое'), { since: '', pairs: 3, agree: 2 });
+  assert.equal(lib.SHADOW_GOAL, 50);
+  assert.equal(lib.shadowLine({ since: '', pairs: 0, agree: 0 }), '🧪 Теневой режим: 0/50');
 });

@@ -13,6 +13,8 @@
 
 // @include n8n/shared/time.js
 
+// @include n8n/shared/shadow.js
+
 // @include n8n/shared/card.js
 // @include n8n/shared/menu.js
 // @include n8n/shared/settings.js
@@ -200,8 +202,8 @@ function openView(id) {
 // ---------- Статистика ----------
 
 function statsView() {
-  // Журнал сборов runs (W1 «Start run» / «Finish run»), свежие сверху
-  const last = runs[0];
+  // Журнал сборов runs (W1 «Start run» / «Finish run»), свежие сверху; разовый догон (sweep) — не сбор
+  const last = runs.find((r) => r.kind !== 'sweep');
   const next = nextCollect(now, collectSchedule);
 
   // За сутки — как в утренней сводке W6: окно до «сейчас − 10 мин», только сборы по расписанию
@@ -241,11 +243,7 @@ function statsView() {
   const waiting = rows.filter((r) => r.status === 'waiting');
   const oldest = Math.min(...waiting.map((r) => at(r.card_at || r.createdAt)));
   const status = (s) => count(rows, (r) => r.status === s);
-  // Теневой режим — только решения apply / maybe / skip («📨 откликался раньше» не сравниваем)
-  const DECISIONS = ['apply', 'maybe', 'skip'];
-  const shadow = rows.filter((r) => DECISIONS.includes(r.my_decision) && DECISIONS.includes(r.decision));
   const earlier = count(rows, (r) => r.status === 'applied' && r.my_decision === 'earlier');
-  const agree = count(shadow, (r) => r.my_decision === r.decision);
   const errors = count(scored, (r) => r.decision === 'error');
 
   const lines = [
@@ -265,7 +263,8 @@ function statsView() {
     `• ✅ ${status('approved')} · 🤔 ${status('maybe')} · ❌ ${status('skipped')} · 📨 отправлено ${status('applied') - earlier}${earlier ? ` · 📨 раньше ${earlier}` : ''}`,
     `• ⌛ устарели ${status('expired')} · 🔒 закрылись ${status('archived')}`,
     '',
-    `🧪 Теневой режим: ${shadow.length}/50${shadow.length ? `, совпало ${agree} (${pct(agree, shadow.length)}%)` : ''}`,
+    // Теневой режим — с метки «🔄 Теневой заново» (n8n/shared/shadow.js)
+    shadowLine(shadowStats(rows, settings['llm.shadow_since'])),
   ];
   // Робот-отклик (этап 6): сегодня — с 09:00 по местному
   const robotSent = rows.filter((r) => r.status === 'applied' && r.apply_by === 'robot');
