@@ -11,7 +11,8 @@
 //   node scripts/n8n-api.mjs migrate                   создать недостающие таблицы и колонки по n8n/schema.mjs
 //   node scripts/n8n-api.mjs blacklist-seed            дописать в таблицу blacklist компании из n8n/blacklist.json
 //   node scripts/n8n-api.mjs tunnel-env                по .env: туннель (NGROK_DOMAIN → WEBHOOK_URL) и профили
-//                                                      docker compose (tunnel, applier — робот-отклик) в COMPOSE_PROFILES
+//                                                      docker compose (tunnel, applier — робот-отклик, claude — Claude
+//                                                      по подписке) в COMPOSE_PROFILES
 //   node scripts/n8n-api.mjs api-key | docker exec -i …  ключ публичного API n8n для W6 → JSON credential в stdout
 //                                                      (только через pipe в n8n import:credentials, см. docs/stages/stage-5.md)
 //   node scripts/n8n-api.mjs requeue <days> [--dry]    вернуть в обработку вакансии бэкфилла (seen) за N дней:
@@ -307,13 +308,16 @@ async function apiKey() {
 
 // Туннель ngrok (кнопки Telegram): адрес вебхуков n8n и профиль docker compose — из NGROK_DOMAIN
 // Профили docker compose и адреса туннеля — по .env: NGROK_DOMAIN → туннель ngrok (WEBHOOK_URL, профиль tunnel),
-// APPLIER_TOKEN → робот-отклик (профиль applier, этап 6). Профили объединяются, а не затираются
+// APPLIER_TOKEN → робот-отклик (профиль applier, этап 6), CLAUDE_CODE_OAUTH_TOKEN → Claude по подписке (профиль
+// claude, docs/claude-cli.md). Профили объединяются, а не затираются
 function tunnelEnv() {
   const env = readEnv();
   const domain = String(env.NGROK_DOMAIN ?? '')
     .replace(/^https?:\/\//, '')
     .replace(/\/+$/, '');
-  if (!domain && !env.APPLIER_TOKEN) throw new Error('В .env нет ни NGROK_DOMAIN, ни APPLIER_TOKEN');
+  if (!domain && !env.APPLIER_TOKEN && !env.CLAUDE_CODE_OAUTH_TOKEN) {
+    throw new Error('В .env нет ни NGROK_DOMAIN, ни APPLIER_TOKEN, ни CLAUDE_CODE_OAUTH_TOKEN');
+  }
   const profiles = new Set(
     String(env.COMPOSE_PROFILES ?? '')
       .split(',')
@@ -326,6 +330,7 @@ function tunnelEnv() {
     profiles.add('tunnel');
   }
   if (env.APPLIER_TOKEN) profiles.add('applier');
+  if (env.CLAUDE_CODE_OAUTH_TOKEN) profiles.add('claude');
   vars.COMPOSE_PROFILES = [...profiles].join(',');
   if (Object.entries(vars).every(([k, v]) => env[k] === v)) return;
   setEnv(vars, 'Профили docker compose и туннель ngrok (scripts/n8n-api.mjs tunnel-env)');

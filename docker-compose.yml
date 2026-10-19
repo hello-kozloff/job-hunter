@@ -47,6 +47,9 @@ services:
       # Сюда W1 сохраняет HTML, если парсер сломался.
       # Резюме и образцы писем с 13.10.2026 — в таблице settings (профиль), не в файлах
       - ./fixtures:/home/node/.n8n-files/fixtures
+    # default — ngrok и робот; llm — Claude по подписке (claude-cli виден только n8n). Без default в списке n8n
+    # ушёл бы из общей сети
+    networks: [default, llm]
 
   # Туннель для кнопок Telegram (W3): https://<NGROK_DOMAIN>/webhook/* → n8n.
   # Включается строкой COMPOSE_PROFILES=tunnel в .env; там же NGROK_AUTHTOKEN, NGROK_DOMAIN
@@ -115,6 +118,44 @@ services:
       retries: 3
       start_period: 30s
 
+  # Claude по подписке (docs/claude-cli.md): официальный claude -p без инструментов + HTTP API для n8n
+  # (http://claude-cli:3000). Включается профилем claude — его ставит tunnel-env, если в .env есть
+  # CLAUDE_CODE_OAUTH_TOKEN (claude setup-token). Порта на хосте нет: сервис в отдельной сети llm, его видит только
+  # n8n (не Chromium робота). Лимит подписки или сбой входа — вызов уходит в запасной Gemini (тот же GEMINI_API_KEY).
+  # Обычный деплой пересобирает и перезапускает его каждый раз: состояния нет, образ в кэше
+  claude-cli:
+    build:
+      context: ./claude-cli
+      args:
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-2.1.303}
+    image: ${COMPOSE_PROJECT_NAME:-job-hunter}-claude-cli
+    container_name: ${COMPOSE_PROJECT_NAME:-job-hunter}-claude-cli
+    restart: unless-stopped
+    profiles: [claude]
+    init: true
+    mem_limit: 1536m
+    stop_grace_period: 30s
+    # Системные промпты и CLAUDE_CONFIG_DIR вызовов — в памяти, не на диске
+    tmpfs:
+      - /tmp
+    environment:
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Оценки (W2) не берут подписку, если окно лимита занято на эту долю (твоя работа в Claude Code важнее)
+      CLAUDE_CLI_SCORE_MAX_UTIL: ${CLAUDE_CLI_SCORE_MAX_UTIL:-0.8}
+      # Время сброса лимита CLI пишет по поясу контейнера
+      TZ: ${USER_TZ:-Europe/Moscow}
+    networks: [llm]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/ping').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
 volumes:
   n8n_data:
   applier_data:
+
+networks:
+  llm: {}
