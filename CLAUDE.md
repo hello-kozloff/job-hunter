@@ -365,7 +365,7 @@ https://hh.ru/search/vacancy?text=frontend OR typescript OR javascript OR NAME:(
 - В живом n8n: `node scripts/n8n-api.mjs run jobHunterW1Colle` (сводка по нодам), `node scripts/n8n-api.mjs rows vacancies 5`.
 - Проверка ветки поломки: временно импортировать W1 с битым URL под тем же id → run → вернуть `scripts/deploy.sh`.
 - Pin data: 10–15 реальных вакансий разных типов, включая «ловушки» (Angular под видом Frontend, React Native, .NET + React, «только из РФ»).
-- Робот-отклик: `cd applier && npm test` (чистые функции на фикстурах и записи откликов), `node scripts/applier.mjs status | recon | record | apply <id> --letter-file f` (всегда сухой прогон, `dry: true`), `recon --resume` — разведка резюме на hh (часть D), `cv` — чтение резюме hh (только GET), `cv-dry <файл.json>` — сухой прогон записи резюме (формы hh, снимки, без сохранения); `applier/sim/run.sh` — живой сценарий на поддельном hh в контейнере без сети (26 сценариев, перед каждым изменением `apply.mjs`), `recon --chooser <id>` — окно отклика и выбор резюме (без отправки), `apply <id> --letter-file f --resume <хеш>` — сухой прогон с выбором резюме, `applier/sim/run.sh resume` — разведка, чтение и запись резюме (8 сценариев); предохранитель резюме `RESUME_LIVE` (0 — только сухой прогон) — в `.env`, через `scripts/deploy.sh --applier`; предохранитель `APPLY_LIVE` — в `.env`, меняется через `scripts/deploy.sh --applier`; шаги живого отклика — `docker compose logs -f applier`.
+- Робот-отклик: `cd applier && npm test` (чистые функции на фикстурах и записи откликов), `node scripts/applier.mjs status | recon | record | apply <id> --letter-file f` (всегда сухой прогон, `dry: true`), `recon --resume` — разведка резюме на hh (часть D), `cv` — чтение резюме hh (только GET), `cv-dry <файл.json>` — сухой прогон записи резюме (формы hh, снимки, без сохранения); `recon --negotiations [--pages N]` — все «Отклики» hh листанием, как человек (клик по кнопкам пейджера, 6–15 с между страницами) → `topics.json` для `n8n-api.mjs hh-applied` (`docs/hh-applied.md`); `applier/sim/run.sh` — живой сценарий на поддельном hh в контейнере без сети (26 сценариев, перед каждым изменением `apply.mjs`), `recon --chooser <id>` — окно отклика и выбор резюме (без отправки), `apply <id> --letter-file f --resume <хеш>` — сухой прогон с выбором резюме, `applier/sim/run.sh resume` — разведка, чтение и запись резюме (8 сценариев); предохранитель резюме `RESUME_LIVE` (0 — только сухой прогон) — в `.env`, через `scripts/deploy.sh --applier`; предохранитель `APPLY_LIVE` — в `.env`, меняется через `scripts/deploy.sh --applier`; шаги живого отклика — `docker compose logs -f applier`.
 - Тест веб-форм — на своих тестовых формах, не на работодателях.
 - Запуск: 3–5 откликов в день с подтверждением, потом больше.
 
@@ -415,7 +415,7 @@ n8n/w8-clock/*.js                   код Code-нод W8 («часы» сбор
 n8n/w9-robot/*.js                   код Code-нод W9 (робот-отклик: план 🚀/⛔, ворота очереди, исход, капча, блоки)
 n8n/w11-profile/*.js                код Code-нод W11 (онбординг: PDF → нейросеть → профиль; ⚙️ → 👤)
 n8n/w13-resume/*.js                 код Code-нод W13 (рекомендации по резюме: план, вопросы, правки, откат, файл)
-scripts/test-shared.mjs, test-w1.mjs, test-w11.mjs, test-w13.mjs, test-w2.mjs, test-w6.mjs, test-w7.mjs, test-w9.mjs, test-sweep.mjs  тесты общего кода и сценариев W1, W2, W6, W7, W9, W11, W13, догона sweep без n8n: node --test scripts/test-*.mjs
+scripts/test-shared.mjs, test-w1.mjs, test-w11.mjs, test-w13.mjs, test-w2.mjs, test-w6.mjs, test-w7.mjs, test-w9.mjs, test-sweep.mjs, test-hh-applied.mjs  тесты общего кода и сценариев W1, W2, W6, W7, W9, W11, W13, догона sweep, сверки hh-applied без n8n: node --test scripts/test-*.mjs
 n8n/shared/*.js                     общий код Code-нод (карточка, письмо, разбор страницы hh, меню, расписание W1, робот-отклик,
                                     поисковый запрос hh, признак AI-вакансии, время человека time.js, профиль profile.js,
                                     справочник ролей hh hh-roles.js, запрос к нейросети и разбор ответа llm.js,
@@ -434,13 +434,16 @@ scripts/lib/env.mjs                 .env: чтение, запись, имя п�
 scripts/n8n-api.mjs                 владелец, запуск/публикация workflow, строки таблиц, migrate, blacklist-seed,
                                     tunnel-env, sweep (разовый догон: поиск hh за 30 дней, отсеянные — снова через
                                     нынешние правила, бэкфилл seen — удалить; 19.10.2026, заменил requeue и recheck),
-                                    api-key, resume-labels (подписи резюме у вакансий, собранных раньше); строки
-                                    таблиц REST отдаёт по 250 — allRows листает
+                                    api-key, resume-labels (подписи резюме у вакансий, собранных раньше), hh-applied
+                                    (сверка с «Откликами» hh: вакансии без отклика, на которые он есть, → applied,
+                                    карточки — из чата; 20.10.2026, docs/hh-applied.md); строки таблиц REST отдаёт
+                                    по 250 — allRows листает
 scripts/lib/sweep.mjs               логика sweep без сети и n8n: план догона на коде нод W1 (песочница тестов)
+scripts/lib/hh-applied.mjs          логика hh-applied без сети и n8n: совпадения по id и dup_key, запись, текст карточки
 scripts/credentials.mjs             JSON credentials Telegram / Gemini / Claude из .env (только через pipe)
 scripts/run-code-node.mjs           прогон Code-ноды на фикстурах без n8n (--ref, --env, --static)
 scripts/hh-roles.mjs                справочник ролей hh из страницы поиска → n8n/shared/hh-roles.js
-scripts/applier.mjs                 CLI робота-отклика: status, login, recon (вакансии, отклики, резюме), cv (чтение резюме hh), record, apply (сухой), resume, shot
+scripts/applier.mjs                 CLI робота-отклика: status, login, recon (вакансии, отклики, все «Отклики» листанием, резюме), cv (чтение резюме hh), record, apply (сухой), resume, shot
 applier/                            робот-отклик (этап 6): Dockerfile, src/ (server, browser, store, hh/, flows/), test/
 scripts/lib/code.mjs                чтение кода Code-ноды с раскрытием // @include
 ngrok/policy.yml                    что туннель пускает внутрь: адреса Telegram, только /webhook/*
