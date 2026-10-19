@@ -328,6 +328,19 @@ export async function reconChooser(vacancyId, progress = () => {}) {
     }
     await pause(1200, 2200);
     out.before = await snapDialog(page, dir, 'before');
+    // Поле письма (19.10.2026): обязательное — сразу в окне; необязательное — под «Добавить сопроводительное». Кнопка
+    // только раскрывает поле, ничего не отправляет (предохранитель всё равно рвёт любую запись) — проверяем, что робот
+    // найдёт поле так же, как при отклике (SEL.letterToggle → SEL.letterInput)
+    const letterInput = page.locator(SEL.letterInput).first();
+    out.letterInput = await letterInput.isVisible().catch(() => false);
+    const toggle = page.locator(SEL.letterToggle).first();
+    if (!out.letterInput && (await toggle.isVisible().catch(() => false))) {
+      await pause(600, 1200);
+      await toggle.click({ timeout: 5000 });
+      out.letterToggle = true;
+      out.letterInput = await visibleWithin(letterInput, 5000);
+      out.letter = await snapDialog(page, dir, 'letter');
+    }
     // Ячейка резюме в окне — кнопка (role=button), внутри — название резюме
     const cell = page.locator(SEL.resumeTitle).first().locator('xpath=ancestor::*[@role="button"][1]');
     out.cell = (await cell.count().catch(() => 0)) > 0;
