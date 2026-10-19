@@ -137,7 +137,7 @@ node scripts/n8n-api.mjs profile-import docs/profile.json
 | `node scripts/n8n-api.mjs rows <таблица> [N]` | Последние строки таблицы |
 | `node scripts/n8n-api.mjs migrate` | Недостающие таблицы и колонки по `n8n/schema.mjs` |
 | `node scripts/n8n-api.mjs profile-import <json>` / `profile-export [json]` | Профиль и настройки бота: загрузить в таблицу `settings` / выгрузить (бэкап, перенос) |
-| `node scripts/n8n-api.mjs requeue <дни>` / `recheck <правило>` | Вернуть вакансии в обработку |
+| `node scripts/n8n-api.mjs sweep [--days N] [--no-search] [--dry]` | Разовый догон: поиск hh за 30 дней, отсеянные — снова через нынешние правила (`--no-search` — только они), бэкфилл `seen` — удалить; страницы и оценку делают сборы W1 и W2 |
 | `node scripts/applier.mjs status \| login \| resume \| shot` | Состояние робота, вход в hh, снятие блока, скриншот |
 | `node scripts/applier.mjs apply <id> --letter-file f` | Сухой прогон отклика: до кнопки, без клика |
 | `node scripts/run-code-node.mjs <файл.js> <фикстуры>` | Прогон Code-ноды на сохранённых страницах без n8n |
