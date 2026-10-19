@@ -27,7 +27,7 @@
 | Upgrade: уточнения | Всегда хотя бы один вопрос: сначала план «куда впишу, что заменю — верно?», потом правки по одной |
 | Анализ | Ключевые слова целевых вакансий (счёт кода по таблице), должность / опыт / «О себе», фильтры работодателей hh; до 8 вопросов, «⏹ Хватит» в любой момент; в конце — правки по ответам |
 | Фильтры (зарплата, город, переезд, формат) | Только подсказка «поменяй на hh сам», резюме бота не трогаем |
-| Нейросеть | Как у W11: `GEMINI_PROFILE_MODEL`, иначе `GEMINI_MODEL`; Claude — если в ⚙️ выбран Claude |
+| Нейросеть | Как у W11: `GEMINI_PROFILE_MODEL`, иначе `GEMINI_MODEL`; Claude API или Claude по подписке (`llm.cli_text`, `docs/claude-cli.md`) — если выбран в ⚙️ |
 | Ещё в разделе | ↩️ Откатить (5 версий), 📄 Резюме файлом, 🎯 покрытие навыков на панели |
 | Экспорт | Текущее резюме на hh с бэкапом; поля — должность и ключевые навыки, опыт (описания и должности), «Обо мне»; сверка hh → бот; сначала сухие (`RESUME_LIVE=0`) |
 | Порядок | Анализ + Upgrade, потом экспорт отдельной подзадачей |
@@ -96,7 +96,7 @@
 ```
 Called by W3 | Manual → Job → Answer? → Answer (убрать «часики»)
 Job → Settings → Plan → Rows? → Vacancies → Rows count → Route
-  llm  → Wait («⏳ …» на панели) → Build → Claude? → Claude | Gemini → Parse → Step
+  llm  → Wait («⏳ …» на панели) → Build → Provider → Claude | Claude CLI | Gemini → Parse → Step
   file → Resume file → To file (Convert to File, resume.md) → Send file
   step → Step
 Step → Save? → Save rows → Save resume (upsert settings)
@@ -144,7 +144,7 @@ Step → Save? → Save rows → Save resume (upsert settings)
 
 ### Нейросеть
 
-Модель — как у разбора резюме W11 (`llmModel`): `GEMINI_PROFILE_MODEL`, иначе `GEMINI_MODEL`; Claude — если в ⚙️ → 🤖 выбран Claude. В тексте промптов нет ни одного тире: Flash-Lite копирует типографику промпта (§7 CLAUDE.md, письма).
+Модель — как у разбора резюме W11 (`llmModel`): `GEMINI_PROFILE_MODEL`, иначе `GEMINI_MODEL`; Claude API или Claude по подписке — если выбран в ⚙️ → 🤖 (у подписки — `llm.cli_text`; правка резюме на Sonnet идёт до 3–4 минут, нода «Claude CLI» W13 ждёт 300 с). В тексте промптов нет ни одного тире: Flash-Lite копирует типографику промпта (§7 CLAUDE.md, письма).
 
 | Режим | Ответ (JSON-схема) | Проверка кодом (`n8n/w13-resume/parse.js`) |
 |---|---|---|

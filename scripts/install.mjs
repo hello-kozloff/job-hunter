@@ -4,12 +4,15 @@
 //   node scripts/install.mjs                      установка или обновление (повторный запуск безопасен)
 //   node scripts/install.mjs --project jh-test --port 5690
 //                                                 вторая установка рядом с первой (свои контейнеры, тома и порт)
+//   node scripts/install.mjs … --no-tunnel        без ngrok и кнопок бота (проверки рядом с рабочей установкой, пока
+//                                                 бесплатный домен ngrok один): сообщения бот шлёт, нажатия не доходят
 //
 // Что делает:
 //   1. проверяет Node 22+ и Docker;
 //   2. .env: ключ шифрования, часовой пояс компьютера, имя проекта и порт — сам;
 //   3. спрашивает токен бота (@BotFather) → проверяет; привязывает чат: ссылка t.me/<бот>?start=<код> → ловит /start;
-//   4. спрашивает ключ Gemini (и по желанию Claude) → пробный запрос;
+//   4. спрашивает ключ Gemini (и по желанию Claude API) → пробный запрос; по желанию — Claude по подписке Pro/Max
+//      (токен claude setup-token, docs/claude-cli.md);
 //   5. спрашивает токен и домен ngrok (кнопки Telegram приходят через туннель);
 //   6. запускает n8n, создаёт владельца, таблицы, деплоит workflow, ключ API для сводки;
 //   7. бот присылает приветствие: «пришли резюме PDF».
@@ -28,6 +31,7 @@ const flag = (name) => {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
 };
+const noTunnel = args.includes('--no-tunnel');
 const rl = createInterface({ input: stdin, output: stdout });
 // Ввод закрыт (ответы пришли через pipe и кончились) — считаем ответом «Enter», а не падаем
 const ask = async (q) => {
@@ -48,6 +52,42 @@ const run = (cmd, a, opts = {}) => execFileSync(cmd, a, { cwd: ROOT, encoding: '
 const node = (script, a = [], inherit = false) =>
   execFileSync(process.execPath, [join(ROOT, script), ...a], { cwd: ROOT, encoding: 'utf8', stdio: inherit ? 'inherit' : ['ignore', 'pipe', 'inherit'] });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Токен Claude по подписке: `claude setup-token` на этом компьютере, если Claude Code есть, иначе — тот же CLI из
+// контейнера claude-cli (сначала сборка образа). Вход — через браузер; токен печатается один раз, его вставляет человек
+async function claudeToken() {
+  let local = true;
+  try {
+    run('claude', ['--version']);
+  } catch {
+    local = false;
+  }
+  say(
+    local
+      ? '   Сейчас запущу `claude setup-token`: войди в браузере, в терминале появится токен sk-ant-oat01-… — скопируй его.'
+      : '   Claude Code на компьютере нет — запущу его из контейнера (первый раз — сборка, пара минут). Ссылку открой в\n' +
+          '   браузере, код из браузера вставь обратно в терминал, потом скопируй токен sk-ant-oat01-…',
+  );
+  if ((await ask('   Enter — начать, «нет» — без Claude: ')).toLowerCase().startsWith('н')) return '';
+  // Ввод — у claude, не у мастера
+  rl.pause();
+  try {
+    if (local) execFileSync('claude', ['setup-token'], { stdio: 'inherit' });
+    else {
+      execFileSync('docker', ['compose', '--profile', 'claude', 'build', 'claude-cli'], { cwd: ROOT, stdio: 'inherit' });
+      execFileSync('docker', ['compose', '--profile', 'claude', 'run', '--rm', 'claude-cli', 'claude', 'setup-token'], { cwd: ROOT, stdio: 'inherit' });
+    }
+  } catch {
+    say('   ⚠️ claude setup-token не закончился — если токен уже есть, вставь его');
+  }
+  rl.resume();
+  for (;;) {
+    const token = await ask('   Токен (sk-ant-oat01-…; Enter — без Claude): ');
+    if (!token) return '';
+    if (/^sk-ant-[\w-]{20,}$/.test(token)) return token;
+    say('   ✗ Не похоже на токен claude setup-token (sk-ant-oat01-…)');
+  }
+}
 
 say('🧭 Мастер установки Job Hunter');
 
@@ -157,12 +197,33 @@ if (!env.ANTHROPIC_API_KEY) {
   if (claude) setEnv({ ANTHROPIC_API_KEY: claude }, 'Запасная нейросеть Claude (⚙️ → 🤖 Нейросеть)');
   env = readEnv();
 }
-if (!env.GEMINI_API_KEY && !env.ANTHROPIC_API_KEY) fail('Без нейросети системе не разобрать резюме и не оценить вакансии. Нужен ключ Gemini или Claude.');
-if (!env.GEMINI_API_KEY) say('   ⚠️ Без Gemini: после установки переключи нейросеть на Claude — ⚙️ Настройки → 🤖 Нейросеть');
+// Claude по подписке (19.10.2026, docs/claude-cli.md): официальный Claude Code CLI в своём контейнере. Токен на год
+// печатает `claude setup-token` (вход через браузер) — один раз, его вставляет человек
+let claudeAdded = false;
+if (!env.CLAUDE_CODE_OAUTH_TOKEN) {
+  say('');
+  say('   Claude по подписке Pro/Max — письма и оценки сильнее бесплатного Gemini (docs/claude-cli.md):');
+  say('   — только своя подписка и свой токен; из России Claude недоступен (правила Anthropic);');
+  say('   — лимит общий с claude.ai и Claude Code; кончился — запрос сделает Gemini, если есть его ключ;');
+  say('   — данные идут в обучение, если в claude.ai включено «Help improve Claude».');
+  if ((await ask('   Подключить Claude по подписке? [y/N] ')).toLowerCase() === 'y') {
+    const token = await claudeToken();
+    if (token) {
+      setEnv({ CLAUDE_CODE_OAUTH_TOKEN: token }, 'Claude по подписке: токен claude setup-token (docs/claude-cli.md)');
+      claudeAdded = true;
+    }
+    env = readEnv();
+  }
+}
+if (!env.GEMINI_API_KEY && !env.ANTHROPIC_API_KEY && !env.CLAUDE_CODE_OAUTH_TOKEN) {
+  fail('Без нейросети системе не разобрать резюме и не оценить вакансии. Нужен ключ Gemini, Claude API или Claude по подписке.');
+}
+if (!env.GEMINI_API_KEY && !env.CLAUDE_CODE_OAUTH_TOKEN) say('   ⚠️ Без Gemini: после установки переключи нейросеть на Claude — ⚙️ Настройки → 🤖 Нейросеть');
 
 // ---------- 5. ngrok ----------
 step(5, 'Туннель для кнопок Telegram (ngrok)');
-if (!env.NGROK_AUTHTOKEN || !env.NGROK_DOMAIN) {
+if (noTunnel) say('   — пропускаю (--no-tunnel): бот присылает сообщения, но нажатия кнопок и PDF не доходят');
+else if (!env.NGROK_AUTHTOKEN || !env.NGROK_DOMAIN) {
   say('   Бесплатный аккаунт: https://dashboard.ngrok.com → Your Authtoken и Domains (один бесплатный домен).');
   const token = env.NGROK_AUTHTOKEN || (await ask('   ngrok Authtoken: '));
   let domain = env.NGROK_DOMAIN || (await ask('   ngrok домен (например name.ngrok-free.dev): '));
@@ -171,7 +232,7 @@ if (!env.NGROK_AUTHTOKEN || !env.NGROK_DOMAIN) {
   setEnv({ NGROK_AUTHTOKEN: token, NGROK_DOMAIN: domain }, 'Туннель ngrok для кнопок Telegram (W3)');
   env = readEnv();
 }
-say(`   ✓ https://${env.NGROK_DOMAIN}`);
+if (!noTunnel) say(`   ✓ https://${env.NGROK_DOMAIN}`);
 
 // ---------- 6. Запуск ----------
 step(6, 'Запускаю систему (первый раз — несколько минут)');
@@ -211,6 +272,23 @@ await new Promise((resolve) => {
 });
 say('   ✓ n8n работает, workflow опубликованы');
 
+// Claude по подписке: один короткий настоящий вызов. Токен только что добавлен — спросить, сделать ли основной
+// нейросетью (без Gemini — без вопроса: другой нет)
+if (env.CLAUDE_CODE_OAUTH_TOKEN) {
+  try {
+    say(`   ${run('docker', ['compose', 'exec', '-T', 'claude-cli', 'node', 'src/ask.mjs', 'check']).trim()}`);
+  } catch (e) {
+    say(`   ${String(e.stdout ?? '').trim() || '✗ Claude по подписке не ответил'} — docs/claude-cli.md, «Вход слетел»`);
+  }
+  if (claudeAdded) {
+    const main = !env.GEMINI_API_KEY || (await ask('   Сделать Claude по подписке основной нейросетью? Gemini останется запасной [Y/n] ')).toLowerCase() !== 'n';
+    if (main) {
+      node('scripts/n8n-api.mjs', ['setting', 'llm.provider', '"claude-cli"']);
+      say('   ✓ нейросеть — Claude по подписке (поменять: ⚙️ Настройки → 🤖 Нейросеть)');
+    }
+  }
+}
+
 // ---------- 7. Приветствие ----------
 step(7, 'Приветствие в Telegram');
 await sleep(2000);
@@ -229,3 +307,4 @@ say(`
 Обновить систему: git pull && node scripts/install.mjs
 Компьютер должен быть включён и не спать — иначе сборы пропускаются (после пробуждения — один догоняющий).
 Робот-отклик (по желанию) — README, раздел «Робот-отклик».`);
+if (noTunnel) say('⚠️ Установка без туннеля (--no-tunnel): бот пишет, но нажатия кнопок и PDF до n8n не доходят. Для работы — мастер без --no-tunnel.');

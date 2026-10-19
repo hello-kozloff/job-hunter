@@ -6,7 +6,7 @@
 - любые профессии — поиск, фильтр и правила оценки выводятся из резюме;
 - мастер установки `node scripts/install.mjs`, кнопки Telegram — через ngrok, как сейчас;
 - после PDF — «Вот что я понял» и вопросы кнопками (подпись, контакт для HR, часовой пояс), потом сразу первый сбор;
-- нейросеть — Gemini или Claude (из РФ не работают — об этом предупреждают README и мастер);
+- нейросеть — Gemini, Claude API или Claude по подписке Pro/Max (`docs/claude-cli.md`; из РФ не работают — об этом предупреждают README и мастер);
 - образцы писем — по желанию; зарплата из резюме — правило для нейросети; теневой режим у новичка включён;
 - проверка — чистая установка рядом с рабочей.
 
@@ -148,7 +148,7 @@ node scripts/n8n-api.mjs profile-import docs/profile.json   # JSON { "имя": �
 **Устройство W11** (`n8n/w11-profile/*.js`, `jobHunterW11Prof`, вызывает W3; W10 зарезервирован под Inbox):
 - «Job» → «Settings» → «Plan» (route: `pdf` | `llm` | `step`);
 - PDF: «Reading» → Telegram File → Get → Extract From PDF → «PDF text». Чистка подвалов hh; меньше 400 знаков — «скан?». Профиль уже есть — новое резюме ждёт выбора (`pending`);
-- нейросеть — «Build extract» → Gemini или Claude (тот же провайдер, что для оценки; модель — `GEMINI_PROFILE_MODEL`, иначе `GEMINI_MODEL`) → «Parse profile» (`draftFromAnswer`, `n8n/shared/profile.js`). Тело запроса и разбор ответа — `n8n/shared/llm.js` (его же берёт W13);
+- нейросеть — «Build extract» → Gemini, Claude API или Claude по подписке (тот же провайдер, что для оценки; модель — `GEMINI_PROFILE_MODEL`, иначе `GEMINI_MODEL`; у Claude по подписке — `llm.cli_text`) → «Parse profile» (`draftFromAnswer`, `n8n/shared/profile.js`). Тело запроса и разбор ответа — `n8n/shared/llm.js` (его же берёт W13);
 - город: «Area lookup» → `https://hh.ru/autosuggest/multiprefix/v2?d=areas_RU&q=<город>` → «Area». Города нет в hh (Белград) — офис не ищем, предупреждение в сводке;
 - объём: «Estimate plan» → «Estimate» (первая страница поиска по запросам черновика) → «Estimate parse» → `totalResults`. Больше 150 за сутки — предупреждение;
 - «Step» — машина состояний, ветки по порядку: сохранить («Save rows» → upsert `settings`) → первый сбор («Run W1») → панель («Render» → «Layout» → «New:»/«Edit:» по раскладкам `PROFILE_LAYOUTS`) → вопрос (ForceReply) → удалить вопрос и ответ.
@@ -193,7 +193,7 @@ Static data W11 — черновик онбординга: `draft`, `estimate`, 
 3. Telegram:
    - токен → `getMe`;
    - привязка чата: `deleteWebhook` → ссылка `t.me/<бот>?start=<код>` → `getUpdates`, пока не придёт `/start <код>` (до 10 мин) → `TG_CHAT_ID` → «✅ Бот привязан».
-4. Нейросеть: ключ Gemini → пробный `generateContent`. «location is not supported» → объяснение про регионы. Claude — по желанию. Без обоих ключей мастер останавливается.
+4. Нейросеть: ключ Gemini → пробный `generateContent`. «location is not supported» → объяснение про регионы. Claude API — по желанию. Claude по подписке (19.10.2026, `docs/claude-cli.md`) — по желанию: правила (своя подписка, не из РФ, лимит общий с claude.ai, обучение), `claude setup-token` на компьютере или из контейнера `claude-cli`, токен вставляет человек; после деплоя — `ask.mjs check` и вопрос «сделать основной?» (без Gemini — без вопроса, `n8n-api.mjs setting llm.provider`). Без всех трёх мастер останавливается. `--no-tunnel` — установка без ngrok и кнопок (проверки рядом с рабочей).
 5. ngrok: Authtoken и домен.
 6. Запуск: `docker compose up n8n` → `setup-owner` (почта или `owner@example.com`, владелец «Job Hunter») → `migrate` → деплой (`scripts/lib/deploy.mjs`) → ключ публичного API n8n для W6.
 7. Приветствие: ручной запуск W7 → бот пишет «пришли резюме PDF».
