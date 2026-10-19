@@ -184,6 +184,14 @@ node scripts/applier.mjs apply <id> --letter-file <файл>
 `lastState` (RESPONSE / DISCARD / INTERVIEW …), `viewedByOpponent`, `hasResponseLetter`, `hasNewMessages`, `lastModified`.
 У 3 из 20 последних откликов `hasResponseLetter=false` — письмо до hh не дошло.
 
+**Все «Отклики» листанием (20.10.2026, `docs/hh-applied.md`, `readNegotiations` в `applier/src/flows/recon.mjs`):**
+пейджер — кнопки `data-qa="number-pages-N"` (выбранная — `number-pages-N number-pages-selected`) без ссылок, параметра
+`page=` в HTML нет. Клик по кнопке — страница не перезагружается, hh отдаёт JSON со `topicList` и `paging` (InitialState
+в разметке остаётся от первой страницы). 154 отклика = 8 страниц за ~3 мин с паузами 6–15 с: капчи нет, счётчики
+`applicantNegotiationsCounters.new` до и после те же. Страницы сами шлют только телеметрию (`/api/fl`, `/anatskytics`,
+sentry, cpa, Метрика) — обычный предохранитель её пропускает, запись в `/applicant/…` и chatik не понадобилась.
+Отклики, удалённые человеком, в списке не видны. Для 6.2 W10 — готовое чтение без открытия чатов.
+
 **Чаты** — `GET chatik.hh.ru/chatik/api/chats` с cookie браузера (HTTP 200): `chats.items[]` — `id`, `unreadCount`,
 `resources {NEGOTIATION_TOPIC, VACANCY, RESUME}`, `currentParticipantId`, `lastMessage {id, text (полный), creationTime,
 participantId, participantDisplay {name, isBot}}`; `chatsDisplayInfo[chatId] = {title (вакансия), subtitle (компания)}`;
