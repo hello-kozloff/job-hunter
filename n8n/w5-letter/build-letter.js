@@ -5,7 +5,8 @@
 //   mode = new     — первое письмо (по ✅);
 //          redo    — другой вариант (кнопка «🔄 Переписать»);
 //          revise  — правка по пожеланию (ответ на письмо), instruction — текст пожелания.
-// Выход: item на задание { id, mode, provider, model, said, body } → HTTP Request «Gemini» или «Claude»;
+// Выход: item на задание { id, mode, provider, model, said, body } → HTTP Request «Gemini», «Claude» или «Claude CLI»
+//   (Claude по подписке, docs/claude-cli.md: модель llm.cli_text, запасной запрос Gemini — тот же, что при gemini);
 //   said — навыки вакансии, о которых кандидат пишет сам в пожеланиях («я знаю PHP»): parse-letter.js убирает
 //   с ними «готов быстро погрузиться в …».
 // Решения пользователя (07.10.2026): по-русски, деловой тон, компании по имени, контакт и подпись в конце, без локации
@@ -26,6 +27,8 @@
 
 // @include n8n/shared/resumes.js
 
+// @include n8n/shared/llm.js
+
 const allJobs = $('Jobs').all().map((i) => i.json);
 const rows = new Map($('Vacancy').all().map((i) => [i.json.id, i.json]));
 const allSettings = loadSettings($('Settings').all());
@@ -43,7 +46,10 @@ const example = String(settings['letters.examples'])
 
 // Провайдер — настройка бота llm.provider (⚙️ → 🤖 Нейросеть; до 07.10.2026 — $env.LLM_PROVIDER)
 const provider = settings['llm.provider'];
-const model = provider === 'claude' ? $env.CLAUDE_MODEL || 'claude-haiku-4-5' : $env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+// Gemini — и основной, и запасной путь Claude по подписке
+const geminiModel = $env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+const model =
+  provider === 'claude-cli' ? settings['llm.cli_text'] : provider === 'claude' ? $env.CLAUDE_MODEL || 'claude-haiku-4-5' : geminiModel;
 
 // Есть ли раздел «Дополнительно» (то, что человек дописал сам: свои проекты, фриланс)
 const hasExtra = profile.includes('## Дополнительно');
@@ -301,17 +307,15 @@ function schema(plan, gemini) {
 function body(job, row, text) {
   const temperature = TEMPERATURE[job.mode] ?? 0.4;
   const plan = !revising(job, row);
-  if (provider === 'claude') {
-    return {
-      model,
-      max_tokens: 2048,
-      temperature,
-      system: SYSTEM,
-      messages: [{ role: 'user', content: text }],
-      output_config: { format: { type: 'json_schema', schema: schema(plan, false) } },
-    };
-  }
-  return {
+  const claude = () => ({
+    model,
+    max_tokens: 2048,
+    temperature,
+    system: SYSTEM,
+    messages: [{ role: 'user', content: text }],
+    output_config: { format: { type: 'json_schema', schema: schema(plan, false) } },
+  });
+  const gemini = () => ({
     systemInstruction: { parts: [{ text: SYSTEM }] },
     contents: [{ role: 'user', parts: [{ text }] }],
     generationConfig: {
@@ -322,7 +326,11 @@ function body(job, row, text) {
       // «🔄» — каждый раз другой вариант, даже на том же задании
       ...(job.mode === 'redo' && { seed: Math.floor(Math.random() * 2 ** 31) }),
     },
-  };
+  });
+  if (provider === 'claude') return claude();
+  // Claude по подписке: лимит или сбой входа — сервис отдаст этот же запрос Gemini (запасной путь)
+  if (provider === 'claude-cli') return cliBody(claude(), { task: 'text', fallback: { model: geminiModel, body: gemini() } });
+  return gemini();
 }
 
 return jobs

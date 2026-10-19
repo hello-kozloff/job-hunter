@@ -35,7 +35,8 @@ const mskHourLocal = (h) => {
 const periodText = (days) => SEARCH_LABELS.search_period[days] ?? `за ${days} дн.`;
 const responsesText = (n) => (n ? `больше ${n}` : 'не отсекать');
 const VERDICT_TEXT = { apply: '🟢 apply', maybe: '🟡 maybe', skip: '🔴 skip' };
-const providerText = (p) => (p === 'claude' ? 'Claude' : 'Gemini');
+const PROVIDER_TEXT = { gemini: 'Gemini', claude: 'Claude API', 'claude-cli': 'Claude по подписке' };
+const providerText = (p) => PROVIDER_TEXT[p] ?? PROVIDER_TEXT.gemini;
 // Правила пресета (у generic — без фронтенд-правил) и включённые из них
 const presetRules = () => Object.keys(filterRulesFor(settings['profile.preset']));
 const rulesOn = () => presetRules().filter((id) => !settings['filter.rules_off'].includes(id));
@@ -234,13 +235,17 @@ function shadowNote() {
   return `Совпадения ${from}: ${pairs}/${SHADOW_GOAL}${pairs ? `, совпало ${agree} (${Math.round((agree / pairs) * 100)}%)` : ''}. «🔄 Теневой заново» — считать с этой минуты, оценки не меняются`;
 }
 
+// Claude по подписке (19.10.2026, docs/claude-cli.md): модели оценки и текстов — кнопками «▸» (раскладка set_llm_cli)
 function settingsLlmView() {
   const provider = settings['llm.provider'];
+  const cli = provider === 'claude-cli';
   const model = provider === 'claude' ? $env.CLAUDE_MODEL || 'claude-haiku-4-5' : $env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
   const lines = [
     '🤖 <b>Нейросеть</b>',
     '',
-    `Модель: ${providerText(provider)} (${esc(model)}) — оценка вакансий и письма`,
+    cli
+      ? `Модель: Claude по подписке — оценка ${esc(modelLabel(settings['llm.cli_score']))}, письма и резюме ${esc(modelLabel(settings['llm.cli_text']))}`
+      : `Модель: ${providerText(provider)} (${esc(model)}) — оценка вакансий и письма`,
     settings['llm.shadow']
       ? 'Теневой режим: вкл — карточки на все оценки, включая 🔴'
       : 'Теневой режим: выкл — 🔴 без карточек: только в итоге после сбора и в меню на вкладке ❌',
@@ -254,17 +259,27 @@ function settingsLlmView() {
     '✏️ — прислать список «случай: решение» через запятую. Встроенные случаи — Vue без React, fullstack, AI на JS/TS, React Native: убрал из списка — правило не действует, поменял решение — меняется. Новые случаи описывай как угодно, нейросеть их поймёт.',
   ];
   if (provider === 'claude') {
-    lines.push('', '⚠️ Для Claude нужен ключ ANTHROPIC_API_KEY в .env и деплой — без него оценка встанет с ошибкой.');
+    lines.push('', '⚠️ Для Claude API нужен ключ ANTHROPIC_API_KEY в .env и деплой — без него оценка встанет с ошибкой.');
+  }
+  if (cli) {
+    lines.push(
+      '',
+      'Claude по подписке: токен CLAUDE_CODE_OAUTH_TOKEN в .env и деплой (docs/claude-cli.md). Лимит подписки общий с твоей работой в Claude: кончился или вход слетел — этот запрос делает Gemini, в письме и в сообщении о сборе будет строка. Оценки не берут подписку, когда окно лимита занято на 80%.',
+    );
   }
   if (mainResumeNote) lines.push('', 'Модель и теневой режим — общие для всех резюме; спорные случаи ниже — основного.', mainResumeNote);
   const notes = changeNotes();
   if (notes.length) lines.push('', ...notes);
   return {
-    layout: 'set_llm',
+    layout: cli ? 'set_llm_cli' : 'set_llm',
     text: lines.join('\n'),
     b: {
       provider: { text: `Модель: ${providerText(provider)} ▸`, cb: 'sc:llm.provider' },
       shadow: { text: `Теневой: ${settings['llm.shadow'] ? 'вкл' : 'выкл'} ▸`, cb: 'sc:llm.shadow' },
+      ...(cli && {
+        score: { text: `Оценка: ${modelLabel(settings['llm.cli_score'])} ▸`, cb: 'sc:llm.cli_score' },
+        texts: { text: `Тексты: ${modelLabel(settings['llm.cli_text'])} ▸`, cb: 'sc:llm.cli_text' },
+      }),
     },
   };
 }

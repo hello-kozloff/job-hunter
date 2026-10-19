@@ -1,10 +1,12 @@
 // Нейросеть для разовых задач с JSON-схемой ответа: W11 — разбор резюме и правка профиля (13.10.2026), W13 —
-// рекомендации по резюме (15.10.2026). Модель, тело запроса Gemini или Claude, разбор ответа.
-// Общий код: строка «// @include n8n/shared/llm.js». Оценка W2 и письма W5 собирают запросы сами: свои температуры,
-// схемы и seed.
+// рекомендации по резюме (15.10.2026). Модель, тело запроса Gemini, Claude API или Claude по подписке, разбор ответа.
+// Общий код: строка «// @include n8n/shared/llm.js». Оценка W2 и письма W5 собирают тела запросов сами (свои
+// температуры, схемы и seed), отсюда берут cliBody (Claude по подписке) и чтение ответа (llmBodyOf, llmProvider, llmText).
 
-// Модель: GEMINI_PROFILE_MODEL (запросов мало — можно взять модель посильнее), иначе та же, что для оценки
-function llmModel(provider) {
+// Модель: GEMINI_PROFILE_MODEL (запросов мало — можно взять модель посильнее), иначе та же, что для оценки.
+// Claude по подписке — модель текстов из настроек бота (⚙️ → 🤖, llm.cli_text)
+function llmModel(provider, settings = {}) {
+  if (provider === 'claude-cli') return settings['llm.cli_text'] || 'claude-sonnet-5-5';
   return provider === 'claude'
     ? $env.CLAUDE_MODEL || 'claude-haiku-4-5'
     : $env.GEMINI_PROFILE_MODEL || $env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
@@ -33,22 +35,34 @@ function geminiSchema(schema) {
   return out;
 }
 
-// Тело запроса к HTTP Request «Gemini» или «Claude». schema — JSON Schema в нижнем регистре, без required
-function llmBody({ provider, model, system, user, schema, maxTokens = 4096, temperature = 0 }) {
-  return provider === 'claude'
-    ? {
-        model,
-        max_tokens: maxTokens,
-        temperature,
-        system,
-        messages: [{ role: 'user', content: user }],
-        output_config: { format: { type: 'json_schema', schema: strictSchema(schema) } },
-      }
-    : {
-        systemInstruction: { parts: [{ text: system }] },
-        contents: [{ role: 'user', parts: [{ text: user }] }],
-        generationConfig: { temperature, maxOutputTokens: maxTokens, responseMimeType: 'application/json', responseSchema: geminiSchema(schema) },
-      };
+// Claude по подписке (сервис claude-cli, docs/claude-cli.md): тело Claude API + задача (дорожка и бюджет сервиса:
+// score — оценка W2, text — тексты), усилие, сколько ждёт n8n (таймаут ноды «Claude CLI» минус запас) и запасной
+// запрос Gemini — тот же, что ушёл бы при llm.provider = gemini. Его сервис шлёт, если лимит подписки кончился или
+// вход слетел. temperature и max_tokens CLI не задаёт — сервис их не читает
+const CLI_EFFORT = 'low';
+const CLI_WAIT_MS = 170000;
+function cliBody(claude, { task, fallback, deadlineMs = CLI_WAIT_MS }) {
+  return { ...claude, task, effort: CLI_EFFORT, deadline_ms: deadlineMs, fallback };
+}
+
+// Тело запроса к HTTP Request «Gemini», «Claude» или «Claude CLI». schema — JSON Schema в нижнем регистре, без required.
+// deadlineMs — только для Claude по подписке: W13 ждёт дольше (правка резюме)
+function llmBody({ provider, model, system, user, schema, maxTokens = 4096, temperature = 0, settings, deadlineMs }) {
+  const claude = () => ({
+    model,
+    max_tokens: maxTokens,
+    temperature,
+    system,
+    messages: [{ role: 'user', content: user }],
+    output_config: { format: { type: 'json_schema', schema: strictSchema(schema) } },
+  });
+  const gemini = () => ({
+    systemInstruction: { parts: [{ text: system }] },
+    contents: [{ role: 'user', parts: [{ text: user }] }],
+    generationConfig: { temperature, maxOutputTokens: maxTokens, responseMimeType: 'application/json', responseSchema: geminiSchema(schema) },
+  });
+  if (provider === 'claude-cli') return cliBody(claude(), { task: 'text', fallback: { model: llmModel('gemini', settings), body: gemini() }, deadlineMs });
+  return provider === 'claude' ? claude() : gemini();
 }
 
 function llmBodyOf(r) {
@@ -60,6 +74,10 @@ function llmBodyOf(r) {
     return { raw: b.slice(0, 300) };
   }
 }
+
+// Кто ответил: сервис Claude по подписке отвечает в форме Claude API (ответил Claude) или сырым ответом Gemini
+// (запасной путь, provider: 'gemini'). Остальные провайдеры — как есть
+const llmProvider = (provider, b) => (provider === 'claude-cli' ? (b?.provider === 'gemini' ? 'gemini' : 'claude') : provider);
 
 function llmText(provider, b) {
   if (provider === 'claude') {
@@ -75,8 +93,16 @@ function llmText(provider, b) {
 // Ответ HTTP Request (полный ответ, без исключений на 4xx/5xx) → { answer } — разобранный JSON, или { problem } — что
 // показать человеку. retry — что делать при лимите (429)
 function llmJson(res, provider, retry = 'попробуй ещё раз через минуту') {
-  if (res.statusCode === undefined) return { problem: `нейросеть не ответила: ${String(res.error?.message ?? res.error ?? 'сеть').slice(0, 160)}` };
+  if (res.statusCode === undefined) {
+    const message = String(res.error?.message ?? res.error ?? 'сеть').slice(0, 160);
+    if (provider === 'claude-cli') return { problem: `сервис Claude по подписке не отвечает (${message}) — scripts/deploy.sh` };
+    return { problem: `нейросеть не ответила: ${message}` };
+  }
   const b = llmBodyOf(res);
+  // Ошибка самого Claude по подписке (запасного Gemini не было): текст сервиса уже по-русски — «Claude по подписке: …»
+  if (provider === 'claude-cli' && b.provider !== 'gemini' && res.statusCode !== 200) {
+    return { problem: `${String(b?.error?.message ?? `Claude по подписке: HTTP ${res.statusCode}`).slice(0, 200)} — ${retry}` };
+  }
   if (res.statusCode === 429) return { problem: `лимит запросов к нейросети (429) — ${retry}` };
   if (res.statusCode !== 200) {
     const message = String(b?.error?.message ?? b?.raw ?? '');
@@ -84,7 +110,7 @@ function llmJson(res, provider, retry = 'попробуй ещё раз чере
     if (/location is not supported/i.test(message)) return { problem: 'Gemini недоступен из твоей страны: нужна другая сеть или Claude (⚙️ → 🤖)' };
     return { problem: `нейросеть ответила HTTP ${res.statusCode}: ${message.slice(0, 160)}` };
   }
-  const { text, problem } = llmText(provider, b);
+  const { text, problem } = llmText(llmProvider(provider, b), b);
   if (problem) return { problem };
   try {
     return { answer: JSON.parse(text) };

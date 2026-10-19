@@ -55,8 +55,13 @@ const SETTINGS = {
       'tutor', 'instructor', "o'qituvchi", 'oqituvchi', 'преподавател*', 'тестировщик*', 'наставник*'],
     words: true,
   },
-  // Нейросеть (W2, W5): провайдер; теневой режим — карточки и на skip (выкл — skip только в сводке)
-  'llm.provider': { default: 'gemini', options: ['gemini', 'claude'] },
+  // Нейросеть (W2, W5, W11, W13): провайдер; теневой режим — карточки и на skip (выкл — skip только в сводке).
+  // claude-cli — Claude по подписке (19.10.2026, docs/claude-cli.md): сервис claude-cli, модели — ниже
+  'llm.provider': { default: 'gemini', options: ['gemini', 'claude', 'claude-cli'] },
+  // Модели Claude по подписке: оценка (W2) и тексты (W5 письма, W11 профиль, W13 резюме). Только полные ID — их
+  // же принимает сервис claude-cli; Fable нет (на Pro в claude -p она списывает платные кредиты)
+  'llm.cli_score': { default: 'claude-haiku-5-5', options: ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5'] },
+  'llm.cli_text': { default: 'claude-sonnet-5-5', options: ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5'] },
   'llm.shadow': { default: true, options: [true, false] },
   // С какой минуты считать совпадения теневого режима (ISO, 19.10.2026; n8n/shared/shadow.js). Пусто — все карточки.
   // Пишет кнопка «🔄 Теневой заново» (⚙️ → 🤖): stamp — значение «сейчас»

@@ -1,6 +1,6 @@
 // W11 · Parse profile — ответ нейросети → проверенный черновик профиля (n8n/shared/profile.js → draftFromAnswer).
 // Нода: Code, режим «Run Once for All Items».
-// Вход: ответ HTTP Request «Gemini» или «Claude» (полный ответ, без исключений на 4xx/5xx), «Build extract»
+// Вход: ответ HTTP Request «Gemini», «Claude» или «Claude CLI» (полный ответ, без исключений на 4xx/5xx), «Build extract»
 //       (provider, mode), «Plan» (draft — прежний черновик при правке: город для офиса берётся из него).
 // Выход: { ok: true, draft } или { ok: false, problem } — что показать человеку.
 

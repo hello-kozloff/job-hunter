@@ -139,3 +139,44 @@ test('without a report (manual run) the summary keeps the same quiet rules', asy
   assert.equal(night[0].silent, true);
   assert.equal(night[0].report, false);
 });
+
+// Claude по подписке (19.10.2026, docs/claude-cli.md): переход на запасной Gemini — тихо, вход слетел — громко раз в сутки
+const viaGemini = (id, reason, note) =>
+  row(id, { outcome: 'scored', decision: 'maybe', llm_reason: 'ок', fallback: { reason, until: null, note } });
+
+test('Claude по подписке: оценки через запасной Gemini — тихая строка с причиной и числом', async () => {
+  const messages = await run([viaGemini(1, 'limit', 'лимит подписки до 15:00'), viaGemini(2, 'limit', 'лимит подписки до 15:00'), scored(3)], {});
+  assert.equal(loud(messages).length, 0);
+  assert.match(messages[0].text, /🤖 Claude по подписке: лимит подписки до 15:00\. Оценил Gemini: 2\./);
+});
+
+test('Claude по подписке: лимит без запасного Gemini — тихо, оценю после сброса', async () => {
+  const quota = (id) => row(id, { outcome: 'quota', problem: 'cli', note: 'Claude по подписке: лимит подписки до 15:00', llm_model: 'claude-haiku-5-5' });
+  const messages = await run([quota(1), quota(2)], {});
+  assert.equal(loud(messages).length, 0);
+  assert.match(messages[0].text, /⏸ Claude по подписке: лимит подписки до 15:00\. Не оценено 2 — оценю после сброса/);
+});
+
+test('Claude по подписке: вход слетел — громко, но раз в сутки', async () => {
+  const state = {};
+  const auth = (id) => viaGemini(id, 'auth', 'вход не работает: токен истёк или отозван');
+  const [alert] = loud(await run([auth(1)], state));
+  assert.match(alert.text, /Claude по подписке: вход не работает/);
+  assert.match(alert.text, /Пока оценки и письма пишет Gemini/);
+  assert.match(alert.text, /claude setup-token/);
+  assert.equal(loud(await run([auth(2)], state)).length, 0, 'second run the same day is quiet');
+  // 401 без запасного Gemini — та же тревога, не «сразу каждую минуту»
+  const noGemini = row(3, { outcome: 'retry', problem: 'cli-auth', note: 'Claude по подписке: вход не работает: токен истёк или отозван' });
+  const fresh = {};
+  const alerts = loud(await run([noGemini], fresh));
+  assert.equal(alerts.length, 1);
+  assert.match(alerts[0].text, /Оценки ждут/);
+  assert.doesNotMatch(alerts[0].text, /Нейросеть: cli-auth/);
+});
+
+test('лимит Gemini на запасном пути не советует «переключить на Claude»', async () => {
+  const day = (id) => row(id, { outcome: 'quota', problem: 'day', fallback: { reason: 'limit', note: 'лимит подписки до 15:00' } });
+  const [alert] = loud(await run([day(1)], {}));
+  assert.match(alert.text, /Gemini: исчерпан дневной лимит/);
+  assert.doesNotMatch(alert.text, /переключить на Claude/);
+});
