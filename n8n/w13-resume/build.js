@@ -1,6 +1,6 @@
 // W13 · Build — запрос к нейросети (15.10.2026, docs/recommendations.md). Нода: Code, режим «Run Once for All Items».
 // Вход: «Plan» { mode, comment }, «Settings» (провайдер), static data (сессия: резюме, просьба, план, ответы, правки).
-// Выход: { provider, model, mode, body, stats, llmMax } → HTTP Request «Gemini» или «Claude» → «Parse».
+// Выход: { provider, model, mode, body, stats, llmMax } → HTTP Request «Gemini», «Claude» или «Claude CLI» → «Parse».
 //   analyze — анализ глазами ATS и роботов hh: главное в отчёт и вопросы кандидату (stats — навыки вакансий: вопрос
 //            про недостающие навыки задаёт код, llmMax — сколько вопросов можно нейросети);
 //   plan   — план Upgrade: что понял, куда впишу, уточняющие вопросы;
@@ -32,8 +32,11 @@ const scope = resumeScope(all, state.target);
 const settings = scope.s;
 const sess = state.session;
 const provider = settings['llm.provider'];
-const model = llmModel(provider);
-const resume = `<resume>\n${resumeJoin(sess.draft)}\n</resume>`;
+const model = llmModel(provider, settings);
+// Claude по подписке: правка резюме (до 8192 токенов на Sonnet с мышлением) идёт до 3–4 минут — нода «Claude CLI»
+// W13 ждёт 300 с, сервису — срок с запасом (docs/claude-cli.md)
+const CLI_WAIT_MS_W13 = 290000;
+const resume =`<resume>\n${resumeJoin(sess.draft)}\n</resume>`;
 
 const RULES_FACTS = `Факты бери только из резюме и из того, что кандидат написал в просьбе и в ответах. Не выдумывай опыт, проекты, технологии, цифры, сроки и результаты: нет факта, значит нет правки.
 Опыт в компании пиши в разделе этой компании. То, что кандидат делал в своих проектах или на фрилансе, пиши только в строке про пет-проекты или фриланс или в разделе «Дополнительно»: не приписывай это компаниям и не добавляй в общий список навыков (по нему считают коммерческий опыт).
@@ -310,4 +313,4 @@ if (plan.mode === 'analyze') {
     .join('\n\n');
 }
 
-return [{ json: { provider, model, mode: plan.mode, ...extra, body: llmBody({ provider, model, system, user, schema, maxTokens, temperature }) } }];
+return [{ json: { provider, model, mode: plan.mode, ...extra, body: llmBody({ provider, model, system, user, schema, maxTokens, temperature, settings, deadlineMs: CLI_WAIT_MS_W13 }) } }];

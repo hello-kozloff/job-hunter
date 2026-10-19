@@ -12,6 +12,9 @@
 // временный, «Release» вернёт строки в очередь, и следующий запуск их оценит. Тревога со звуком — только если она не
 // отвечает LLM_ALERT_AFTER запусков подряд; раньше — строка в тихом сообщении о сборе. Ошибка ключа или доступа,
 // лимит 429 — по-прежнему сразу тревогой.
+// Claude по подписке (19.10.2026, docs/claude-cli.md): оценки, которые сделал запасной Gemini (лимит подписки, окно
+// занято, сбой), — тихой строкой в сообщении о сборе; лимит подписки без запасного Gemini — тоже тихо (пройдёт сам);
+// вход слетел или нет токена — тревогой со звуком, но не чаще раза в сутки (static data cliAuthDay).
 
 // @include n8n/shared/time.js
 
@@ -56,10 +59,20 @@ const byProblem = (list) => {
   for (const r of list) groups[r.problem] = (groups[r.problem] ?? 0) + 1;
   return Object.entries(groups);
 };
+// Claude по подписке: кто оценил вместо него и почему (fallback от сервиса claude-cli), лимит без запасного Gemini
+const viaGemini = scored.filter((r) => r.fallback);
+const cliQuota = results.filter((r) => r.outcome === 'quota' && r.problem === 'cli');
+const cliNotes = [
+  ...Object.entries(
+    viaGemini.reduce((groups, r) => ({ ...groups, [r.fallback.note]: (groups[r.fallback.note] ?? 0) + 1 }), {}),
+  ).map(([note, n]) => `🤖 Claude по подписке: ${esc(note)}. Оценил Gemini: ${n}.`),
+  ...(cliQuota.length ? [`⏸ ${esc(cliQuota[0].note || 'Claude по подписке: лимит')}. Не оценено ${cliQuota.length} — оценю после сброса.`] : []),
+];
 // Строка в тихом сообщении: сбой замечен, повторю сам
-const llmNote = byProblem(transient)
-  .map(([problem, n]) => `⚠️ Нейросеть: ${esc(problem)}. Не оценено ${n} — повторю в следующий запуск.`)
-  .join('\n');
+const llmNote = [
+  ...byProblem(transient).map(([problem, n]) => `⚠️ Нейросеть: ${esc(problem)}. Не оценено ${n} — повторю в следующий запуск.`),
+  ...cliNotes,
+].join('\n');
 if (firstQuiet) {
   const f = (state.first ??= { apply: 0, maybe: 0, skip: 0, n: 0 });
   for (const r of scored) {
@@ -108,18 +121,35 @@ if (firstQuiet) {
 
 // Тревоги
 const alerts = [];
-const quota = results.filter((r) => r.outcome === 'quota');
+// Лимит Claude по подписке (problem cli) — тихой строкой выше: пройдёт сам после сброса
+const quota = results.filter((r) => r.outcome === 'quota' && r.problem !== 'cli');
 if (quota.length) {
   const provider = quota[0].llm_model?.startsWith('claude') ? 'Claude' : 'Gemini';
   const perDay = quota.some((r) => r.problem === 'day');
+  // Gemini здесь — запасной путь Claude по подписке: переключать не на что, лимит подписки и так кончился
+  const viaCli = quota.some((r) => r.fallback);
   alerts.push(
     `⚠️ ${provider}: ${perDay ? 'исчерпан дневной лимит запросов' : 'превышен лимит запросов в минуту'} (HTTP 429). ` +
       `Не оценено ${quota.length} — оценятся в следующий запуск.` +
-      (perDay && provider === 'Gemini' ? '\nЕсли повторяется каждый день — переключить на Claude: ⚙️ Настройки → 🤖 Нейросеть (нужен ANTHROPIC_API_KEY в .env).' : ''),
+      (perDay && provider === 'Gemini' && !viaCli
+        ? '\nЕсли повторяется каждый день — переключить на Claude: ⚙️ Настройки → 🤖 Нейросеть (по подписке Pro/Max — CLAUDE_CODE_OAUTH_TOKEN в .env, docs/claude-cli.md; Claude API — ANTHROPIC_API_KEY).'
+        : ''),
+  );
+}
+// Вход Claude по подписке слетел или токена нет: оценки идут через запасной Gemini (или ждут), починить может только
+// человек — громко, но раз в сутки
+const cliAuth = results.find((r) => ['auth', 'notoken'].includes(r.fallback?.reason) || r.problem === 'cli-auth');
+const today = new Date().toISOString().slice(0, 10);
+if (cliAuth && state.cliAuthDay !== today) {
+  state.cliAuthDay = today;
+  const why = cliAuth.fallback?.note ?? String(cliAuth.note ?? '').replace(/^Claude по подписке:\s*/, '');
+  alerts.push(
+    `⚠️ Claude по подписке: ${esc(why)}. ${viaGemini.length ? 'Пока оценки и письма пишет Gemini.' : 'Оценки ждут.'}\n` +
+      'Починка: в терминале <code>claude setup-token</code> → строка CLAUDE_CODE_OAUTH_TOKEN в .env → <code>scripts/deploy.sh</code> (docs/claude-cli.md).',
   );
 }
 // Нужно действие (ключ, доступ, неожиданный ответ) — сразу
-for (const [problem, n] of byProblem(retries.filter((r) => !TRANSIENT.test(r.problem)))) {
+for (const [problem, n] of byProblem(retries.filter((r) => !TRANSIENT.test(r.problem) && r.problem !== 'cli-auth'))) {
   alerts.push(`⚠️ Нейросеть: ${esc(problem)}. Не оценено ${n} — повторю в следующий запуск.`);
 }
 // Временный сбой не проходит: громко на LLM_ALERT_AFTER-м запуске подряд и потом раз в 8 запусков

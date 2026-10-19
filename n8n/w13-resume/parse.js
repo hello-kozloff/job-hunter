@@ -1,6 +1,6 @@
 // W13 · Parse — ответ нейросети → проверенный план или правки (15.10.2026, docs/recommendations.md).
 // Нода: Code, режим «Run Once for All Items».
-// Вход: ответ HTTP Request «Gemini» или «Claude» (полный ответ, без исключений на 4xx/5xx), «Build» (provider, mode),
+// Вход: ответ HTTP Request «Gemini», «Claude» или «Claude CLI» (полный ответ, без исключений на 4xx/5xx), «Build» (provider, mode),
 //       static data (сессия: черновик резюме — по нему проверяются правки).
 // Выход: { ok: false, problem } — что показать человеку, или { ok: true, … } по режиму:
 //   analyze → summary, questions: сначала вопрос кода про недостающие навыки (галочки, из «Build» stats), потом

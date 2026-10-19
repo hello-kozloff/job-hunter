@@ -247,6 +247,10 @@
             {
               "name": "resume_name",
               "type": "string"
+            },
+            {
+              "name": "letter_model",
+              "type": "string"
             }
           ]
         },

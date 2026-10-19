@@ -3,7 +3,7 @@
 // Вход: задание { mode: extract | revise, text — текст резюме, draft — текущий черновик (revise), instruction —
 //       пожелание человека (revise) } — из «PDF text» (резюме только что прислали) или «Plan» («🔄 Всё заново»,
 //       «✏️ Поправить»); «Settings» — провайдер нейросети.
-// Выход: { provider, model, body } → HTTP Request «Gemini» или «Claude» → «Parse profile».
+// Выход: { provider, model, body } → HTTP Request «Gemini», «Claude» или «Claude CLI» → «Parse profile».
 // Модель — $env.GEMINI_PROFILE_MODEL (разбор разовый, можно взять модель посильнее), иначе та же, что для оценки
 // (n8n/shared/llm.js → llmModel).
 // Правила про страну, город, офис, английский, ночные часы и зарплату нейросеть не пишет — их добавляет код
@@ -26,7 +26,7 @@ function ran(name) {
 const plan = [ran('PDF text'), ran('HH resume')].find((node) => node?.toLlm) ?? $('Plan').first().json;
 const settings = loadSettings($('Settings').all());
 const provider = settings['llm.provider'];
-const model = llmModel(provider);
+const model = llmModel(provider, settings);
 
 const roles = HH_ROLE_GROUPS.map((g) => `${g.name}: ${g.roles.map((id) => `${id} ${HH_ROLES[id]}`).join('; ')}`).join('\n');
 
@@ -114,6 +114,6 @@ const user = revise
   ? `Текущий профиль:\n<profile>\n${JSON.stringify(plan.draft)}\n</profile>\n\nПожелание человека: ${plan.instruction}`
   : `<resume>\n${plan.text}\n</resume>`;
 
-const body = llmBody({ provider, model, system, user, schema: SCHEMA });
+const body = llmBody({ provider, model, system, user, schema: SCHEMA, settings });
 
 return [{ json: { provider, model, mode: plan.mode, body } }];

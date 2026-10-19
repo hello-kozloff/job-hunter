@@ -143,7 +143,7 @@ function splitStart(withHh, back) {
   if (!s['profile.ready'] || !d.resume) return;
   state.session = { ...newSession('split', d), hh: null, hhError: '', hhHash: '', cv: null, problems: [], fields: [], fi: 0, skills: null, back };
   if (withHh) readHh();
-  else llm('split', '⏳ Раскладываю резюме по разделам… Это до минуты.');
+  else llm('split', '⏳ Раскладываю резюме по разделам… Это до пары минут.');
 }
 // С резюме hh можно сверяться, если оно связано с ботом. Основное без связи читает то, что hh показывает работодателям
 // (так оно и связывается); у r2–r5 без связи читать нечего: робот прочитал бы чужое резюме
@@ -151,14 +151,14 @@ const canHh = () => scope.id === 'r1' || Boolean(scope.link);
 function readHh() {
   if (!canHh()) {
     out.rows = true;
-    return llm('split', '⏳ Раскладываю резюме по разделам… Это до минуты.');
+    return llm('split', '⏳ Раскладываю резюме по разделам… Это до пары минут.');
   }
   out.route = 'robot';
   out.mode = 'split';
   out.rows = true;
   out.hhHash = scope.link?.hash ?? '';
   state.session.hhHash = out.hhHash;
-  out.wait = panel ? { messageId: panel, text: '⏳ Читаю резюме на hh и раскладываю по разделам… Это до минуты.' } : null;
+  out.wait = panel ? { messageId: panel, text: '⏳ Читаю резюме на hh и раскладываю по разделам… Это до пары минут.' } : null;
   // «🔄 Повторить» после сбоя нейросети — снова раскладка, резюме hh уже в сессии
   state.session.last = { mode: 'split', comment: '', keep: false };
 }
@@ -199,7 +199,7 @@ if (job.op === 'targets') {
   else if (job.value === 'hh') readHh();
   else {
     out.rows = true;
-    llm('split', '⏳ Раскладываю резюме по разделам… Это до минуты.');
+    llm('split', '⏳ Раскладываю резюме по разделам… Это до пары минут.');
   }
 } else if (job.op === 'field') {
   if (!live || sess.kind !== 'split' || !sess.cv || sess.skills) stale();
@@ -302,7 +302,7 @@ if (job.op === 'targets') {
   const d = resumeDraft(s);
   if (s['profile.ready'] && d.resume) {
     state.session = newSession('analyze', d);
-    llm('analyze', '⏳ Смотрю резюме глазами ATS и роботов hh… Это до минуты.');
+    llm('analyze', '⏳ Смотрю резюме глазами ATS и роботов hh… Это до пары минут.');
   }
 } else if (job.op === 'start') {
   if (!live || sess.kind !== 'analyze' || sess.started || !sess.questions.length) stale();
