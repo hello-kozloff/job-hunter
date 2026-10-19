@@ -180,3 +180,69 @@ test('лимит Gemini на запасном пути не советует «�
   assert.match(alert.text, /Gemini: исчерпан дневной лимит/);
   assert.doesNotMatch(alert.text, /переключить на Claude/);
 });
+
+// Промпт оценки после разбора теневого режима (19.10.2026): AI на любом языке, fullstack на Node/Python — apply,
+// ТК и льготы — не привязка; пресет generic не меняется
+const settingRows = (obj) => Object.entries(obj).map(([name, value]) => ({ name, value_json: JSON.stringify(value) }));
+const FRONT = {
+  'profile.preset': 'frontend',
+  'profile.resume': 'Frontend React',
+  'profile.about': ['Senior Frontend'],
+  'profile.facts': { country_gen: 'Таиланда', citizenship: 'РФ' },
+};
+const GENERIC = {
+  'profile.preset': 'generic',
+  'profile.resume': 'Дизайнер интерфейсов. Figma, прототипы.',
+  'profile.about': ['Дизайнер интерфейсов, 5 лет'],
+  'llm.rules': { skip: ['не дизайн'], maybe: ['гибрид'], apply: ['продуктовый дизайн'], ignore: ['зарплата'], notes: [] },
+  'llm.cases': [],
+};
+const prompt = (settings, vacancy = { id: 1, title: 'Frontend-разработчик', key_skills: 'React' }) =>
+  runNode('n8n/w2-score/build-prompt.js', { nodes: { Claim: [vacancy], Settings: settingRows(settings) } }).then(([out]) => ({
+    v: out.prompt_v,
+    system: out.body.systemInstruction.parts[0].text,
+    text: out.body.contents[0].parts[0].text,
+  }));
+
+test('промпт frontend: AI на любом языке, fullstack на Node/Python — apply, ТК и льготы — не привязка', async () => {
+  const { system } = await prompt(FRONT);
+  assert.ok(!/AI на Python, Go, Java и т\. п\. — skip/.test(system));
+  assert.ok(!/где основной язык не JS\/TS/.test(system));
+  assert.match(system, /разработку на AI \(интеграции LLM, AI-агенты, в том числе голосовые, RAG\) на любом языке/);
+  assert.match(system, /apply и тогда, когда это fullstack: React или Vue в обязательных требованиях и бэкенд на Node\.js \(NestJS, Express\) или Python/);
+  assert.match(system, /- fullstack, где бэкенд не на Node\.js и не на Python/);
+  assert.ok(!/льготы для жителей РФ \(ИТ-ипотека, отсрочка, бронь от мобилизации\); трудоустройство/.test(system), 'льготы и ТК — не в maybe');
+  assert.match(system, /по трудовому кодексу любой страны \(ТК РФ, ТК РБ, ТК РУз…\)/);
+  assert.match(system, /запрет работать из России или Беларуси \(«не из РФ», «кроме РФ и РБ», «any location except Russia and Belarus»\): это про место работы, а не гражданство — кандидат работает из Таиланда/);
+  assert.match(system, /не берут граждан РФ \(именно гражданство, а не место работы\): у кандидата гражданство РФ/);
+  assert.ok(!/Поправки кандидата/.test(system), 'список по умолчанию — без поправок');
+});
+
+test('промпт frontend: новые подписи случаев — тот же prompt_v, что прежние (умолчания)', async () => {
+  const defaults = await prompt(FRONT);
+  const renamed = await prompt({
+    ...FRONT,
+    'llm.cases': [
+      { case: 'Vue без React', decision: 'maybe' },
+      { case: 'fullstack не на Node/Python', decision: 'maybe' },
+      { case: 'AI-разработка', decision: 'apply' },
+      { case: 'React Native', decision: 'skip' },
+    ],
+  });
+  assert.equal(renamed.v, defaults.v);
+  assert.ok(!/Поправки кандидата/.test(renamed.system));
+});
+
+test('подсказка про AI — только у AI-вакансий и только пока случай в списке', async () => {
+  const ai = { id: 2, title: 'AI Engineer (Python)', key_skills: 'LLM, RAG' };
+  let { text } = await prompt(FRONT, ai);
+  assert.match(text, /Подсказка отбора: .* на любом языке, решение apply, даже если это бэкенд или стек не JS\/TS/);
+  ({ text } = await prompt(FRONT));
+  assert.ok(!/Подсказка отбора/.test(text));
+  ({ text } = await prompt({ ...FRONT, 'llm.cases': [{ case: 'Vue без React', decision: 'maybe' }] }, ai));
+  assert.ok(!/Подсказка отбора/.test(text), 'случай убран из списка — подсказки нет');
+});
+
+test('промпт generic не изменился (prompt_v снят на develop до правки 19.10.2026)', async () => {
+  assert.equal((await prompt(GENERIC)).v, '1i55scj');
+});

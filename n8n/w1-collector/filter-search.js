@@ -40,7 +40,8 @@ const ruleList = (stopWords) => [
   [
     'junior',
     'junior/стажёр',
-    (r) => /junior|\bintern|trainee/i.test(r.title) || ru('(стаж[её]р|младш[а-яё]*|джун[а-яё]*)').test(r.title),
+    // intern — целым словом: Internal, International — не стажёры (19.10.2026)
+    (r) => /junior|\bintern(?:s|ship)?\b|trainee/i.test(r.title) || ru('(стаж[её]р|младш[а-яё]*|джун[а-яё]*)').test(r.title),
   ],
   // Vue не отсекаем (решение пользователя 07.10.2026): только Vue — нейросеть ставит maybe, React + Vue — как React
   ['angular', 'Angular', (r) => /angular/i.test(r.title)],
@@ -57,8 +58,9 @@ const ruleList = (stopWords) => [
   // отклонил), 1С, WordPress, Битрикс, QA/тестировщик, преподаватель/наставник
   ['stop', 'стоп-слово', (r) => stopWords.test(r.title)],
   // Поиск frontend по всему тексту приносит чужой бэкенд (07.10.2026): режем по названию, в том числе fullstack
-  // с таким бэкендом (пользователь отклонил «.Net/React») и AI на таком стеке (AI берём только на JS/TS).
-  // Python — только без JS/TS и фронтенда в названии: «Python + React» пользователь берёт, AI на Python — нет
+  // с таким бэкендом (пользователь отклонил «.Net/React», 19.10.2026 — «Go/Java fullstack резать как раньше»).
+  // Python — только без JS/TS и фронтенда в названии: «Python + React» пользователь берёт. AI на Python — тоже
+  // (19.10.2026, решение пользователя: AI-разработку берём на любом языке), AI на Java, .NET, Go режется по языку
   [
     'foreign',
     'чужой стек',
@@ -66,6 +68,7 @@ const ruleList = (stopWords) => [
       /\bruby\b|\brails\b|c#|\.net\b|\bdotnet\b|\bjava\b(?!\s*script)|\bgo(lang)?\b|\bdwh\b|data[\s-]*engineer/i.test(r.title) ||
       ru('(дата[\\s-]*инженер[а-яё]*)').test(r.title) ||
       (/\b(python|django|fastapi|flask)\b/i.test(r.title) &&
+        !isAi(r.title) &&
         !/react|vue|nuxt|next\.?js|node|nest\.?js|typescript|javascript|\bjs\b|\bts\b|front[\s-]?end|full[\s-]?stack/i.test(r.title) &&
         !ru('(фул+[\\s-]?ст[еэ]к[а-яё]*|фронт[\\s-]?[еэ]нд[а-яё]*)').test(r.title)),
   ],
