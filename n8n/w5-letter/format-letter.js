@@ -45,6 +45,8 @@ return $input.all().map((item) => {
       // Нейросеть повторилась (Parse letter) — предупреждение в тексте письма
       same: r.same ?? '',
       letter: r.letter ?? '',
+      // Кто написал письмо — колонка letter_model («Letter sent»), подпись в шапке и после перерисовки в W3/W9
+      letter_model: r.letter_model ?? '',
       instruction: job.instruction ?? '',
       // Новое письмо — новая отметка об отклике не нужна: строка остаётся approved
       text: letterText({ ...row, ...r, status: 'approved', instruction: job.instruction, robot_hint: robotHint }),

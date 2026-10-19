@@ -9,6 +9,21 @@ const CURRENCY = { RUR: '₽', USD: '$', EUR: '€', KZT: '₸', BYR: 'Br', UZS:
 
 // Решение нейросети (колонка decision)
 const VERDICT = { apply: '🟢 apply', maybe: '🟡 maybe', skip: '🔴 skip', error: '⚠️ не оценено' };
+// Подписи моделей нейросети (19.10.2026, docs/claude-cli.md): шапка письма (letter_model) и кнопки ⚙️ → 🤖
+const MODEL_LABELS = {
+  'claude-haiku-5-5': 'Haiku 5.5',
+  'claude-sonnet-5-5': 'Sonnet 5.5',
+  'claude-opus-5-5': 'Opus 5.5',
+  'claude-haiku-4-5': 'Haiku 4.5',
+};
+// 'gemini-3.5-flash-lite' → 'Gemini 3.5 Flash-Lite'; неизвестная модель — как есть
+function modelLabel(id) {
+  const name = String(id ?? '');
+  if (MODEL_LABELS[name]) return MODEL_LABELS[name];
+  if (!name.startsWith('gemini-')) return name;
+  const words = name.slice(7).split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1));
+  return `Gemini ${words.join('-')}`.replace(/(\d)-/, '$1 ');
+}
 // Кнопки пользователя: callback_data = v:<id строки>:<choice>, решение — в колонку my_decision.
 // earlier — «📨 Уже откликался» (до бота, 07.10.2026): status = applied без письма и без applied_at,
 // без «Почему?» и вне теневого режима (сравниваются только apply / maybe / skip)

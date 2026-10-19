@@ -2,9 +2,10 @@
 // Нода: Code, режим «Run Once for All Items».
 // Вход: строки, захваченные «Claim» (status = scoring), и настройки «Settings» — там же профиль (13.10.2026):
 // резюме, «О кандидате», пресет и правила (docs/onboarding.md).
-// Выход: item на вакансию { id, provider, model, body } — body уходит в HTTP Request «Gemini» или «Claude».
+// Выход: item на вакансию { id, provider, model, body } — body уходит в HTTP Request «Gemini», «Claude» или «Claude CLI».
 // Провайдер — настройка бота llm.provider (⚙️ → 🤖 Нейросеть; до 07.10.2026 — $env.LLM_PROVIDER), модели —
-// $env.GEMINI_MODEL / $env.CLAUDE_MODEL.
+// $env.GEMINI_MODEL / $env.CLAUDE_MODEL, у Claude по подписке — llm.cli_score (docs/claude-cli.md): тело Claude API
+// плюс запасной запрос Gemini — тот же, что при llm.provider = gemini.
 // Правила — по пресету профиля:
 //   frontend — откалиброванные правила владельца (ответы от 07.10.2026, CLAUDE.md §7, «Решает нейросеть»); спорные
 //   случаи — список «случай: решение» в настройках: отличие от встроенных (Vue, fullstack, AI-разработка, React Native)
@@ -18,6 +19,8 @@
 
 // @include n8n/shared/resumes.js
 
+// @include n8n/shared/llm.js
+
 const claimed = $('Claim').all().map((i) => i.json);
 const allSettings = loadSettings($('Settings').all());
 // Тело функции — без отступа: многострочные шаблонные строки промпта нельзя сдвигать, иначе изменится текст
@@ -29,7 +32,10 @@ if (!resume) throw new Error('Пустое резюме: пришли PDF бот
 const frontend = settings['profile.preset'] === 'frontend';
 const facts = settings['profile.facts'];
 const provider = settings['llm.provider'];
-const model = provider === 'claude' ? $env.CLAUDE_MODEL || 'claude-haiku-4-5' : $env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+// Gemini — и основной, и запасной путь Claude по подписке
+const geminiModel = $env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+const model =
+  provider === 'claude-cli' ? settings['llm.cli_score'] : provider === 'claude' ? $env.CLAUDE_MODEL || 'claude-haiku-4-5' : geminiModel;
 
 // Поправки кандидата из настроек бота (⚙️ → 🤖 Нейросеть → ✏️ Спорные случаи, список «случай: решение»).
 // frontend: встроенный случай с другим решением — поправка с его формулировкой; встроенного нет в списке — «особого
@@ -185,49 +191,52 @@ const vacancyText = (r) =>
 const REASON = 'Главная причина решения, одна фраза до 150 символов';
 const DECISIONS = ['apply', 'maybe', 'skip'];
 
-function body(r) {
-  const text = vacancyText(r);
-  if (provider === 'claude') {
-    return {
-      model,
-      max_tokens: 1024,
-      temperature: 0,
-      system: SYSTEM,
-      messages: [{ role: 'user', content: text }],
-      output_config: {
-        format: {
-          type: 'json_schema',
-          schema: {
-            type: 'object',
-            properties: {
-              reason: { type: 'string', description: REASON },
-              decision: { type: 'string', enum: DECISIONS },
-            },
-            required: ['reason', 'decision'],
-            additionalProperties: false,
-          },
-        },
-      },
-    };
-  }
-  return {
-    systemInstruction: { parts: [{ text: SYSTEM }] },
-    contents: [{ role: 'user', parts: [{ text }] }],
-    generationConfig: {
-      temperature: 0,
-      maxOutputTokens: 1024,
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: 'OBJECT',
+const claudeBody = (text) => ({
+  model,
+  max_tokens: 1024,
+  temperature: 0,
+  system: SYSTEM,
+  messages: [{ role: 'user', content: text }],
+  output_config: {
+    format: {
+      type: 'json_schema',
+      schema: {
+        type: 'object',
         properties: {
-          reason: { type: 'STRING', description: REASON },
-          decision: { type: 'STRING', enum: DECISIONS },
+          reason: { type: 'string', description: REASON },
+          decision: { type: 'string', enum: DECISIONS },
         },
         required: ['reason', 'decision'],
-        propertyOrdering: ['reason', 'decision'],
+        additionalProperties: false,
       },
     },
-  };
+  },
+});
+const geminiBody = (text) => ({
+  systemInstruction: { parts: [{ text: SYSTEM }] },
+  contents: [{ role: 'user', parts: [{ text }] }],
+  generationConfig: {
+    temperature: 0,
+    maxOutputTokens: 1024,
+    responseMimeType: 'application/json',
+    responseSchema: {
+      type: 'OBJECT',
+      properties: {
+        reason: { type: 'STRING', description: REASON },
+        decision: { type: 'STRING', enum: DECISIONS },
+      },
+      required: ['reason', 'decision'],
+      propertyOrdering: ['reason', 'decision'],
+    },
+  },
+});
+
+function body(r) {
+  const text = vacancyText(r);
+  if (provider === 'claude') return claudeBody(text);
+  // Claude по подписке: лимит или сбой входа — сервис отдаст этот же запрос Gemini (запасной путь)
+  if (provider === 'claude-cli') return cliBody(claudeBody(text), { task: 'score', fallback: { model: geminiModel, body: geminiBody(text) } });
+  return geminiBody(text);
 }
 
 // Версия правил: хеш текста промпта без резюме (djb2, base36)

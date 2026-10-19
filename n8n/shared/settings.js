@@ -55,20 +55,27 @@ const SETTINGS = {
       'tutor', 'instructor', "o'qituvchi", 'oqituvchi', 'преподавател*', 'тестировщик*', 'наставник*'],
     words: true,
   },
-  // Нейросеть (W2, W5): провайдер; теневой режим — карточки и на skip (выкл — skip только в сводке)
-  'llm.provider': { default: 'gemini', options: ['gemini', 'claude'] },
+  // Нейросеть (W2, W5, W11, W13): провайдер; теневой режим — карточки и на skip (выкл — skip только в сводке).
+  // claude-cli — Claude по подписке (19.10.2026, docs/claude-cli.md): сервис claude-cli, модели — ниже
+  'llm.provider': { default: 'gemini', options: ['gemini', 'claude', 'claude-cli'] },
+  // Модели Claude по подписке: оценка (W2) и тексты (W5 письма, W11 профиль, W13 резюме). Только полные ID — их
+  // же принимает сервис claude-cli; Fable нет (на Pro в claude -p она списывает платные кредиты)
+  'llm.cli_score': { default: 'claude-haiku-5-5', options: ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5'] },
+  'llm.cli_text': { default: 'claude-sonnet-5-5', options: ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5'] },
   'llm.shadow': { default: true, options: [true, false] },
   // С какой минуты считать совпадения теневого режима (ISO, 19.10.2026; n8n/shared/shadow.js). Пусто — все карточки.
   // Пишет кнопка «🔄 Теневой заново» (⚙️ → 🤖): stamp — значение «сейчас»
   'llm.shadow_since': { default: '', stamp: true },
   // Спорные случаи — список «случай: решение» (✏️, решение пользователя 07.10.2026: текстом, а не кнопками).
   // По умолчанию — четыре встроенных случая промпта W2 с их решениями; отличие от них уходит в промпт
-  // «Поправками кандидата» (n8n/w2-score/build-prompt.js)
+  // «Поправками кандидата» (n8n/w2-score/build-prompt.js). Подписи по умолчанию — прежние (19.10.2026 случаи стали
+  // «fullstack не на Node/Python» и «AI-разработка», но у пресета generic без своего списка эти подписи попадают в
+  // промпт строками — менять их значит менять чужие промпты; владельцу новые подписи записал импорт)
   'llm.cases': {
     default: [
       { case: 'Vue без React', decision: 'maybe' },
-      { case: 'fullstack не на Node/Python', decision: 'maybe' },
-      { case: 'AI-разработка', decision: 'apply' },
+      { case: 'fullstack', decision: 'maybe' },
+      { case: 'AI на JS/TS', decision: 'apply' },
       { case: 'React Native', decision: 'skip' },
     ],
     cases: true,
