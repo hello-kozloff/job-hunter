@@ -32,6 +32,7 @@ const all = (name) => {
     return [];
   }
 };
+const count = (list, status) => list.filter((r) => r.status === status).length;
 const plural = (n, one, few, many) => {
   const d = n % 10;
   const dd = n % 100;
@@ -44,28 +45,42 @@ const plan = $('Plan').first().json;
 const search = $('Parse search').first().json;
 const requests = search.requests ?? [];
 const fresh = all('Filter search'); // новые: new | rejected
-const parsed = all('Parse vacancy'); // прошли выдачу, страница открыта: detailed | rejected
+// Страницы вакансий («Candidates»): строки этого сбора и хвост очереди new — после сбоя или разового догона
+const freshIds = new Set(fresh.map((r) => r.external_id));
+const opened = all('Parse vacancy'); // страница открыта: detailed | rejected
+const parsed = opened.filter((r) => freshIds.has(r.external_id));
+const queued = opened.filter((r) => !freshIds.has(r.external_id));
 const rejected = [...fresh, ...parsed].filter((r) => r.status === 'rejected');
 const scoring = parsed.filter((r) => r.status === 'detailed').length;
-const noPage = parsed.filter((r) => r.error).length;
+const noPage = opened.filter((r) => r.error).length;
+// Очередь: строки new в таблице до открытия страниц минус открытые сейчас
+const waiting = Math.max(0, all('Pending new').filter((r) => r.id).length - opened.length);
 
-// Запросы к hh: страницы поиска + страницы новых вакансий
-const sent = requests.length + parsed.length;
+// Запросы к hh: страницы поиска + страницы вакансий
+const sent = requests.length + opened.length;
 let requestLine = `${sent} ${plural(sent, 'запрос', 'запроса', 'запросов')} к hh: поиск, ${requests
   .map((r) => `${requests.length > 1 && r.label ? `${r.label} ` : ''}стр. ${r.page + 1} → ${r.status}`)
   .join(', ')}`;
-if (parsed.length) {
-  requestLine += ` · страницы вакансий: ${parsed.length}`;
+if (opened.length) {
+  requestLine += ` · страницы вакансий: ${opened.length}`;
   if (noPage) requestLine += ` (не открылись ${noPage} — оценка по фрагменту)`;
 }
 
 const settings = loadSettings($('Settings').all());
 const onPages = requests.reduce((n, r) => n + (r.count ?? 0), 0);
-// Нашёл hh — по каждому запросу (удалёнка и офис в городе считаются отдельно)
-const totals = requests.filter((r) => r.total != null);
+// Нашёл hh — по каждому запросу (удалёнка и офис в городе считаются отдельно); total на всех страницах запроса
+// один и тот же — берём страницу 0
+const totals = requests.filter((r) => r.total != null && r.page === 0);
 const total = totals.length ? totals.reduce((n, r) => n + r.total, 0) : null;
-// Поиск за сутки (search_period=1): обычно всё найденное умещается на одной странице
-const period = SEARCH_LABELS.search_period[settings['search.period']];
+// Период — из «Plan»: при догоне после простоя он шире настройки
+const period = SEARCH_LABELS.search_period[plan.period ?? settings['search.period']];
+const catchupLine = plan.catchup
+  ? `⏩ Догоняю: успешного сбора не было ${plan.gapHours} ч — ищу ${period ?? `за ${plan.period} дн.`}, ${plan.pages} ${plural(plan.pages, 'страница', 'страницы', 'страниц')}`
+  : '';
+const queueLine =
+  queued.length || waiting
+    ? `📥 Из очереди: страниц ${queued.length} — на оценку ${count(queued, 'detailed')}, отсеяно ${count(queued, 'rejected')}${waiting ? ` · ждут ещё ${waiting}` : ''}`
+    : '';
 let result = 'все уже в базе';
 if (fresh.length && !rejected.length) result = `новых ${fresh.length}, все на оценку`;
 else if (fresh.length && !scoring) result = `новых ${fresh.length}, все отсеяны фильтром`;
@@ -113,22 +128,26 @@ const searchLinks = searched.flatMap(({ r, rs }) =>
 const next = nextCollect(Date.now(), scheduleFrom(settings));
 const report = [
   `🔎 Сбор ${localMsk(plan.startedAt ?? Date.now())} · ${fresh.length ? `новых ${fresh.length}` : 'новых нет'}`,
+  catchupLine,
   requestLine,
   countLine,
   ...rejectedLines,
+  queueLine,
   `<blockquote expandable>${searchedText}</blockquote>`,
   ...searchLinks,
   next ? `Следующий сбор ${localMsk(next)}` : '⏸ Сбор на паузе — дальше только «🔄 Собрать сейчас» в ⚙️ Настройках',
-].join('\n');
+]
+  .filter(Boolean)
+  .join('\n');
 
-// Журнал сборов: запись из «Start run» и итог сбора
+// Журнал сборов: запись из «Start run» и итог сбора. rejected, scoring, pages — всё, что сделал сбор, вместе с очередью
 const run = {
   found: total ?? null,
   uniq: search.vacancies?.length ?? 0,
   fresh: fresh.length,
-  rejected: rejected.length,
-  scoring,
-  pages: parsed.length,
+  rejected: rejected.length + count(queued, 'rejected'),
+  scoring: scoring + count(queued, 'detailed'),
+  pages: opened.length,
 };
 
 return [{ json: { report, runId: $('Start run').first().json.id, run } }];

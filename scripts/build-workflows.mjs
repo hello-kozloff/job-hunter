@@ -980,7 +980,7 @@ const recoveryChain = (wf, workflowName, from, [x, y]) => {
     ],
   };
 };
-const W1_RECOVERY = recoveryChain('W1', 'W1 Collector', 'Finish run', [2420, 0]);
+const W1_RECOVERY = recoveryChain('W1', 'W1 Collector', 'Finish run', [2420, 200]);
 const W2_RECOVERY = recoveryChain('W2', 'W2 Score', 'Called by W1', [1980, 900]);
 
 // Перерисовать сообщение — текст и кнопки (rows = null — убрать все кнопки). По умолчанию — нода W3
@@ -1275,6 +1275,27 @@ const workflows = {
         options: {},
       }),
       settingsNode('W1', [880, 0]),
+      // Последний успешный сбор (19.10.2026): простой дольше суток — «Plan» ищет за 3 или 7 дней (догон)
+      node(
+        'W1',
+        'Last ok',
+        'dataTable',
+        1.1,
+        [990, 150],
+        {
+          resource: 'row',
+          operation: 'get',
+          dataTableId: RUNS,
+          matchType: 'allConditions',
+          filters: { conditions: [{ keyName: 'status', keyValue: 'ok' }] },
+          returnAll: false,
+          limit: 1,
+          orderBy: true,
+          orderByColumn: 'createdAt',
+          orderByDirection: 'DESC',
+        },
+        { executeOnce: true, alwaysOutputData: true },
+      ),
       code('W1', 'Plan', 'n8n/w1-collector/plan.js', [1100, 0]),
       node(
         'W1',
@@ -1287,23 +1308,25 @@ const workflows = {
       ),
       code('W1', 'Parse search', 'n8n/w1-collector/parse-search.js', [1540, 0]),
       node('W1', 'OK?', 'if', 2.3, [1760, 0], ifTrue('W1', '={{ $json.ok }}')),
+      // Ветки «OK?» n8n (execution order v1) выполняет сверху вниз, каждую целиком: сигнал стражу → вставка новых →
+      // страницы вакансий из очереди new (вставленные выше уже в ней) → итог сбора и оценка
       // Сигнал стражу healthchecks.io: поиск прошёл. Нет сигнала дольше нормы — страж сам пишет в Telegram
-      node('W1', 'HC ping?', 'if', 2.3, [1980, -300], ifTrue('W1', '={{ Boolean($env.HC_PING_URL) }}')),
+      node('W1', 'HC ping?', 'if', 2.3, [1980, -400], ifTrue('W1', '={{ Boolean($env.HC_PING_URL) }}')),
       node(
         'W1',
         'HC ping',
         'httpRequest',
         4.5,
-        [2200, -300],
+        [2200, -400],
         { method: 'GET', url: '={{ $env.HC_PING_URL }}', options: { timeout: 10000 } },
         { onError: 'continueRegularOutput' },
       ),
-      node('W1', 'Split vacancies', 'splitOut', 1, [1980, -100], {
+      node('W1', 'Split vacancies', 'splitOut', 1, [1980, -200], {
         fieldToSplitOut: 'vacancies',
         include: 'noOtherFields',
         options: {},
       }),
-      node('W1', 'Is new', 'dataTable', 1.1, [2200, -100], {
+      node('W1', 'Is new', 'dataTable', 1.1, [2200, -200], {
         resource: 'row',
         operation: 'rowNotExists',
         dataTableId: VACANCIES,
@@ -1320,33 +1343,52 @@ const workflows = {
         'Blacklist',
         'dataTable',
         1.1,
-        [2420, -100],
+        [2420, -200],
         { resource: 'row', operation: 'get', dataTableId: BLACKLIST, returnAll: true },
         { executeOnce: true, alwaysOutputData: true },
       ),
-      code('W1', 'Filter search', 'n8n/w1-collector/filter-search.js', [2640, -100]),
-      node('W1', 'Insert', 'dataTable', 1.1, [2860, -100], {
+      code('W1', 'Filter search', 'n8n/w1-collector/filter-search.js', [2640, -200]),
+      node('W1', 'Insert', 'dataTable', 1.1, [2860, -200], {
         resource: 'row',
         operation: 'insert',
         dataTableId: VACANCIES,
         columns: AUTO_MAP,
         options: {},
       }),
-      node('W1', 'Is candidate', 'if', 2.3, [3080, -100], ifTrue('W1', "={{ $json.status === 'new' }}")),
+      // Очередь страниц (19.10.2026): все строки new — только что вставленные и хвост прошлых сборов (упавший сбор,
+      // разовый догон). Ниже ветки вставки: n8n (execution order v1) выполнит её после «Insert». Строк нет — ветка
+      // дальше не идёт
+      node(
+        'W1',
+        'Pending new',
+        'dataTable',
+        1.1,
+        [1980, 0],
+        {
+          resource: 'row',
+          operation: 'get',
+          dataTableId: VACANCIES,
+          matchType: 'allConditions',
+          filters: { conditions: [{ keyName: 'status', keyValue: 'new' }] },
+          returnAll: true,
+        },
+        { executeOnce: true },
+      ),
+      code('W1', 'Candidates', 'n8n/w1-collector/candidates.js', [2200, 0]),
       node(
         'W1',
         'Vacancy page',
         'httpRequest',
         4.5,
-        [3300, -200],
+        [2420, 0],
         hhRequest({
           url: '={{ $json.url }}',
           headers: [...BROWSER_HEADERS, ['Referer', 'https://hh.ru/search/vacancy']],
           batching: true,
         }),
       ),
-      code('W1', 'Parse vacancy', 'n8n/w1-collector/parse-vacancy.js', [3520, -200]),
-      node('W1', 'Update', 'dataTable', 1.1, [3740, -200], {
+      code('W1', 'Parse vacancy', 'n8n/w1-collector/parse-vacancy.js', [2640, 0]),
+      node('W1', 'Update', 'dataTable', 1.1, [2860, 0], {
         resource: 'row',
         operation: 'update',
         dataTableId: VACANCIES,
@@ -1357,9 +1399,9 @@ const workflows = {
       }),
       // Оценка сразу после сбора. Ниже ветки вакансий: n8n (execution order v1) выполняет её последней,
       // когда новые вакансии уже detailed. Вызывается на каждом успешном сборе — так дооцениваются и хвосты после сбоев
-      code('W1', 'Score job', 'n8n/w1-collector/score-job.js', [1980, 0]),
+      code('W1', 'Score job', 'n8n/w1-collector/score-job.js', [1980, 200]),
       // Итог сбора — в журнал. Выше «Score»: n8n (execution order v1) запишет его до вызова W2
-      node('W1', 'Finish run', 'dataTable', 1.1, [2200, 0], {
+      node('W1', 'Finish run', 'dataTable', 1.1, [2200, 200], {
         resource: 'row',
         operation: 'update',
         dataTableId: RUNS,
@@ -1377,14 +1419,14 @@ const workflows = {
         options: {},
       }),
       ...W1_RECOVERY.nodes,
-      runWorkflow('W1', 'Score', [2200, 150], IDS.score),
-      node('W1', 'To file', 'convertToFile', 1.1, [1980, 300], {
+      runWorkflow('W1', 'Score', [2200, 350], IDS.score),
+      node('W1', 'To file', 'convertToFile', 1.1, [1980, 500], {
         operation: 'toText',
         sourceProperty: 'html',
         binaryPropertyName: 'data',
         options: { fileName: 'hh-fail.html' },
       }),
-      node('W1', 'Save fixture', 'readWriteFile', 1.1, [2200, 300], {
+      node('W1', 'Save fixture', 'readWriteFile', 1.1, [2200, 500], {
         operation: 'write',
         fileName: "=/home/node/.n8n-files/fixtures/hh-fail-{{ $now.toFormat('yyyyLLdd-HHmmss') }}.html",
         dataPropertyName: 'data',
@@ -1396,7 +1438,7 @@ const workflows = {
         'Fail run',
         'dataTable',
         1.1,
-        [2420, 300],
+        [2420, 500],
         {
           resource: 'row',
           operation: 'update',
@@ -1411,7 +1453,7 @@ const workflows = {
         },
         { onError: 'continueRegularOutput' },
       ),
-      node('W1', 'Stop', 'stopAndError', 1, [2640, 300], {
+      node('W1', 'Stop', 'stopAndError', 1, [2640, 500], {
         errorType: 'errorMessage',
         errorMessage: "={{ $('Parse search').first().json.reason }}",
       }),
@@ -1422,7 +1464,8 @@ const workflows = {
       ['Busy', 'Start'],
       ['Start', 'Start run'],
       ['Start run', 'Settings'],
-      ['Settings', 'Plan'],
+      ['Settings', 'Last ok'],
+      ['Last ok', 'Plan'],
       ['Plan', 'Search hh'],
       ['Search hh', 'Parse search'],
       ['Parse search', 'OK?'],
@@ -1433,8 +1476,9 @@ const workflows = {
       ['Is new', 'Blacklist'],
       ['Blacklist', 'Filter search'],
       ['Filter search', 'Insert'],
-      ['Insert', 'Is candidate'],
-      ['Is candidate', 'Vacancy page', 0],
+      ['OK?', 'Pending new', 0],
+      ['Pending new', 'Candidates'],
+      ['Candidates', 'Vacancy page'],
       ['Vacancy page', 'Parse vacancy'],
       ['Parse vacancy', 'Update'],
       ['OK?', 'Score job', 0],

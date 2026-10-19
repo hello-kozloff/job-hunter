@@ -10,11 +10,16 @@
 Is new → Blacklist (все строки таблицы blacklist, один раз)
        → Filter search    правила по данным выдачи → status new | rejected, reasons
        → Insert           все вакансии пишутся в таблицу
-       → Is candidate?    только status = new
+OK?    → Pending new      все строки status = new (ветка ниже вставки — выполняется после неё)
+       → Candidates       строки этого сбора — все, хвост прошлых — до 25 за сбор, свежие первыми
        → Vacancy page     страница вакансии (по одной, пауза 3 с)
        → Parse vacancy    описание, навыки, тест, ТК/ГПХ + правила по описанию → detailed | rejected
        → Update           запись обратно по id
 ```
+
+Очередь страниц (19.10.2026): раньше страницы открывались только у вставленных этим сбором, и сбор, упавший посреди
+страниц, оставлял строки `new` навсегда. Теперь их добирают следующие сборы; хвост виден в «🔎 Сбор» строкой
+«📥 Из очереди: …».
 
 - Сообщения в Telegram с этапа 3 шлёт W2: карточка на каждую `detailed` + сообщение о сборе, где отсеянные перечислены с причинами: «🚫 Название — причина» (`docs/stages/stage-3.md`). Отсеянные видны в таблице `vacancies` (`status = rejected`, `reasons`).
 - Страница вакансии не открылась → вакансия всё равно `detailed` с текстом в `error`: нейросеть оценит её по фрагменту из выдачи, в карточке ⚠️.
@@ -51,7 +56,7 @@ node scripts/n8n-api.mjs run jobHunterW1Colle          # W1 примет их к
 node scripts/run-code-node.mjs n8n/w1-collector/filter-search.js <vacancies.json> \
   --ref 'Is new=@<vacancies.json>' --ref 'Blacklist=[]'
 node scripts/run-code-node.mjs n8n/w1-collector/parse-vacancy.js fixtures/vacancy.html \
-  --ref 'Is candidate=@<row.json>'
+  --ref 'Candidates=@<row.json>'
 ```
 
 ## Деплой
