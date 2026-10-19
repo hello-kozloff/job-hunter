@@ -2,7 +2,8 @@
 // Печатает в stdout JSON credentials для `n8n import:credentials` — те, чьи ключи есть в .env:
 //   TG_BOT_TOKEN   → «Telegram bot» (бот: сообщения, карточки, кнопки)
 //   GEMINI_API_KEY → «Gemini»       (оценка вакансий, W2)
-//   ANTHROPIC_API_KEY → «Claude»    (запасная нейросеть, LLM_PROVIDER=claude)
+//   ANTHROPIC_API_KEY → «Claude»    (Claude API: ⚙️ → 🤖 Нейросеть; Claude по подписке credential не нужен —
+//                                    сервис claude-cli с токеном из .env, docs/claude-cli.md)
 //   HC_API_KEY     → «healthchecks API» (бот обновляет расписание стража при смене расписания сбора, W7)
 //   APPLIER_TOKEN  → «Applier» (робот-отклик, этап 6: W6, W7, W9 ходят в его API с заголовком X-Applier-Token)
 // n8n при импорте шифрует ключи N8N_ENCRYPTION_KEY. Используется только через pipe в scripts/deploy.sh —

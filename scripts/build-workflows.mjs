@@ -269,12 +269,12 @@ const byId = (expression) => ({
 });
 
 // Запрос к API нейросети: тело готовит «Build prompt» ($json.body), ответ разбирает «Parse verdict».
-// Ключ — из credential n8n; полный ответ без исключений на 4xx/5xx, по одному запросу раз в interval мс
-const llmRequest = ({ url, credential, headers = [], interval }) => ({
+// Ключ — из credential n8n (у сервиса Claude по подписке ключа нет: он в своей сети compose); полный ответ без
+// исключений на 4xx/5xx, запросы стартуют раз в interval мс — n8n не ждёт ответа перед следующим (очередь — у сервиса)
+const llmRequest = ({ url, credential, headers = [], interval, timeout = 60000 }) => ({
   method: 'POST',
   url,
-  authentication: 'predefinedCredentialType',
-  nodeCredentialType: credential,
+  ...(credential && { authentication: 'predefinedCredentialType', nodeCredentialType: credential }),
   sendHeaders: headers.length > 0,
   ...(headers.length > 0 && { specifyHeaders: 'keypair', headerParameters: pairs(headers) }),
   sendBody: true,
@@ -284,9 +284,62 @@ const llmRequest = ({ url, credential, headers = [], interval }) => ({
   options: {
     batching: { batch: { batchSize: 1, batchInterval: interval } },
     response: { response: { fullResponse: true, neverError: true, responseFormat: 'json' } },
-    timeout: 60000,
+    timeout,
   },
 });
+
+// Нейросеть (W2, W5, W11, W13): развилка по llm.provider ($json.provider из Build) и три HTTP-ноды — Claude API,
+// Claude по подписке (сервис claude-cli, docs/claude-cli.md) и Gemini; ответы — в одну Parse-ноду (в запуске один
+// провайдер, порядок items тот же). Имена «Claude» и «Gemini» прежние — их id в n8n не меняются. [x, y] — развилка;
+// gemini — интервал Gemini (бесплатный тариф), cli — интервал и таймаут «Claude CLI» (deadline_ms в теле — чуть меньше)
+const CLAUDE_CLI_URL = 'http://claude-cli:3000/v1/messages';
+const llmBranch = (wf, [x, y], { gemini, cli = 1000, cliTimeout = 180000 }) => [
+  node(wf, 'Provider', 'switch', 3.4, [x, y], {
+    mode: 'expression',
+    numberOutputs: 3,
+    output: "={{ ({ claude: 0, 'claude-cli': 1 })[$json.provider] ?? 2 }}",
+    options: {},
+  }),
+  node(
+    wf,
+    'Claude',
+    'httpRequest',
+    4.5,
+    [x + 220, y - 100],
+    llmRequest({
+      url: 'https://api.anthropic.com/v1/messages',
+      credential: 'anthropicApi',
+      headers: [['anthropic-version', '2023-06-01']],
+      interval: 1000,
+    }),
+    { credentials: { anthropicApi: { id: IDS.claudeCredential, name: 'Claude' } }, onError: 'continueRegularOutput' },
+  ),
+  node(
+    wf,
+    'Gemini',
+    'httpRequest',
+    4.5,
+    [x + 220, y + 100],
+    llmRequest({
+      url: '=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.model }}:generateContent',
+      credential: 'googlePalmApi',
+      interval: gemini,
+    }),
+    { credentials: { googlePalmApi: { id: IDS.geminiCredential, name: 'Gemini' } }, onError: 'continueRegularOutput' },
+  ),
+  node(wf, 'Claude CLI', 'httpRequest', 4.5, [x + 220, y + 300], llmRequest({ url: CLAUDE_CLI_URL, interval: cli, timeout: cliTimeout }), {
+    onError: 'continueRegularOutput',
+  }),
+];
+const llmLinks = (build, parse) => [
+  [build, 'Provider'],
+  ['Provider', 'Claude', 0],
+  ['Provider', 'Claude CLI', 1],
+  ['Provider', 'Gemini', 2],
+  ['Claude', parse],
+  ['Claude CLI', parse],
+  ['Gemini', parse],
+];
 
 // W7: раскладки кнопок панели меню. Telegram-нода не умеет менять число кнопок на ходу, поэтому раскладки
 // фиксированные, а подписи и callback_data считает «Render» ($json.b). Порядок = номера выходов «Layout»
@@ -489,6 +542,25 @@ const PANEL_LAYOUTS = [
         [panelButton(`r${i + 1}.text`), panelButton(`r${i + 1}.cb`)],
       ]),
       [['⬅️ Фильтр', 's:filter']],
+    ],
+  ],
+  // ⚙️ → 🤖 при Claude по подписке (19.10.2026, docs/claude-cli.md): ещё и модели оценки и текстов — по кругу
+  [
+    'set llm cli',
+    [
+      [
+        [panelButton('provider.text'), panelButton('provider.cb')],
+        [panelButton('shadow.text'), panelButton('shadow.cb')],
+      ],
+      [
+        [panelButton('score.text'), panelButton('score.cb')],
+        [panelButton('texts.text'), panelButton('texts.cb')],
+      ],
+      [
+        ['✏️ Спорные случаи', 'sw:llm.cases'],
+        ['🔄 Теневой заново', 'sc:llm.shadow_since'],
+      ],
+      [['⬅️ Настройки', 's:root']],
     ],
   ],
 ];
@@ -1536,35 +1608,9 @@ const workflows = {
         options: {},
       }),
       code('W2', 'Build prompt', 'n8n/w2-score/build-prompt.js', [1100, 0]),
-      node('W2', 'Claude?', 'if', 2.3, [1320, 0], ifTrue('W2', "={{ $json.provider === 'claude' }}")),
-      node(
-        'W2',
-        'Claude',
-        'httpRequest',
-        4.5,
-        [1540, -100],
-        llmRequest({
-          url: 'https://api.anthropic.com/v1/messages',
-          credential: 'anthropicApi',
-          headers: [['anthropic-version', '2023-06-01']],
-          interval: 1000,
-        }),
-        { credentials: { anthropicApi: { id: IDS.claudeCredential, name: 'Claude' } }, onError: 'continueRegularOutput' },
-      ),
-      node(
-        'W2',
-        'Gemini',
-        'httpRequest',
-        4.5,
-        [1540, 100],
-        llmRequest({
-          url: '=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.model }}:generateContent',
-          credential: 'googlePalmApi',
-          // Бесплатный Gemini: 10–15 запросов в минуту → не чаще одного в 7 с
-          interval: 7000,
-        }),
-        { credentials: { googlePalmApi: { id: IDS.geminiCredential, name: 'Gemini' } }, onError: 'continueRegularOutput' },
-      ),
+      // Бесплатный Gemini: 10–15 запросов в минуту → не чаще одного в 7 с; Claude по подписке (Haiku) отвечает за ~5 с —
+      // запросы раз в 6 с не копят очередь у сервиса
+      ...llmBranch('W2', [1320, 0], { gemini: 7000, cli: 6000 }),
       code('W2', 'Parse verdict', 'n8n/w2-score/parse-verdict.js', [1760, 0]),
       // Настройки бота: провайдер, профиль и правила (Build prompt), теневой режим (Format card, Quiet skips)
       settingsNode('W2', [660, 0]),
@@ -1716,11 +1762,7 @@ const workflows = {
       ['Pending', 'Claim'],
       ['Claim', 'Settings'],
       ['Settings', 'Build prompt'],
-      ['Build prompt', 'Claude?'],
-      ['Claude?', 'Claude', 0],
-      ['Claude?', 'Gemini', 1],
-      ['Claude', 'Parse verdict'],
-      ['Gemini', 'Parse verdict'],
+      ...llmLinks('Build prompt', 'Parse verdict'),
       ['Parse verdict', 'Format card'],
       ['Parse verdict', 'Quiet skips'],
       ['Parse verdict', 'First save'],
@@ -2226,34 +2268,7 @@ const workflows = {
       // Провайдер нейросети и профиль (резюме, подпись, образцы писем) — из настроек бота
       settingsNode('W5', [1100, 0]),
       code('W5', 'Build letter', 'n8n/w5-letter/build-letter.js', [1760, 0]),
-      node('W5', 'Claude?', 'if', 2.3, [1980, 0], ifTrue('W5', "={{ $json.provider === 'claude' }}")),
-      node(
-        'W5',
-        'Claude',
-        'httpRequest',
-        4.5,
-        [2200, -100],
-        llmRequest({
-          url: 'https://api.anthropic.com/v1/messages',
-          credential: 'anthropicApi',
-          headers: [['anthropic-version', '2023-06-01']],
-          interval: 1000,
-        }),
-        { credentials: { anthropicApi: { id: IDS.claudeCredential, name: 'Claude' } }, onError: 'continueRegularOutput' },
-      ),
-      node(
-        'W5',
-        'Gemini',
-        'httpRequest',
-        4.5,
-        [2200, 100],
-        llmRequest({
-          url: '=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.model }}:generateContent',
-          credential: 'googlePalmApi',
-          interval: 5000,
-        }),
-        { credentials: { googlePalmApi: { id: IDS.geminiCredential, name: 'Gemini' } }, onError: 'continueRegularOutput' },
-      ),
+      ...llmBranch('W5', [1980, 0], { gemini: 5000 }),
       code('W5', 'Parse letter', 'n8n/w5-letter/parse-letter.js', [2420, 0]),
       code('W5', 'Format letter', 'n8n/w5-letter/format-letter.js', [2640, 0]),
       // Робот включён и вакансия ему подходит (этап 6) — письмо сразу с [🚀 Откликнуться роботом]
@@ -2320,11 +2335,7 @@ const workflows = {
       ['Jobs', 'Vacancy'],
       ['Vacancy', 'Settings'],
       ['Settings', 'Build letter'],
-      ['Build letter', 'Claude?'],
-      ['Claude?', 'Claude', 0],
-      ['Claude?', 'Gemini', 1],
-      ['Claude', 'Parse letter'],
-      ['Gemini', 'Parse letter'],
+      ...llmLinks('Build letter', 'Parse letter'),
       ['Parse letter', 'Format letter'],
       ['Format letter', 'Robot letter?'],
       ['Robot letter?', 'Send letter: robot', 0],
@@ -3342,34 +3353,7 @@ const workflows = {
       node('W11', 'To LLM?', 'if', 2.3, [1980, -400], ifTrue('W11', '={{ $json.toLlm }}')),
       // Нейросеть: разбор резюме или правка профиля по пожеланию — тот же провайдер, что для оценки
       code('W11', 'Build extract', 'n8n/w11-profile/build-extract.js', [2200, -200]),
-      node('W11', 'Claude?', 'if', 2.3, [2420, -200], ifTrue('W11', "={{ $json.provider === 'claude' }}")),
-      node(
-        'W11',
-        'Claude',
-        'httpRequest',
-        4.5,
-        [2640, -300],
-        llmRequest({
-          url: 'https://api.anthropic.com/v1/messages',
-          credential: 'anthropicApi',
-          headers: [['anthropic-version', '2023-06-01']],
-          interval: 1000,
-        }),
-        { credentials: { anthropicApi: { id: IDS.claudeCredential, name: 'Claude' } }, onError: 'continueRegularOutput' },
-      ),
-      node(
-        'W11',
-        'Gemini',
-        'httpRequest',
-        4.5,
-        [2640, -100],
-        llmRequest({
-          url: '=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.model }}:generateContent',
-          credential: 'googlePalmApi',
-          interval: 1000,
-        }),
-        { credentials: { googlePalmApi: { id: IDS.geminiCredential, name: 'Gemini' } }, onError: 'continueRegularOutput' },
-      ),
+      ...llmBranch('W11', [2420, -200], { gemini: 1000 }),
       code('W11', 'Parse profile', 'n8n/w11-profile/parse-profile.js', [2860, -200]),
       node('W11', 'Parsed?', 'if', 2.3, [3080, -200], ifTrue('W11', '={{ $json.ok }}')),
       // Офис или гибрид — город из резюме → регион hh (автоподсказка hh.ru)
@@ -3515,11 +3499,7 @@ const workflows = {
       ['PDF text', 'To LLM?'],
       ['To LLM?', 'Build extract', 0],
       ['To LLM?', 'Step', 1],
-      ['Build extract', 'Claude?'],
-      ['Claude?', 'Claude', 0],
-      ['Claude?', 'Gemini', 1],
-      ['Claude', 'Parse profile'],
-      ['Gemini', 'Parse profile'],
+      ...llmLinks('Build extract', 'Parse profile'),
       ['Parse profile', 'Parsed?'],
       ['Parsed?', 'Area?', 0],
       ['Parsed?', 'Step', 1],
@@ -3656,34 +3636,8 @@ const workflows = {
         { onError: 'continueRegularOutput' },
       ),
       code('W13', 'Build', 'n8n/w13-resume/build.js', [1980, -300]),
-      node('W13', 'Claude?', 'if', 2.3, [2200, -300], ifTrue('W13', "={{ $json.provider === 'claude' }}")),
-      node(
-        'W13',
-        'Claude',
-        'httpRequest',
-        4.5,
-        [2420, -400],
-        llmRequest({
-          url: 'https://api.anthropic.com/v1/messages',
-          credential: 'anthropicApi',
-          headers: [['anthropic-version', '2023-06-01']],
-          interval: 1000,
-        }),
-        { credentials: { anthropicApi: { id: IDS.claudeCredential, name: 'Claude' } }, onError: 'continueRegularOutput' },
-      ),
-      node(
-        'W13',
-        'Gemini',
-        'httpRequest',
-        4.5,
-        [2420, -200],
-        llmRequest({
-          url: '=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.model }}:generateContent',
-          credential: 'googlePalmApi',
-          interval: 1000,
-        }),
-        { credentials: { googlePalmApi: { id: IDS.geminiCredential, name: 'Gemini' } }, onError: 'continueRegularOutput' },
-      ),
+      // Правка резюме на Sonnet с мышлением — до 3–4 минут
+      ...llmBranch('W13', [2200, -300], { gemini: 1000, cliTimeout: 300000 }),
       code('W13', 'Parse', 'n8n/w13-resume/parse.js', [2640, -300]),
       // Резюме файлом: сообщение Telegram — до 4096 знаков, резюме — до 30 000
       code('W13', 'Resume file', 'n8n/w13-resume/resume-file.js', [1760, 300]),
@@ -3785,11 +3739,7 @@ const workflows = {
       ['Photos', 'Get shot'],
       ['Get shot', 'Send shot'],
       ['Wait', 'Build'],
-      ['Build', 'Claude?'],
-      ['Claude?', 'Claude', 0],
-      ['Claude?', 'Gemini', 1],
-      ['Claude', 'Parse'],
-      ['Gemini', 'Parse'],
+      ...llmLinks('Build', 'Parse'),
       ['Parse', 'Step'],
       ['Resume file', 'To file'],
       ['To file', 'Send file'],
