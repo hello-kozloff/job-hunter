@@ -1,11 +1,11 @@
 // W1 · Parse vacancy — полная страница вакансии + правила, которым нужно описание.
 // Нода: Code, режим «Run Once for All Items».
-// Вход: ответы HTTP Request «Vacancy page» — в том же порядке, что строки из «Is candidate»
-//       (строки уже в таблице, у каждой есть id).
+// Вход: ответы HTTP Request «Vacancy page» — в том же порядке, что строки из «Candidates»
+//       (строки уже в таблице, у каждой есть id: этого сбора и хвост очереди new).
 // Выход: строка целиком с обновлёнными status / reasons / description / key_skills / has_test / contract / error
 //        → нода Update пишет её обратно по id. Дальше строки status = detailed оценивает нейросеть (W2).
 
-const rows = $('Is candidate').all().map((i) => i.json);
+const rows = $('Candidates').all().map((i) => i.json);
 const responses = $input.all().map((i) => i.json);
 
 // @include n8n/shared/hh.js
