@@ -137,7 +137,7 @@ node scripts/run-code-node.mjs n8n/w2-score/parse-verdict.js <responses.json> \
   --ref 'Build prompt=@<prompts.json>' --ref 'Pending=@<rows.json>'
 node scripts/run-code-node.mjs n8n/w3-telegram/route.js <update.json> --env TG_CHAT_ID=<id>
 node scripts/n8n-api.mjs run jobHunterW2Score      # оценить то, что лежит в detailed
-node scripts/n8n-api.mjs requeue 3                 # вернуть в обработку бэкфилл за 3 дня → run W1 → run W2
+node scripts/n8n-api.mjs sweep --dry              # разовый догон за 30 дней: что вернётся в обработку (без записи)
 ```
 
 ## Готово, когда

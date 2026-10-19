@@ -415,7 +415,7 @@ n8n/w8-clock/*.js                   код Code-нод W8 («часы» сбор
 n8n/w9-robot/*.js                   код Code-нод W9 (робот-отклик: план 🚀/⛔, ворота очереди, исход, капча, блоки)
 n8n/w11-profile/*.js                код Code-нод W11 (онбординг: PDF → нейросеть → профиль; ⚙️ → 👤)
 n8n/w13-resume/*.js                 код Code-нод W13 (рекомендации по резюме: план, вопросы, правки, откат, файл)
-scripts/test-shared.mjs, test-w1.mjs, test-w11.mjs, test-w13.mjs, test-w2.mjs, test-w6.mjs, test-w7.mjs, test-w9.mjs  тесты общего кода и сценариев W1, W2, W6, W7, W9, W11, W13 без n8n: node --test scripts/test-*.mjs
+scripts/test-shared.mjs, test-w1.mjs, test-w11.mjs, test-w13.mjs, test-w2.mjs, test-w6.mjs, test-w7.mjs, test-w9.mjs, test-sweep.mjs  тесты общего кода и сценариев W1, W2, W6, W7, W9, W11, W13, догона sweep без n8n: node --test scripts/test-*.mjs
 n8n/shared/*.js                     общий код Code-нод (карточка, письмо, разбор страницы hh, меню, расписание W1, робот-отклик,
                                     поисковый запрос hh, признак AI-вакансии, время человека time.js, профиль profile.js,
                                     справочник ролей hh hh-roles.js, запрос к нейросети и разбор ответа llm.js,
@@ -432,9 +432,11 @@ scripts/deploy.mjs, lib/deploy.mjs  деплой на Node: сборка + ту�
 scripts/deploy.sh                   обёртка deploy.mjs с проверкой ветки git flow
 scripts/lib/env.mjs                 .env: чтение, запись, имя проекта и порты (COMPOSE_PROJECT_NAME, N8N_PORT, …)
 scripts/n8n-api.mjs                 владелец, запуск/публикация workflow, строки таблиц, migrate, blacklist-seed,
-                                    tunnel-env, requeue (бэкфилл в обработку), recheck (перепроверить отсеянных
-                                    правилом после его правки), api-key, resume-labels (подписи резюме у вакансий,
-                                    собранных раньше); строки таблиц REST отдаёт по 250 — allRows листает
+                                    tunnel-env, sweep (разовый догон: поиск hh за 30 дней, отсеянные — снова через
+                                    нынешние правила, бэкфилл seen — удалить; 19.10.2026, заменил requeue и recheck),
+                                    api-key, resume-labels (подписи резюме у вакансий, собранных раньше); строки
+                                    таблиц REST отдаёт по 250 — allRows листает
+scripts/lib/sweep.mjs               логика sweep без сети и n8n: план догона на коде нод W1 (песочница тестов)
 scripts/credentials.mjs             JSON credentials Telegram / Gemini / Claude из .env (только через pipe)
 scripts/run-code-node.mjs           прогон Code-ноды на фикстурах без n8n (--ref, --env, --static)
 scripts/hh-roles.mjs                справочник ролей hh из страницы поиска → n8n/shared/hh-roles.js

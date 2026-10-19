@@ -15,12 +15,12 @@
 //                                                      по подписке) в COMPOSE_PROFILES
 //   node scripts/n8n-api.mjs api-key | docker exec -i …  ключ публичного API n8n для W6 → JSON credential в stdout
 //                                                      (только через pipe в n8n import:credentials, см. docs/stages/stage-5.md)
-//   node scripts/n8n-api.mjs requeue <days> [--dry]    вернуть в обработку вакансии бэкфилла (seen) за N дней:
-//                                                      удалить их строки, следующий запуск W1 примет их как новые
-//                                                      (--dry — только показать, что удалится)
-//   node scripts/n8n-api.mjs recheck <правило> [--dry]  правило фильтра поменялось: удалить строки, отсеянные
-//                                                      им (rejected, правило в reasons, например «Vue/Angular»),
-//                                                      следующий запуск W1 оценит их по текущим правилам
+//   node scripts/n8n-api.mjs sweep [--days N] [--no-search] [--dry]  разовый догон (19.10.2026): поиск hh за 30 дней
+//                                                      — новые в базу; отсеянные за N дней (по умолчанию 30) правилами
+//                                                      по выдаче — перепроверить нынешним фильтром и вернуть в очередь;
+//                                                      бэкфилл seen — удалить. Страницы и оценку делают сборы W1 и W2.
+//                                                      --no-search — только перепроверка (правило или чёрный список
+//                                                      поменялись); --dry — только показать
 //   node scripts/n8n-api.mjs profile-import <file.json> профиль и настройки бота в таблицу settings: JSON
 //                                                      { "имя настройки": значение } (docs/onboarding.md)
 //   node scripts/n8n-api.mjs profile-export [file.json] все строки settings в JSON того же вида (бэкап, перенос);
@@ -35,6 +35,7 @@ import { TABLES } from '../n8n/schema.mjs';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { readCode } from './lib/code.mjs';
+import { BACKLOG, MAX_PAGES, SEARCH_PERIOD, parsePages, planSweep, reasonKeys, searchPlan, sweepUrl } from './lib/sweep.mjs';
 
 import { readEnv, setEnv, local } from './lib/env.mjs';
 
@@ -229,58 +230,129 @@ async function blacklistSeed() {
   console.log(`blacklist: добавлено ${add.length}, уже было ${seed.length - add.length}`);
 }
 
-// Выдача последнего успешного запуска W1 (нода «Split vacancies»): external_id и dup_key вакансий
-async function lastSearch(cookie) {
-  const filter = encodeURIComponent(JSON.stringify({ workflowId: 'jobHunterW1Colle', status: ['success'] }));
-  const { json: list } = await api(`/executions?filter=${filter}&limit=1`, { cookie });
-  const last = list.results?.[0];
-  if (!last) throw new Error('Нет успешных запусков W1');
-  const { json: execution } = await api(`/executions/${last.id}`, { cookie });
-  const data = typeof execution.data === 'string' ? unflatten(execution.data) : execution.data;
-  const search = (data.resultData.runData['Split vacancies']?.[0]?.data?.main?.[0] ?? []).map((i) => i.json);
-  return { runId: last.id, has: (r) => search.some((v) => v.external_id === r.external_id || v.dup_key === r.dup_key) };
-}
+// Разовый догон (19.10.2026, scripts/lib/sweep.mjs): поиск hh за 30 дней — новые вакансии в базу; отсеянные за --days
+// дней правилами по выдаче — перепроверить нынешним фильтром и вернуть в очередь; бэкфилл seen — удалить (живые
+// вернутся из поиска новыми). Страницы вакансий и оценку делают обычные сборы W1 и W2: строки new — их очередь (хвост —
+// до 25 за сбор). Пока идёт догон, в runs запись kind = sweep, status = running — W1 «Busy» пропускает сбор.
+// --no-search — только перепроверка отсеянных (после правки правил или чёрного списка); --dry — только показать
+async function sweepCommand(...args) {
+  const dry = args.includes('--dry');
+  const noSearch = args.includes('--no-search');
+  const at = args.indexOf('--days');
+  const days = at >= 0 ? Number(args[at + 1]) : SEARCH_PERIOD;
+  if (!(days > 0)) throw new Error('usage: sweep [--days N] [--no-search] [--dry]');
 
-// Удалить строки таблицы vacancies, чьи вакансии есть в выдаче последнего успешного запуска W1:
-// следующий запуск W1 примет их как новые и прогонит через текущие правила. Вакансии не из выдачи
-// не трогаем — обычный запуск W1 читает одну страницу поиска, и они пропали бы из таблицы насовсем
-async function forgetRows(pick, { dry, nothing, done }) {
   const vacancies = await dataTable('vacancies');
-  const { cookie, base, table } = vacancies;
-  const search = await lastSearch(cookie);
-  const rows = (await allRows(vacancies)).filter((r) => pick(r) && search.has(r));
-  const list = () => rows.forEach((r) => console.log(`  ${r.published_at.slice(0, 10)}  ${r.company} — ${r.title}`));
-  if (!rows.length) return console.log(`${nothing} (выдача запуска ${search.runId})`);
-  if (dry) {
-    console.log(`Удалилось бы ${rows.length} строк (выдача запуска ${search.runId}):`);
-    return list();
+  const runs = await dataTable('runs');
+  const { cookie } = vacancies;
+  const settingsRows = await allRows(await dataTable('settings'));
+  const blacklistRows = await allRows(await dataTable('blacklist'));
+
+  const busy = (await allRows(runs)).find(
+    (r) => r.status === 'running' && Date.now() - (Date.parse(r.started_at) || 0) < 10 * 60 * 1000,
+  );
+  if (busy) throw new Error(`Идёт сбор (runs #${busy.id}, ${busy.kind}) — повтори через 10 минут`);
+  let lock = null;
+  if (!dry) {
+    const { json } = await api(`${runs.base}/${runs.table.id}/insert`, {
+      method: 'POST',
+      cookie,
+      body: { data: [{ started_at: new Date().toISOString(), kind: 'sweep', status: 'running' }], returnType: 'all' },
+    });
+    lock = (Array.isArray(json) ? json : (json?.data ?? []))[0]?.id ?? null;
   }
-  const conditions = { type: 'or', filters: rows.map((r) => ({ columnName: 'id', condition: 'eq', value: r.id })) };
-  await api(`${base}/${table.id}/rows?filter=${encodeURIComponent(JSON.stringify(conditions))}`, { method: 'DELETE', cookie });
-  console.log(`Удалено ${rows.length} строк (выдача запуска ${search.runId}). ${done}`);
-  list();
+  const finish = (data) =>
+    lock &&
+    api(`${runs.base}/${runs.table.id}/rows`, {
+      method: 'PATCH',
+      cookie,
+      body: {
+        filter: { type: 'and', filters: [{ columnName: 'id', condition: 'eq', value: lock }] },
+        data: { finished_at: new Date().toISOString(), ...data },
+      },
+    });
+
+  try {
+    const search = noSearch ? { records: [], total: 0, requests: 0 } : await deepSearch(settingsRows);
+    const rows = await allRows(vacancies);
+    const plan = await planSweep({ rows, records: search.records, settingsRows, blacklistRows, days });
+    const added = plan.insert.filter((r) => r.status === 'new');
+    const cut = plan.insert.filter((r) => r.status === 'rejected');
+    const reasons = {};
+    for (const r of cut) for (const key of reasonKeys(r.reasons)) reasons[key] = (reasons[key] ?? 0) + 1;
+    const line = (r) => `  ${r.title} — ${r.company}`;
+
+    if (!noSearch) {
+      console.log(`Поиск hh за ${SEARCH_PERIOD} дней: запросов ${search.requests} · нашёл ${search.total} · без дублей ${search.records.length}`);
+      console.log(`Новых для базы: ${plan.insert.length} — в очередь ${added.length}, отсеяно ${cut.length}${cut.length ? ` (${Object.entries(reasons).map(([k, n]) => `${k} ${n}`).join(' · ')})` : ''}`);
+      added.forEach((r) => console.log(line(r)));
+    }
+    console.log(`Отсеянные за ${days} дн. — снова в очередь: ${plan.requeue.length}`);
+    plan.requeue.forEach((r) => console.log(`${line(r)} · было: ${r.was}`));
+    console.log(`Бэкфилл seen: удалить ${plan.seen.length}${noSearch ? '' : ` (живые из поиска придут новыми: ${plan.seenBack})`}`);
+    console.log(`Очередь страниц: ${plan.queue} → W1 доберёт за ~${Math.ceil(plan.queue / BACKLOG)} сборов (хвост — по ${BACKLOG})`);
+    if (dry) return console.log('--dry: ничего не записано');
+
+    const { base, table } = vacancies;
+    for (let i = 0; i < plan.insert.length; i += 50) {
+      await api(`${base}/${table.id}/insert`, { method: 'POST', cookie, body: { data: plan.insert.slice(i, i + 50), returnType: 'count' } });
+    }
+    for (let i = 0; i < plan.requeue.length; i += 100) {
+      const filters = plan.requeue.slice(i, i + 100).map((r) => ({ columnName: 'id', condition: 'eq', value: r.id }));
+      await api(`${base}/${table.id}/rows`, { method: 'PATCH', cookie, body: { filter: { type: 'or', filters }, data: { status: 'new', reasons: '', error: '' } } });
+    }
+    if (plan.seen.length) {
+      const seen = { type: 'and', filters: [{ columnName: 'status', condition: 'eq', value: 'seen' }] };
+      await api(`${base}/${table.id}/rows?filter=${encodeURIComponent(JSON.stringify(seen))}`, { method: 'DELETE', cookie });
+    }
+    await finish({
+      status: 'ok',
+      found: search.total,
+      uniq: search.records.length,
+      fresh: plan.insert.length,
+      rejected: cut.length,
+      scoring: plan.queue,
+      pages: 0,
+    });
+    console.log(`Записано: новых ${plan.insert.length}, в очередь ${plan.queue}, seen удалено ${plan.seen.length}. Дальше — обычные сборы W1 и W2`);
+  } catch (e) {
+    await Promise.resolve(finish({ status: 'error', error: String(e.message).slice(0, 500) })).catch(() => {});
+    throw e;
+  }
 }
 
-// Бэкфилл (seen) за N дней — в обработку
-async function requeue(days, flag) {
-  if (!Number(days)) throw new Error('usage: requeue <days>');
-  const since = Date.now() - Number(days) * 24 * 3600 * 1000;
-  await forgetRows((r) => r.status === 'seen' && Date.parse(r.published_at) >= since, {
-    dry: flag === '--dry',
-    nothing: `Нечего возвращать: seen за ${days} дн. в выдаче нет`,
-    done: 'Теперь: node scripts/n8n-api.mjs run jobHunterW1Colle',
-  });
-}
-
-// Правило фильтра поменялось — перепроверить вакансии, которые оно отсеяло (rejected, правило в reasons)
-async function recheck(rule, flag) {
-  if (!rule) throw new Error('usage: recheck <правило из reasons, например Vue/Angular> [--dry]');
-  const hasRule = (r) => String(r.reasons ?? '').split(', ').some((reason) => reason.replace(/:.*$/, '') === rule);
-  await forgetRows((r) => r.status === 'rejected' && hasRule(r), {
-    dry: flag === '--dry',
-    nothing: `Нечего перепроверять: отсеянных правилом «${rule}» в выдаче нет`,
-    done: 'Следующий запуск W1 оценит их заново: node scripts/n8n-api.mjs run jobHunterW1Colle',
-  });
+// Поиск hh за SEARCH_PERIOD дней по запросам W1 «Plan»: страница 0, по её total — остальные. Заголовки — из собранного
+// W1 («Search hh»), пауза между запросами 6 с. Сбой hh (капча, вёрстка) — HTML в fixtures/, ошибка
+async function deepSearch(settingsRows) {
+  const w1 = JSON.parse(readFileSync(new URL('../n8n/workflows/w1-collector.json', import.meta.url), 'utf8'));
+  const headers = Object.fromEntries(
+    w1.nodes.find((n) => n.name === 'Search hh').parameters.headerParameters.parameters.map((h) => [h.name, h.value]),
+  );
+  headers.Referer = 'https://hh.ru/search/vacancy';
+  const pages = [];
+  const get = async (item, page) => {
+    if (pages.length) await sleep(6000);
+    const res = await fetch(sweepUrl(item.url, page), { headers, redirect: 'manual' });
+    const entry = { item, page, res: { statusCode: res.status, headers: { location: res.headers.get('location') }, data: await res.text() } };
+    pages.push(entry);
+    return entry;
+  };
+  const failed = (out) => {
+    const file = new URL(`../fixtures/hh-sweep-fail-${Date.now()}.html`, import.meta.url);
+    writeFileSync(file, out.html ?? '');
+    throw new Error(`hh: ${out.reason} (HTML — ${fileURLToPath(file)})`);
+  };
+  let total = 0;
+  for (const item of await searchPlan(settingsRows)) {
+    const first = await parsePages([await get(item, 0)]);
+    if (!first.ok) failed(first);
+    const found = first.requests[0]?.total ?? 0;
+    total += found;
+    for (let page = 1; page < Math.min(Math.ceil(found / 100), MAX_PAGES); page++) await get(item, page);
+  }
+  const out = await parsePages(pages);
+  if (!out.ok) failed(out);
+  return { records: out.vacancies, total, requests: pages.length };
 }
 
 // Ключ публичного API n8n (W6 читает запуски за сутки). Старый ключ с той же меткой удаляется.
@@ -481,8 +553,7 @@ const commands = {
   migrate,
   'blacklist-seed': blacklistSeed,
   'tunnel-env': tunnelEnv,
-  requeue,
-  recheck,
+  sweep: sweepCommand,
   'api-key': apiKey,
   'profile-import': profileImport,
   'profile-export': profileExport,
@@ -490,7 +561,7 @@ const commands = {
 };
 if (!commands[command]) {
   console.error(
-    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> [node] | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate | blacklist-seed | tunnel-env | requeue <days> [--dry] | recheck <rule> [--dry] | api-key | profile-import <file.json> | profile-export [file.json] | resume-labels [--dry] [--move <id,…>]',
+    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> [node] | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate | blacklist-seed | tunnel-env | sweep [--days N] [--no-search] [--dry] | api-key | profile-import <file.json> | profile-export [file.json] | resume-labels [--dry] [--move <id,…>]',
   );
   process.exit(2);
 }
