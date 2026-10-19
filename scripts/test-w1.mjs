@@ -208,3 +208,100 @@ test('сборка W1: сигнал стражу → вставка → очер
   assert.ok(!byName.has('Is candidate'));
   assert.deepEqual(children('Score job').sort((a, b) => byName.get(a).position[1] - byName.get(b).position[1]), ['Finish run', 'Score']);
 });
+
+// Правила 19.10.2026 (решения пользователя): AI на любом языке, junior — целым словом, «только из РФ» без отрицаний
+const FRONTEND = rows({ 'profile.preset': 'frontend' });
+const filter = (titles) =>
+  runNode('n8n/w1-collector/filter-search.js', {
+    nodes: {
+      Settings: FRONTEND,
+      'Is new': titles.map((title, i) => ({ external_id: String(i + 1), title, company: 'Компания', company_id: '5', experience: 'between3And6', responses: 10 })),
+      Blacklist: [{}],
+    },
+  });
+
+test('Filter search: AI на Python проходит, Python без AI и AI на Java/Go/.NET режутся', async () => {
+  const out = await filter([
+    'AI Engineer (Python)',
+    'Python AI Automation Engineer',
+    'Backend-разработчик (Python, ИИ-платформа)',
+    'Senior Python Developer (Django / DRF)',
+    'Senior Java Engineer with AI',
+    'Golang AI Developer',
+    'Senior .NET Developer (LLM / RAG)',
+    'Fullstack-разработчик (Python / React)',
+  ]);
+  assert.deepEqual(
+    out.map((r) => [r.title, r.status]),
+    [
+      ['AI Engineer (Python)', 'new'],
+      ['Python AI Automation Engineer', 'new'],
+      ['Backend-разработчик (Python, ИИ-платформа)', 'new'],
+      ['Senior Python Developer (Django / DRF)', 'rejected'],
+      ['Senior Java Engineer with AI', 'rejected'],
+      ['Golang AI Developer', 'rejected'],
+      ['Senior .NET Developer (LLM / RAG)', 'rejected'],
+      ['Fullstack-разработчик (Python / React)', 'new'],
+    ],
+  );
+});
+
+test('Filter search: junior — Intern и Internship, но не Internal и International', async () => {
+  const out = await filter([
+    'Frontend Developer (Internal Tools)',
+    'Frontend Developer, International team',
+    'Intern Front-end Developer',
+    'Frontend Internship',
+    'Frontend Interns',
+  ]);
+  assert.deepEqual(
+    out.map((r) => r.status),
+    ['new', 'new', 'rejected', 'rejected', 'rejected'],
+  );
+});
+
+// Страница вакансии: InitialState — JSON с HTML-сущностями
+const vacancyPage = (id, description, keySkills = []) => {
+  const state = JSON.stringify({ vacancyView: { vacancyFull: { vacancy: { vacancyId: id, description, keySkills } } } }).replace(/"/g, '&quot;');
+  return { statusCode: 200, data: `<html><template id="HH-Lux-InitialState">${state}</template></html>` };
+};
+const parseVacancy = async (cases) => {
+  const rowsIn = cases.map(([title], i) => ({ id: i + 1, external_id: String(1000 + i), title, key_skills: '', status: 'new' }));
+  return runNode('n8n/w1-collector/parse-vacancy.js', {
+    input: cases.map(([, description, skills], i) => vacancyPage(1000 + i, description, skills)),
+    nodes: { Candidates: rowsIn, Settings: FRONTEND },
+  });
+};
+
+test('Parse vacancy: AI без JS проходит, не-AI без React и Vue отсеян', async () => {
+  const out = await parseVacancy([
+    ['AI Engineer', '<p>Python, FastAPI, LangChain, агенты на LLM.</p>'],
+    ['Разработчик AI-агентов', '<p>Go и Python, RAG.</p>'],
+    ['Frontend-разработчик', '<p>Svelte и TypeScript.</p>'],
+    ['Frontend-разработчик', '<p>React, TypeScript.</p>'],
+  ]);
+  assert.deepEqual(
+    out.map((r) => [r.status, r.reasons]),
+    [
+      ['detailed', ''],
+      ['detailed', ''],
+      ['rejected', 'нет React и Vue'],
+      ['detailed', ''],
+    ],
+  );
+});
+
+test('Parse vacancy: «только из РФ» — без отрицаний', async () => {
+  const out = await parseVacancy([
+    ['Frontend React', '<p>React. Работа только из РФ.</p>'],
+    ['Frontend React', '<p>React. Нельзя находиться в РФ во время работы.</p>'],
+    ['Frontend React', '<p>React. Не обязательно быть налоговым резидентом РФ.</p>'],
+    ['Frontend React', '<p>React. Мы делаем не только сайты, работа только из России.</p>'],
+    ['Frontend React', '<p>React. Мы не нанимаем подрядчиков. Требуется находиться в России.</p>'],
+  ]);
+  assert.deepEqual(
+    out.map((r) => r.status),
+    ['rejected', 'detailed', 'detailed', 'rejected', 'rejected'],
+  );
+  assert.match(out[0].reasons, /^только из РФ: «только из РФ»/);
+});

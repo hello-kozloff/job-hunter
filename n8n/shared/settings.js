@@ -67,8 +67,8 @@ const SETTINGS = {
   'llm.cases': {
     default: [
       { case: 'Vue без React', decision: 'maybe' },
-      { case: 'fullstack', decision: 'maybe' },
-      { case: 'AI на JS/TS', decision: 'apply' },
+      { case: 'fullstack не на Node/Python', decision: 'maybe' },
+      { case: 'AI-разработка', decision: 'apply' },
       { case: 'React Native', decision: 'skip' },
     ],
     cases: true,
@@ -128,7 +128,9 @@ const SETTINGS = {
 };
 
 // Встроенные спорные случаи промпта W2: как узнать их в списке пользователя, решение по умолчанию
-// и формулировка для поправки
+// и формулировка для поправки. 19.10.2026: AI — на любом языке, fullstack — только с бэкендом не на Node.js и не на
+// Python (fullstack на Node/Python — apply по правилам). Прежние подписи («AI на JS/TS», «fullstack») узнаются:
+// сохранённые списки не ломаются
 const BUILTIN_CASES = {
   vue: {
     aliases: ['vue без react', 'vue', 'nuxt', 'vue/nuxt', 'vue nuxt'],
@@ -136,14 +138,34 @@ const BUILTIN_CASES = {
     prompt: 'основной стек — Vue (Vue.js, Nuxt), а React нет в обязательных требованиях',
   },
   fullstack: {
-    aliases: ['fullstack', 'full stack', 'full-stack', 'фулстек', 'фуллстек', 'fullstack с react'],
+    aliases: [
+      'fullstack не на node/python',
+      'fullstack не на node',
+      'fullstack',
+      'full stack',
+      'full-stack',
+      'фулстек',
+      'фуллстек',
+      'fullstack с react',
+    ],
     default: 'maybe',
-    prompt: 'fullstack: в обязательных требованиях и React, и бэкенд на любом языке',
+    prompt: 'fullstack, где бэкенд не на Node.js и не на Python, или упор на бэкенд',
   },
-  ai_js: {
-    aliases: ['ai на js/ts', 'ai на js', 'ai на ts', 'ai js/ts', 'ai js', 'ai', 'разработка на ai'],
+  ai: {
+    aliases: [
+      'ai-разработка',
+      'ai разработка',
+      'разработка на ai',
+      'ai на любом языке',
+      'ai',
+      'ai на js/ts',
+      'ai на js',
+      'ai на ts',
+      'ai js/ts',
+      'ai js',
+    ],
     default: 'apply',
-    prompt: 'разработка на AI на JS/TS (Node.js, NestJS, TypeScript): интеграции LLM, AI-агенты, RAG',
+    prompt: 'разработка на AI на любом языке (интеграции LLM, AI-агенты, RAG), кроме мобильной',
   },
   react_native: {
     aliases: ['react native', 'react-native', 'rn'],
