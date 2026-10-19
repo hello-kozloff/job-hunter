@@ -127,6 +127,7 @@ git switch production && scripts/deploy.sh
 |---|---|
 | `w0`…`w10`, `s0`, `s1` | workflow: код в `n8n/w*-…/` и описание в `build-workflows.mjs` |
 | `applier` | робот-отклик: `applier/` (сервис, Dockerfile, тесты) |
+| `claude-cli` | Claude по подписке: `claude-cli/` (сервис, Dockerfile, тесты) |
 | `shared` | `n8n/shared/*.js` |
 | `schema` | `n8n/schema.mjs`, таблицы, `blacklist.json` |
 | `deploy` | `deploy.sh`, `docker-compose.yml`, ngrok, credentials |
