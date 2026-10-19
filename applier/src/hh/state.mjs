@@ -183,6 +183,46 @@ export function negotiationsSummary(state) {
   };
 }
 
+// Отклики одной страницы «Откликов» (сверка с таблицей, docs/hh-applied.md): id вакансии, когда откликнулись, название
+// и компания — без HR, писем и чатов. json — InitialState страницы или JSON-ответ hh при листании (его форма не
+// записана: ищем объект с topicList и список vacanciesList не глубже 4 уровней). selected — номер страницы с нуля
+function holder(o, key, depth = 0) {
+  if (!o || typeof o !== 'object' || depth > 4) return null;
+  if (Array.isArray(o[key])) return o;
+  for (const v of Object.values(o)) {
+    const found = holder(v, key, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+export function negotiationTopics(json) {
+  const box = json?.applicantNegotiations ?? holder(json, 'topicList') ?? {};
+  const shorts = json?.vacanciesShort?.vacanciesList ?? holder(json, 'vacanciesList')?.vacanciesList ?? [];
+  const byId = new Map(shorts.map((v) => [String(v?.vacancyId), v]));
+  const list = Array.isArray(box.topicList) ? box.topicList : [];
+  return {
+    found: Array.isArray(box.topicList),
+    selected: box.paging?.pages?.find((p) => p.selected)?.page ?? null,
+    pageCount: box.pageCount ?? null,
+    total: box.total ?? null,
+    counters: json?.applicantNegotiationsCounters ?? null,
+    topics: list
+      .filter((t) => t?.vacancyId)
+      .map((t) => {
+        const v = byId.get(String(t.vacancyId)) ?? {};
+        return {
+          topicId: String(t.id ?? ''),
+          vacancyId: String(t.vacancyId),
+          creationTime: t.creationTime ?? null,
+          lastModified: t.lastModified ?? null,
+          name: String(v.name ?? ''),
+          companyId: v.company?.id != null ? String(v.company.id) : '',
+          company: String(v.company?.visibleName ?? v.company?.name ?? ''),
+        };
+      }),
+  };
+}
+
 // Группа исхода отклика — по ней n8n (W9) решает, что делать со строкой, не зная тонкостей hh
 export const GROUP = {
   applied: 'done',

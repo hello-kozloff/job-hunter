@@ -8,6 +8,7 @@ import {
   initialState,
   isCaptchaPage,
   isLoginUrl,
+  negotiationTopics,
   negotiationsSummary,
   popupPrediction,
   redactState,
@@ -208,6 +209,51 @@ test('negotiationsSummary: счётчики и форма одного откл�
   assert.equal(s.topics, 1);
   assert.deepEqual(s.sample, { id: 'number', state: 'string' });
   assert.equal(negotiationsSummary({}).topics, 0);
+});
+
+test('negotiationTopics: InitialState «Откликов» → id вакансий, даты, название и компания; страница и счётчики', () => {
+  const state = {
+    applicantNegotiations: {
+      topicList: [
+        { id: 11, vacancyId: 501, creationTime: '2026-10-08T16:36:39.383+03:00', lastModified: '2026-10-09T10:00:00.000+03:00', lastState: 'RESPONSE' },
+        { id: 12, vacancyId: 502, creationTime: '2026-10-07T12:00:00.000+03:00', lastState: 'DISCARD' },
+        { id: 13 },
+      ],
+      total: 136,
+      pageCount: 7,
+      paging: { pages: [{ page: 0, selected: false }, { page: 1, selected: true }] },
+    },
+    vacanciesShort: { vacanciesList: [{ vacancyId: 501, name: 'Senior Frontend', company: { id: 9736425, visibleName: 'Рога и копыта' } }] },
+    applicantNegotiationsCounters: { new: { all: 0 }, total: { all: 136 } },
+  };
+  const r = negotiationTopics(state);
+  assert.equal(r.found, true);
+  assert.equal(r.selected, 1);
+  assert.equal(r.pageCount, 7);
+  assert.equal(r.total, 136);
+  assert.deepEqual(r.counters.new, { all: 0 });
+  assert.deepEqual(r.topics, [
+    { topicId: '11', vacancyId: '501', creationTime: '2026-10-08T16:36:39.383+03:00', lastModified: '2026-10-09T10:00:00.000+03:00', name: 'Senior Frontend', companyId: '9736425', company: 'Рога и копыта' },
+    { topicId: '12', vacancyId: '502', creationTime: '2026-10-07T12:00:00.000+03:00', lastModified: null, name: '', companyId: '', company: '' },
+  ]);
+});
+
+test('negotiationTopics: JSON-ответ при листании — список глубже в объекте; без списка — found false', () => {
+  const r = negotiationTopics({ data: { negotiations: { topicList: [{ id: 1, vacancyId: 7 }], paging: { pages: [{ page: 2, selected: true }] } } } });
+  assert.equal(r.found, true);
+  assert.equal(r.selected, 2);
+  assert.deepEqual(r.topics.map((t) => t.vacancyId), ['7']);
+  assert.equal(negotiationTopics({ other: 1 }).found, false);
+  assert.equal(negotiationTopics(null).found, false);
+});
+
+test('negotiationTopics: сохранённая страница «Откликов» (fixtures, если есть)', { skip: !existsSync(fixture('applier/inbox-20261010-180531/negotiations.state.json')) }, () => {
+  const state = JSON.parse(readFileSync(fixture('applier/inbox-20261010-180531/negotiations.state.json'), 'utf8'));
+  const r = negotiationTopics(state);
+  assert.equal(r.topics.length, 20);
+  assert.equal(r.selected, 0);
+  assert.ok(r.topics.every((t) => /^\d+$/.test(t.vacancyId) && t.creationTime));
+  assert.ok(r.topics.filter((t) => t.companyId).length >= 15);
 });
 
 test('GROUP: у каждого исхода есть группа для n8n', () => {

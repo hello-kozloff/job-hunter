@@ -11,8 +11,10 @@
 //   POST /captcha {text}           ответ на капчу-картинку (фото в Telegram): ввести и отправить
 //   POST /apply {vacancyId, letter, requestId, dry, resume?}   отклик; APPLY_LIVE=0 или dry: true — сухой прогон до кнопки;
 //                                                       resume { hash, title? } — каким резюме hh откликаться (этап 5)
-//   POST /recon {vacancyIds?, inbox?, resume?, chooser?}   разведка без кликов — фоновое задание, 202 (resume — резюме, E0;
-//                                                       chooser — id вакансии: окно отклика и выбор резюме, этап 5)
+//   POST /recon {vacancyIds?, inbox?, resume?, chooser?, negotiations?, maxPages?}   разведка без кликов — фоновое
+//                                                       задание, 202 (resume — резюме, E0; chooser — id вакансии: окно
+//                                                       отклика и выбор резюме, этап 5; negotiations — все «Отклики»
+//                                                       листанием, maxPages — не больше N страниц, docs/hh-applied.md)
 //   POST /resume/read {hash?}      резюме hh: поля из страницы резюме, только GET (часть D, S2); бэкап — /data/resume
 //   POST /resume/write {hash, changes, dry}  записать разделы резюме формами hh; RESUME_LIVE=0 или dry — сухой прогон
 //   POST /record {on}              запись: пользователь откликается сам в окне робота
@@ -47,7 +49,7 @@ import {
 import { LOGIN_URL, SEL } from './hh/selectors.mjs';
 import { applyFlow } from './flows/apply.mjs';
 import { captchaKind, captchaShown, visible } from './flows/dom.mjs';
-import { reconChooser, reconInbox, reconResume, reconVacancies } from './flows/recon.mjs';
+import { readNegotiations, reconChooser, reconInbox, reconResume, reconVacancies } from './flows/recon.mjs';
 import { readResume, writeResume } from './flows/resume.mjs';
 import { cleanChanges } from './hh/resume.mjs';
 import { recordStart, recordStop, recording } from './flows/record.mjs';
@@ -266,14 +268,15 @@ const routes = {
     assertNotBlocked();
     const ids = Array.isArray(body.vacancyIds) ? body.vacancyIds : [];
     const chooser = String(body.chooser ?? '').replace(/\D/g, '');
-    if (!ids.length && !body.inbox && !body.resume && !chooser) {
-      throw new HttpError(400, { error: 'нужны vacancyIds, inbox: true, resume: true или chooser — id вакансии' });
+    if (!ids.length && !body.inbox && !body.resume && !chooser && !body.negotiations) {
+      throw new HttpError(400, { error: 'нужны vacancyIds, inbox: true, resume: true, negotiations: true или chooser — id вакансии' });
     }
     const started = await startJob('recon', async (progress) => ({
       vacancies: ids.length ? await reconVacancies(ids, progress) : null,
       inbox: body.inbox ? await reconInbox(progress) : null,
       resume: body.resume ? await reconResume(progress) : null,
       chooser: chooser ? await reconChooser(chooser, progress) : null,
+      negotiations: body.negotiations ? await readNegotiations({ maxPages: Number(body.maxPages) || 0 }, progress) : null,
     }));
     return { status: 202, body: { ok: true, job: { kind: started.kind, state: started.state } } };
   },
