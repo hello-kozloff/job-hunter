@@ -10,8 +10,9 @@
 W1 Collector (днём каждые 30 мин, ночью каждые 2 ч)  … → Parse vacancy → Update: status = detailed → Score job → W2
 W2 Score     (вызывает W1)     Pending: строки detailed (до 40, старые первыми)
                                 → Resume (docs/resume.md) → Build prompt
-                                → Claude? ─ да ─→ Claude ─┐
-                                           └ нет → Gemini ─┴→ Parse verdict
+                                → Provider ─ claude ─────→ Claude ─────┐
+                                           ├ claude-cli → Claude CLI ─┤  (Claude по подписке, docs/claude-cli.md)
+                                           └ иначе ─────→ Gemini ─────┴→ Parse verdict
                                 → Format card → Send card (кнопки) → Card sent → Save cards: status = waiting
              своя ветка от триггера (выполняется последней, даже если оценивать нечего):
                                 Summary → Send summary (сообщение о сборе, итог, тревоги) → Live report → Delete report

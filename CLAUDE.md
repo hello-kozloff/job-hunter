@@ -21,7 +21,7 @@
 - **Формат работы (с 06.10.2026, по просьбе пользователя «продолжи дальше сам»):** workflow собирает и разворачивает Claude, пользователь смотрит результат в UI (логин — в `.env`).
   - код Code-нод — `n8n/<workflow>/*.js` (единственный источник правды);
   - `scripts/build-workflows.mjs` генерирует JSON workflow в `n8n/workflows/`;
-  - `scripts/deploy.sh` импортирует их в n8n и публикует рабочие (`--paused` — без сбора, оценки и сводки); только с `develop` или `production`; сам деплой — `scripts/deploy.mjs` (Node, `scripts/lib/deploy.mjs`), им же пользуется мастер установки `scripts/install.mjs` (13.10.2026);
+  - `scripts/deploy.sh` импортирует их в n8n и публикует рабочие (`--paused` — без сбора, оценки и сводки); только с `develop` или `production`; сам деплой — `scripts/deploy.mjs` (Node, `scripts/lib/deploy.mjs`), им же пользуется мастер установки `scripts/install.mjs` (13.10.2026); с 19.10.2026 деплой сам добавляет недостающие колонки таблиц (`n8n-api.mjs migrate`) и поднимает Claude по подписке (`claude-cli`), если есть токен;
   - `scripts/n8n-api.mjs run <id>` запускает workflow и печатает сводку по нодам;
   - `docs/stages/stage-N.md` — описание устройства и ручная сборка (для понимания);
   - изменения — git flow: `feature/*` от `develop` → PR в `develop` → деплой → проверка → релиз в `production` (§14). **Коммиты, PR и ветки — только по-английски.**
@@ -42,6 +42,7 @@
 | n8n Cloud | ❌ не используем | Пользователь выбрал self-hosted: бесплатно, без лимита executions, домашний IP. Блокирует ли hh облачные IP — не проверяли, не нужно |
 | Кнопки Telegram на локальном n8n | ✅ ngrok + Telegram Trigger (перенесено на этап 3) | Контейнер ngrok в docker compose, бесплатный постоянный домен; наружу только `/webhook/*` с адресов Telegram, интерфейс n8n — только localhost |
 | Нейросеть для оценки | ✅ Gemini Flash-Lite, бесплатный тариф (07.10.2026) | Пользователь выбрал бесплатно; при исчерпании лимитов — переключение на Claude Haiku 4.5 кнопкой в боте (⚙️ → 🤖 Нейросеть, с 07.10.2026; нужен `ANTHROPIC_API_KEY`). В промпт уходит резюме целиком (бесплатный Gemini может учиться на запросах — пользователь согласен) |
+| **Claude по подписке (claude CLI)** | ✅ третий провайдер (19.10.2026, `docs/claude-cli.md`) | Пользователь: «добавить возможность использования claude cli за место gemini». Официальный `claude -p` со своей подпиской Pro в контейнере `claude-cli`, без API-ключа; оценка — Haiku 5.5, письма и резюме — Sonnet 5.5 (меняются в боте); кончился лимит или слетел вход — этот вызов делает Gemini тем же запросом; оценки не берут подписку, если окно лимита занято на 80% (лимит общий с работой в Claude Code) |
 
 Устаревшие артефакты из чата (не использовать): `01_collector.json` (на API hh), `explore_hh_bot.py` (юзербот).
 
@@ -185,6 +186,13 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
                  ⚠️ «общий раздел». 📤 Обновить на hh (итог анализа, Upgrade, панель, 💼): робот читает hh → разделы,
                  которые на hh другие, по одному [➡️ На hh] [⏭] [⬅️ Взять с hh в бота] → ✅ записать (RESUME_LIVE=1) →
                  сверка чтением; запись выключена — только 🧪 сухой прогон (формы hh, снимки в Telegram, без сохранения)
+[claude-cli]   Claude по подписке (19.10.2026, docs/claude-cli.md): Docker-сервис job-hunter-claude-cli — официальный claude -p
+                 (CLAUDE_CODE_VERSION, без инструментов, MCP и истории; токен CLAUDE_CODE_OAUTH_TOKEN из claude setup-token);
+                 HTTP API http://claude-cli:3000/v1/messages в форме Claude Messages API, сеть compose llm — только n8n, порта
+                 на хосте нет. W2/W5/W11/W13 при llm.provider = claude-cli: Switch «Provider» → нода «Claude CLI»; в теле —
+                 task, effort low, deadline_ms и запасной запрос Gemini; сбой (лимит, вход, бюджет оценок, очередь) — сервис
+                 шлёт его сам; ответ несёт provider и model (→ llm_model, letter_model). Проверка: docker compose exec
+                 claude-cli node src/ask.mjs check | state | simulate <исход> | reset
 [Страж]        healthchecks.io (OnCalendar = расписание сбора, grace = интервал днём + 20 мин; бот обновляет его через API
                  при смене расписания): W1 шлёт сигнал после поиска; нет сигнала → их бот пишет в Telegram
 ```
@@ -204,6 +212,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - этап 4: `letter`, `tg_letter_id` (сообщение с письмом — на него отвечают с правкой), `letter_notes` (пожелания к письмам через « | »), `applied_at`;
 - этап 5: `card_at` (когда W2 отправил карточку — от него считаются 3 дня);
 - 07.10.2026: `letter_lock` (защита от двойного ✅), `prompt_v` (версия промпта оценки: хеш правил без резюме — по нему теневой режим разбирается по версиям);
+- 19.10.2026 (Claude по подписке): `letter_model` — какая модель написала письмо (подпись в шапке письма; W5 «Letter sent»);
 - этап 6 (робот-отклик): `apply_state` ('' | queued | applying — очередь W9, статус не меняет), `apply_queued_at`, `apply_tries`, `apply_result`, `apply_letter` (attached | chat | none), `apply_note`, `apply_by` (robot | me | hh); 6.2 — `hh_state`, `hh_state_at`, `hh_chat_id`;
 - таблица `blacklist`: `company, comment`;
 - таблица `runs` — журнал сборов W1: `started_at, finished_at, kind` (schedule | catchup | bot | manual), `status` (running | ok | error), `found, uniq, fresh, rejected, scoring, pages, cards, error`;
@@ -231,7 +240,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - `./fixtures` → `/home/node/.n8n-files/fixtures`: файловые ноды n8n 2.x видят только `~/.n8n-files`;
 - резюме и образцы писем для промптов W2/W5 — в таблице `settings` (профиль, 13.10.2026); `./docs` в контейнер больше не монтируется;
 - сводка и страж: `NGROK_DOMAIN` (проверка туннеля снаружи), `HC_PING_URL` (сигнал healthchecks.io);
-- нейросеть: провайдер — настройка бота `llm.provider` (с 07.10.2026; `LLM_PROVIDER` больше не читается), `GEMINI_MODEL` (по умолчанию `gemini-3.5-flash-lite` — закреплена, чтобы оценки не менялись в теневом режиме), `CLAUDE_MODEL` (`claude-haiku-4-5`).
+- нейросеть: провайдер — настройка бота `llm.provider` (с 07.10.2026; `LLM_PROVIDER` больше не читается), `GEMINI_MODEL` (по умолчанию `gemini-3.5-flash-lite` — закреплена, чтобы оценки не менялись в теневом режиме), `CLAUDE_MODEL` (`claude-haiku-4-5`, Claude API); Claude по подписке (`llm.provider = claude-cli`, 19.10.2026) — сервис `claude-cli` (профиль compose `claude`, ставит `tunnel-env` при `CLAUDE_CODE_OAUTH_TOKEN`; сеть `llm`, у n8n — `default` и `llm`), модели — настройки бота `llm.cli_score` (Haiku 5.5) и `llm.cli_text` (Sonnet 5.5), `docs/claude-cli.md`.
 
 **Особенности n8n 2.x (проверено на 2.42.3):**
 - «Publish» вместо «Activate»; импорт workflow через CLI снимает публикацию со всех → `deploy.sh` после импорта публикует рабочие заново (W1, W2, W4, W5, W6, W7, W9, W11, W13; W3 — при туннеле; `--paused` — без W8/W6); CLI-публикацию запущенный n8n видит только после перезапуска (`deploy.sh` перезапускает сам);
@@ -329,6 +338,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 9. **Секреты.**
    - Токены и ключи в n8n — в Credentials (шифруются `N8N_ENCRYPTION_KEY`).
    - `.env` (ключ шифрования, chat_id, токен бота, логин/пароль владельца n8n) — права 600, в `.gitignore`; токен бота попадает в n8n через pipe (`deploy.sh`), на диск хоста кроме `.env` не пишется.
+   - Токен Claude по подписке (`CLAUDE_CODE_OAUTH_TOKEN`, 19.10.2026) — в `.env` и env контейнера `claude-cli` (там же ключ Gemini для запасного пути); дочерний `claude` получает белый список env. Получать `claude setup-token` в своём терминале, не через `!` в сессии Claude — токен не должен попасть в лог.
    - `docs/resume.md` и `docs/profile*.json` (профиль для `profile-import`) — в `.gitignore`.
    - Фикстуры hh тоже не в git: в JSON есть имена HR-менеджеров.
 10. **Другие сайты** → свой сборщик на каждый, выход в единую схему (п. 6).
@@ -347,6 +357,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 | **6. Робот-отклик** (6.2 — после «Установки для всех») | 🚀 под письмом → робот (Playwright, `applier/`) откликается сам; статусы откликов и чаты HR (`docs/stages/stage-6.md`). 6.0 ✅ (10.10.2026): сервис, вход, разведка, запись, сухой прогон; 6.1a ✅ (11.10.2026): 🚀 и W9 проверены вживую на фейковом роботе; 6.1b ✅ (12.10.2026): 3 живых отклика, письмо приложено, релиз v2026.10.12; дальше 6.2 — W10 Inbox | Отклик без ручных шагов, чаты HR в Telegram |
 | **Установка для всех** ✅ (13–14.10.2026, релиз v2026.10.14) | Мастер установки, резюме PDF в боте, любые профессии (`docs/onboarding.md`). Части: A ✅ профиль в `settings` вместо файлов (промпты владельца — до символа, `prompt_v` прежний) → B ✅ часовой пояс (W6 через W8) → C ✅ поиск и фильтр под любую профессию → D ✅ онбординг W11 → E ✅ мастер `scripts/install.mjs`, деплой на Node → F ✅ чистая установка рядом (14.10.2026, замечания исправлены в PR #67) → релиз v2026.10.14 ✅. Дальше — робот в мастере и вход в hh через бота (план утверждён 14.10.2026: R0 запись формы входа — ждёт владельца) | Чужой человек ставит одной командой, присылает PDF — и получает карточки под свою профессию |
 | **Рекомендации по резюме** ✅ (15–16.10.2026, релиз v2026.10.16) | ⚙️ → 💡: анализ ATS кнопками, Upgrade по просьбе, экспорт на hh роботом (`docs/recommendations.md`). Части: A ✅ общий код `llm.js`, `skills.js` (PR #77, байт в байт) → B ✅ W13: Upgrade, откат, файл, покрытие навыков → C ✅ анализ ATS → релиз ✅ v2026.10.15.2 → D экспорт: E0 ✅ разведка и запись редактора hh (15.10.2026) → разделы резюме S1 ✅ разметка, S2 ✅ чтение hh роботом, S3–S4 ✅ 💼/🧰 в боте → E2 ✅ 📤 выгрузка (сухой прогон) → E3 ✅ живая запись (15.10.2026) → релиз ✅ v2026.10.15.3 → 📤 без кнопки сухого прогона при включённой записи (PR #92) → релиз ✅ v2026.10.16 | Резюме под вакансии человека правится в боте, hh — как в боте |
+| **Claude по подписке** (19.10.2026, `docs/claude-cli.md`) | claude CLI вместо Gemini: 0 ✅ разведка → 1 ✅ сервис `claude-cli` (PR #108) → 2 ✅ провайдер в n8n, golden-тесты Gemini (PR #109) → 3 мастер `--no-tunnel` и документация → 4 проверка: чистая установка без кнопок, живой n8n (нужен токен владельца) → переключение `llm.provider` → релиз | Письма и оценки на Claude без API-ключа, лимит и сбои — тихо через Gemini |
 | 7. Веб-формы | LLM-сопоставление полей + Playwright | Меньше `needs_human` |
 | 8. Другие источники | Habr Карьера и др. | Больше вакансий |
 
@@ -363,6 +374,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 - В живом n8n: `node scripts/n8n-api.mjs run jobHunterW1Colle` (сводка по нодам), `node scripts/n8n-api.mjs rows vacancies 5`.
 - Проверка ветки поломки: временно импортировать W1 с битым URL под тем же id → run → вернуть `scripts/deploy.sh`.
 - Pin data: 10–15 реальных вакансий разных типов, включая «ловушки» (Angular под видом Frontend, React Native, .NET + React, «только из РФ»).
+- Claude по подписке (`docs/claude-cli.md`): `cd claude-cli && npm test` (разбор stream-json на фикстурах разведки, предохранитель, дорожки, запуск CLI с подменённым процессом, HTTP); `node --test scripts/test-llm.mjs` — golden-тела W2/W5/`llm.js` для Gemini и Claude API (байт в байт, обновлять только осознанно: `UPDATE_GOLDEN=1`), тела claude-cli, разбор ответов сервиса; на живой системе — `docker compose exec claude-cli node src/ask.mjs check | simulate limit | reset`.
 - Робот-отклик: `cd applier && npm test` (чистые функции на фикстурах и записи откликов), `node scripts/applier.mjs status | recon | record | apply <id> --letter-file f` (всегда сухой прогон, `dry: true`), `recon --resume` — разведка резюме на hh (часть D), `cv` — чтение резюме hh (только GET), `cv-dry <файл.json>` — сухой прогон записи резюме (формы hh, снимки, без сохранения); `applier/sim/run.sh` — живой сценарий на поддельном hh в контейнере без сети (26 сценариев, перед каждым изменением `apply.mjs`), `recon --chooser <id>` — окно отклика и выбор резюме (без отправки), `apply <id> --letter-file f --resume <хеш>` — сухой прогон с выбором резюме, `applier/sim/run.sh resume` — разведка, чтение и запись резюме (8 сценариев); предохранитель резюме `RESUME_LIVE` (0 — только сухой прогон) — в `.env`, через `scripts/deploy.sh --applier`; предохранитель `APPLY_LIVE` — в `.env`, меняется через `scripts/deploy.sh --applier`; шаги живого отклика — `docker compose logs -f applier`.
 - Тест веб-форм — на своих тестовых формах, не на работодателях.
 - Запуск: 3–5 откликов в день с подтверждением, потом больше.
@@ -379,6 +391,7 @@ https://hh.ru/search/vacancy?text=frontend OR NAME:(react OR next.js OR nextjs O
 
 - **Рекомендации по резюме (15.10.2026, `docs/recommendations.md`):** части B (Upgrade, откат, файл, покрытие навыков) и C (анализ ATS) проверены симулятором, на Gemini Flash-Lite и владельцем вживую (15.10.2026: «всё работает», анализ сохранил правки в резюме), релиз v2026.10.15.2. D, экспорт на hh: E0 сделан 15.10.2026 (`docs/recommendations.md` → «Итог E0»): резюме читается из InitialState страницы резюме, поля сохраняются по частям через формы `/resume/edit/<hash>/…`; **опыт работы — в профиле hh, общий для резюме** (правка опыта в скрытой копии на 3 минуты попала в основное резюме, владелец вернул); предохранитель робота не покрывает `resume-profile-front.hh.ru` — добавить до E2. Разделы резюме (план S1–S4 утверждён 15.10.2026): опыт работы — отдельный раздел, общий для всех резюме; S1–S4 и выгрузка на hh (📤: разделы по одному, сухой прогон со снимками, запись) развёрнуты и проверены владельцем; `RESUME_LIVE=1` с 15.10.2026, первая живая запись (описание Руб Икс) — совпала при сверке чтением, релиз v2026.10.15.3. При включённой записи кнопка сухого прогона убрана (PR #92, релиз v2026.10.16): новый итог 📤 вживую ещё не открывали.
 - **Установка для всех (13.10.2026, `docs/onboarding.md`):** части A–E сделаны и развёрнуты у владельца: профиль в `settings` (импорт `docs/profile.json`), часовой пояс (сводка W6 через W8: 14.10 пришла в 11:04 догоняющей — с 23:08 13.10 система стояла на паузе на время теста F; обычный запуск в 10:00 — проверить 15.10), поиск под любую профессию, онбординг W11 (⚙️ → 👤 Профиль), мастер `scripts/install.mjs`. F сделана 14.10.2026: чистая установка рядом на реальном резюме с hh (тестовый бот, ngrok владельца на время теста — твой бот был на паузе: туннель остановлен, вебхук снят, потом возвращён деплоем). Замечания (тишина на первом сборе, сводка затиралась, слишком широкий поиск, контакт в письме) исправлены в PR #67 — повторно вживую не прогонялись. Релиз v2026.10.14 (14.10.2026). Следом — робот в мастере и вход в hh через бота: план утверждён, R0 (запись формы входа в окне тестового робота `~/jh-test`, VNC `localhost:5911`) ждёт владельца; начатая ветка `feature/robot-login`.
+- **Claude по подписке (19.10.2026, `docs/claude-cli.md`):** сервис и провайдер влиты (PR #108, #109), мастер и документация — PR части 3. Ждёт владельца: `claude setup-token` в своём терминале → `CLAUDE_CODE_OAUTH_TOKEN` в `.env`; ещё проверить в claude.ai «Help improve Claude». Потом — проверка (чистая установка без кнопок, живой n8n: оценка, письмо, W11/W13, `simulate limit`) и переключение `llm.provider = claude-cli`, релиз.
 - **Сейчас:** пользователь жмёт кнопки на карточках (теневой режим, цель — 50 оценок). Наблюдение за фильтром этапа 2 — не режет ли лишнего (особенно «только из РФ», а с 07.10.2026 — «чужой стек» и «бэкенд» на новом поиске за сутки) и какие AI-вакансии приходят.
 - **Этап 6 (10.10.2026):** 6.0 сделан — робот вошёл в hh (сессия до 11.2027), разведка 10 вакансий и «Откликов», запись двух откликов пользователя (окно с письмом и «в один клик», `docs/stages/stage-6.md`). 6.1a сделан (11.10.2026): 🚀 и очередь W9 проверены вживую на фейковом роботе. 6.1b (11.10.2026): боевой сценарий написан (`docs/stages/stage-6.md` → 6.1b: окно с письмом; «в один клик» → «Приложить письмо» → письмо в сообщение отклика в чате; подтверждения «другая страна»; капча-картинка → Telegram, прочие → окно робота). 6.1b сделан (12.10.2026): `APPLY_LIVE=1`, 3 живых отклика по 🚀 — на hh всё верно (письмо приложено), релиз v2026.10.12. Дальше 6.2 — W10 Inbox. Открытый вопрос: есть ли у вакансий «в один клик» в меню «⋯» «Откликнуться с письмом» (тогда письмо всегда уходит вместе с откликом). Разбор теневого режима (60/50, 42%) — после этапа 6.
 - **W6 не догоняет после сна Mac (12.10.2026) — починено 13.10.2026** (часть B «Установки для всех»): сводку запускают «часы» W8 в 10:00 по местному, после сна — на первом тике. Было: с 08.10 по 12.10 утренней сводки не было ни разу — в 06:00 МСК (10:00 по Таиланду) Mac спал, а `misfirePolicy: coalesce` после пробуждения W6 не запустил (11.10 Mac проснулся в 10:25 — сводки нет). Вместе со сводкой не работала уборка W6 (устаревшие, закрытые на hh, чистка). Починка — следующая задача.
@@ -397,6 +410,7 @@ docs/letter-example.md              образцы писем (не в git; в n
 docs/profile.json                   профиль для profile-import / profile-export (не в git)
 docs/onboarding.md                  установка для всех: профиль в settings, пресеты, онбординг, мастер
 docs/recommendations.md             рекомендации по резюме: Upgrade, анализ, экспорт на hh (W13)
+docs/claude-cli.md                  Claude по подписке: сервис claude-cli, токен, модели, лимит и запасной Gemini, правила
 docs/resumes.md                     несколько резюме: данные, общее и своё, бот, этапы
 docs/stages/stage-N.md              устройство этапов и ручная сборка
 docs/git-flow.md                    ветки, PR, релизы, правила коммитов
@@ -431,13 +445,17 @@ scripts/deploy.sh                   обёртка deploy.mjs с проверк�
 scripts/lib/env.mjs                 .env: чтение, запись, имя проекта и порты (COMPOSE_PROJECT_NAME, N8N_PORT, …)
 scripts/n8n-api.mjs                 владелец, запуск/публикация workflow, строки таблиц, migrate, blacklist-seed,
                                     tunnel-env, requeue (бэкфилл в обработку), recheck (перепроверить отсеянных
-                                    правилом после его правки), api-key, resume-labels (подписи резюме у вакансий,
+                                    правилом после его правки), api-key, setting (одна настройка бота — мастер так ставит
+                                    нейросеть), resume-labels (подписи резюме у вакансий,
                                     собранных раньше); строки таблиц REST отдаёт по 250 — allRows листает
 scripts/credentials.mjs             JSON credentials Telegram / Gemini / Claude из .env (только через pipe)
 scripts/run-code-node.mjs           прогон Code-ноды на фикстурах без n8n (--ref, --env, --static)
+scripts/test-llm.mjs                golden-тела запросов к нейросети (test-llm.golden.json) и путь Claude по подписке
 scripts/hh-roles.mjs                справочник ролей hh из страницы поиска → n8n/shared/hh-roles.js
 scripts/applier.mjs                 CLI робота-отклика: status, login, recon (вакансии, отклики, резюме), cv (чтение резюме hh), record, apply (сухой), resume, shot
 applier/                            робот-отклик (этап 6): Dockerfile, src/ (server, browser, store, hh/, flows/), test/
+claude-cli/                         Claude по подписке: Dockerfile (claude CLI), src/ (server, handler, cli, stream, limits, lanes,
+                                    gemini, ask), test/ (фикстуры stream-json разведки 19.10.2026)
 scripts/lib/code.mjs                чтение кода Code-ноды с раскрытием // @include
 ngrok/policy.yml                    что туннель пускает внутрь: адреса Telegram, только /webhook/*
 fixtures/                           страницы hh (не в git, кроме synthetic-*); fixtures/applier — разведка и запись робота
@@ -468,7 +486,7 @@ Credentials: `jobHunterTgBot01` «Telegram bot», `jobHunterGemini1` «Gemini»,
 
 Решения пользователя (07.10.2026), подробно — `docs/git-flow.md`.
 
-- **Коммиты, PR и имена веток — только по-английски.** Формат — Conventional Commits: `feat(w1): collect every 30 min by day`. Типы: feat, fix, docs, refactor, perf, test, build, chore, revert. Scope — `w0`…`w10`, `applier`, `shared`, `schema`, `deploy`, `scripts`, `stage-N`. Нужен ручной шаг после деплоя (migrate, `.env`, действие пользователя) — `!` и `BREAKING CHANGE:`.
+- **Коммиты, PR и имена веток — только по-английски.** Формат — Conventional Commits: `feat(w1): collect every 30 min by day`. Типы: feat, fix, docs, refactor, perf, test, build, chore, revert. Scope — `w0`…`w10`, `applier`, `claude-cli`, `shared`, `schema`, `deploy`, `scripts`, `stage-N`. Нужен ручной шаг после деплоя (migrate, `.env`, действие пользователя) — `!` и `BREAKING CHANGE:`.
 - **Ветки:**
   - `production` — проверенное на живых запусках, точка отката;
   - `develop` — интеграция, ветка по умолчанию на GitHub, **с неё деплой**;

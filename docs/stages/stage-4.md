@@ -40,7 +40,7 @@ W3 Telegram  ✅ на карточке (письма ещё нет) ─┐
                 (отказ без записи: робот в работе, письмо ещё пишется, отклик отправлен, вакансия закрыта)
 
 W5 Letter    Called by W3 | Manual → Approved (✅ без письма)
-             → Jobs → Vacancy → Settings (профиль, стиль, образцы) → Build letter → Gemini | Claude → Parse letter
+             → Jobs → Vacancy → Settings (профиль, стиль, образцы) → Build letter → Gemini | Claude | Claude CLI → Parse letter
              → Format letter → Send letter (ответом на карточку, кнопки) → Letter sent → Save letter
              → Old letters → Delete old letter (прежнее письмо, ответ с пожеланием)
 ```

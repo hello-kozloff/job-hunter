@@ -23,6 +23,8 @@
 //                                                      следующий запуск W1 оценит их по текущим правилам
 //   node scripts/n8n-api.mjs profile-import <file.json> профиль и настройки бота в таблицу settings: JSON
 //                                                      { "имя настройки": значение } (docs/onboarding.md)
+//   node scripts/n8n-api.mjs setting <имя> <JSON>      одна настройка бота, значение — JSON (проверяет схема):
+//                                                      setting llm.provider '"claude-cli"' — так мастер ставит нейросеть
 //   node scripts/n8n-api.mjs profile-export [file.json] все строки settings в JSON того же вида (бэкап, перенос);
 //                                                      без файла — в stdout. Там резюме — файл с правами 600
 //   node scripts/n8n-api.mjs resume-labels [--dry] [--move <id,…>]  резюме больше одного: подписи «📄 Резюме» у
@@ -385,12 +387,9 @@ const { SETTINGS, validSetting, loadSettings, resumeList } = new Function(
   `${shared('settings.js')}\n${shared('resumes.js')}\nreturn { SETTINGS, validSetting, loadSettings, resumeList };`,
 )();
 
-// Профиль и настройки из JSON { "имя": значение } → upsert строк settings по name. Значения проверяются схемой:
-// хоть одно не проходит — не пишется ничего. Неизвестное этой версии имя пишется с предупреждением (код его
-// пропускает, пока не узнает)
-async function profileImport(file) {
-  if (!file) throw new Error('usage: profile-import <file.json>');
-  const values = JSON.parse(readFileSync(file, 'utf8'));
+// Настройки { "имя": значение } → upsert строк settings по name. Значения проверяются схемой: хоть одно не проходит —
+// не пишется ничего. Неизвестное этой версии имя пишется с предупреждением (код его пропускает, пока не узнает)
+async function writeSettings(values) {
   const bad = Object.entries(values).filter(([name, value]) => SETTINGS[name] && !validSetting(SETTINGS[name], value));
   if (bad.length) throw new Error(`Не проходят проверку: ${bad.map(([name]) => name).join(', ')} — ничего не записано`);
   const unknown = Object.keys(values).filter((name) => !SETTINGS[name]);
@@ -407,6 +406,19 @@ async function profileImport(file) {
   }
   console.log(`settings: записано ${Object.keys(values).length}: ${Object.keys(values).join(', ')}`);
   if (unknown.length) console.log(`⚠️  Этой версии кода неизвестны (пока не используются): ${unknown.join(', ')}`);
+}
+
+// Профиль и настройки из JSON-файла { "имя": значение } (docs/onboarding.md)
+async function profileImport(file) {
+  if (!file) throw new Error('usage: profile-import <file.json>');
+  await writeSettings(JSON.parse(readFileSync(file, 'utf8')));
+}
+
+// Одна настройка бота, значение — JSON: setting llm.provider '"claude-cli"'. Так мастер установки ставит нейросеть
+async function setting(name, json) {
+  if (!name || json === undefined) throw new Error(`usage: setting <имя> <значение JSON>, например: setting llm.provider '"claude-cli"'`);
+  if (!SETTINGS[name]) throw new Error(`Нет такой настройки: ${name}`);
+  await writeSettings({ [name]: JSON.parse(json) });
 }
 
 async function profileExport(file) {
@@ -485,12 +497,13 @@ const commands = {
   recheck,
   'api-key': apiKey,
   'profile-import': profileImport,
+  setting,
   'profile-export': profileExport,
   'resume-labels': resumeLabels,
 };
 if (!commands[command]) {
   console.error(
-    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> [node] | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate | blacklist-seed | tunnel-env | requeue <days> [--dry] | recheck <rule> [--dry] | api-key | profile-import <file.json> | profile-export [file.json] | resume-labels [--dry] [--move <id,…>]',
+    'usage: node scripts/n8n-api.mjs setup-owner <email> | run <id> [node] | publish <id> | unpublish <id> | executions <id> [limit] | rows <table> [limit] | migrate | blacklist-seed | tunnel-env | requeue <days> [--dry] | recheck <rule> [--dry] | api-key | profile-import <file.json> | setting <name> <json> | profile-export [file.json] | resume-labels [--dry] [--move <id,…>]',
   );
   process.exit(2);
 }
