@@ -56,3 +56,13 @@ test('paceCheck: битое состояние не ломает отклик', 
   assert.equal(paceCheck(undefined, limits, T0), null);
   assert.deepEqual(paceView(undefined, T0), { lastAttemptAt: null, nextAt: null, hour: 0 });
 });
+
+// Закрытый режим вакансии (20.10.2026): 403 + страница hh ForbiddenPage — закрыта, другой 403 — нет
+test('isForbiddenVacancy: 403 со страницей «Вам недоступна эта вакансия» — закрыта', async () => {
+  const { isForbiddenVacancy } = await import('../src/hh/state.mjs');
+  const page = '<script>window.globalVars = {"lang": "RU", "luxPageName": "ForbiddenPage", "pageName": "vacancy"}</script>';
+  assert.equal(isForbiddenVacancy(403, page), true);
+  assert.equal(isForbiddenVacancy(200, page), false);
+  assert.equal(isForbiddenVacancy(403, '<html>Access denied</html>'), false);
+  assert.equal(isForbiddenVacancy(403, ''), false);
+});

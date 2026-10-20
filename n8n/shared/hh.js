@@ -13,6 +13,10 @@ function decodeEntities(s) {
   });
 }
 
+// Вакансия в закрытом режиме (20.10.2026): 403 и страница hh ForbiddenPage («Вам недоступна эта вакансия») — для
+// соискателя закрыта, как архивная. Тот же признак — у робота (applier/src/hh/state.mjs → isForbiddenVacancy)
+const forbiddenVacancy = (res) => res.statusCode === 403 && /"luxPageName":\s*"ForbiddenPage"/.test(String(res.data ?? res.body ?? ''));
+
 // Ответ HTTP Request «Vacancy page» → { v: vacancyFull.vacancy, test } или { error, statusCode }
 function parsePage(res) {
   const html = String(res.data ?? res.body ?? '');
