@@ -84,8 +84,8 @@ const SETTINGS = {
   // лимит живых откликов в «день» робота (с 09:00 по местному). Предохранитель APPLY_LIVE — в .env, не здесь
   'apply.enabled': { default: false, options: [false, true] },
   'apply.paused': { default: false, options: [false, true] },
-  // 20.10.2026 (автоотклик, решение пользователя «как я руками»): 80 в день, было 25
-  'apply.daily_limit': { default: 80, options: [25, 40, 60, 80, 100] },
+  // 20.10.2026 (автоотклик, решение пользователя «как я руками»): 80 в день, было 25; 10 — первый запуск под присмотром
+  'apply.daily_limit': { default: 80, options: [10, 25, 40, 60, 80, 100] },
   // Темп всех откликов робота — пауза между ними и лимит часа (n8n/shared/robot.js → PACE; держит сам робот)
   'apply.pace': { default: 'human', options: ['human', 'normal', 'careful'] },
   // Автоотклик (6.1c, 20.10.2026): робот сам берёт ✅ и карточки с apply нейросети, пишет письмо и откликается
