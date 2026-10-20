@@ -1,13 +1,13 @@
 // W7 · Render — панель меню бота: список вакансий, карточка, статистика или приветствие с кнопками меню.
 // Нода: Code, режим «Run Once for All Items».
-// Вход: «Job» — что показать (view = list | open | stats | start); «Rows» — вся таблица vacancies;
+// Вход: «Job» — что показать (view = list | open | stats | start | settings | auto); «Rows» — вся таблица vacancies;
 //       $input — «Runs»: последние записи журнала сборов runs (для статистики).
 // Выход: { route, view, layout, edit, chatId, messageId, text, b, deleteIds, tab, page }
 //   route — выход «Layout» (Switch): раскладка × отправить новое сообщение (чётный) / править панель (нечётный),
 //           10 — приветствие с кнопками под полем ввода;
 //   b — подписи и callback_data кнопок: раскладки фиксированные (Telegram-нода не умеет менять число кнопок);
 //   deleteIds — что удалить после отправки: нажатие пользователя и прошлую панель (одна живая панель в чате).
-// Static data (global): panel = { messageId, view, id, tab, page } — текущая панель: что на ней (list | open | stats,
+// Static data (global): panel = { messageId, view, id, tab, page } — текущая панель: что на ней (list | open | stats | auto,
 //                       id — открытая вакансия) и вкладка, куда вернут «⬅️ К списку» и «📋 К вакансиям»;
 //                       greetingId — приветствие (при новом /start старое удаляется).
 
@@ -24,6 +24,7 @@
 // @include n8n/shared/search.js
 // @include n8n/shared/schedule.js
 // @include n8n/shared/robot.js
+// @include n8n/shared/auto.js
 
 const job = $('Job').first().json;
 const rows = $('Rows')
@@ -61,14 +62,16 @@ const LAYOUTS = [
   'set_apply',
   'set_rules_generic',
   'set_llm_cli',
+  'auto',
 ];
 // Выходы «Layout» после раскладок: приветствие, вопрос ⚙️ со списком (ForceReply)
 const ROUTE_START = LAYOUTS.length * 2;
 const ROUTE_PROMPT = LAYOUTS.length * 2 + 1;
 const chatId = String(job.chatId || $env.TG_CHAT_ID);
-// sync — после «📨 Отправил» / «↩️ Отменить» под письмом (W3 «Sync job»): перерисовать панель,
-// только если на ней открыта эта вакансия — иначе на ней нечего обновлять
-if (job.view === 'sync' && !(panel.view === 'open' && Number(panel.id) === Number(job.id) && panel.messageId)) {
+// sync — после «📨 Отправил» / «↩️ Отменить» под письмом (W3 «Sync job») и после каждого отклика робота (W9): перерисовать
+// панель, только если на ней открыта эта вакансия или автоотклик (журнал, 6.1c) — иначе на ней нечего обновлять
+const syncAuto = job.view === 'sync' && panel.view === 'auto';
+if (job.view === 'sync' && !(panel.messageId && (syncAuto || (panel.view === 'open' && Number(panel.id) === Number(job.id))))) {
   return [];
 }
 // Кнопка в панели, перерисовка после решения, sync — правим панель; кнопка меню, /v…, «📋 К вакансиям» — новая.
@@ -298,6 +301,8 @@ function statsView() {
 
 // @include n8n/w7-menu/settings-view.js
 
+// @include n8n/w7-menu/auto-view.js
+
 // ---------- Приветствие ----------
 
 const GREETING = [
@@ -306,6 +311,7 @@ const GREETING = [
   `${MENU.list} — база по вкладкам: ⏳ ждут решения · ✅ откликнусь и 🤔 · 📨 отправлено · ❌ мимо · 🚫 отсеяно фильтром · 📋 все. ` +
     'Команда вида <code>/v169</code> в строке открывает карточку — решение можно принять прямо там.',
   `${MENU.stats} — когда был и будет сбор, сколько вакансий рассмотрено.`,
+  `${MENU.auto} — робот сам откликается на ✅ и карточки с apply нейросети: запуск, остановка, лимиты и журнал откликов.`,
   `${MENU.settings} — расписание сбора, пауза и «собрать сейчас».`,
   '',
   'Новые вакансии по-прежнему приходят карточками.',
@@ -360,7 +366,9 @@ if (job.view === 'settings' && SETTING_PROMPTS[job.ask]) {
   ];
 }
 
-const view = ['open', 'sync'].includes(job.view)
+const view = job.view === 'auto' || syncAuto
+  ? autoView()
+  : ['open', 'sync'].includes(job.view)
   ? openView(Number(job.id))
   : job.view === 'settings'
     ? settingsView(job.section)

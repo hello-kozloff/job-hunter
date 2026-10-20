@@ -45,19 +45,33 @@ const robotDayStart = (now = Date.now(), tz = TZ) => localDayStart(now, tz, 9);
 const robotToday = (rows, now = Date.now()) =>
   rows.filter((r) => r.apply_by === 'robot' && Date.parse(r.applied_at) >= robotDayStart(now)).length;
 
+// Темп всех откликов робота (6.1c, 20.10.2026; по умолчанию — «как руками», решение пользователя): пауза между
+// попытками [min, max] секунд и откликов в час. W9 шлёт его в POST /apply, держит сам робот (applier/src/pace.mjs)
+const PACE = {
+  human: { name: 'как руками', min: 20, max: 60, hour: 30 },
+  normal: { name: 'обычный', min: 45, max: 120, hour: 15 },
+  careful: { name: 'осторожный', min: 120, max: 300, hour: 8 },
+};
+const robotPace = (s) => PACE[s['apply.pace']] ?? PACE.human;
+// '20–60 с', '2–5 мин'
+const paceGap = (p) => (p.min >= 120 ? `${p.min / 60}–${p.max / 60} мин` : `${p.min}–${p.max} с`);
+
 // Как ушло письмо — в строку «🚀 Отправлено»
 const LETTER_HOW = { attached: ' · ✉️ письмо приложено', chat: ' · 💬 письмо — в чате отклика', none: ' · ⚠️ без письма' };
 
 // Строка робота в сообщении с письмом: очередь, итог, пометка. r — строка вакансии
 // (+ robot_wait — чего ждёт робот: «капчу hh», «вход в hh»…)
 function robotLine(r) {
+  // Автоотклик (6.1c): вакансию в очередь поставил робот сам, не 🚀
+  const auto = r.apply_mode === 'auto';
   if (r.apply_state === 'queued' || r.apply_state === 'applying') {
-    return r.robot_wait ? `⏸ Робот ждёт: ${esc(r.robot_wait)}` : '⏳ Робот откликается…';
+    if (r.robot_wait) return `⏸ Робот ждёт: ${esc(r.robot_wait)}`;
+    return auto ? '⏳ 🤖 Автоотклик: робот откликнется сам — ⛔ чтобы не откликаться' : '⏳ Робот откликается…';
   }
   if (r.status === 'applied' && r.apply_by === 'robot') {
     // Несколько резюме: каким резюме ушёл отклик (робот сверяет это на hh, иначе — пометка в apply_note)
     const resume = r.resume_name ? ` резюме «${esc(r.resume_name)}»` : '';
-    return `🚀 Отправлено ${localDate(r.applied_at)} ${localTime(r.applied_at)}${resume}${LETTER_HOW[r.apply_letter] ?? ''}${
+    return `🚀 Отправлено${auto ? ' 🤖 автооткликом' : ''} ${localDate(r.applied_at)} ${localTime(r.applied_at)}${resume}${LETTER_HOW[r.apply_letter] ?? ''}${
       r.apply_note ? `\n⚠️ hh: ${esc(r.apply_note)}` : ''
     }`;
   }
@@ -73,6 +87,8 @@ function robotLine(r) {
     dry_run: `🧪 Сухой прогон (APPLY_LIVE=0), отклик не отправлен${note}`,
     disabled: '⏸ Робот выключен (⚙️ → 🚀 Робот) — откликнитесь сами',
     no_resume: `📄 Робот не откликается: ${esc(r.apply_note || 'резюме не связано с резюме на hh')}`,
+    // ⛔ (6.1c): автоотклик эту вакансию больше не возьмёт, откликнуться можно 🚀 или вручную
+    stopped: '⛔ Убрал из очереди робота — автоотклик её не возьмёт',
   };
   return lines[r.apply_result] ?? '';
 }

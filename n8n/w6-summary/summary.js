@@ -123,15 +123,21 @@ if (errors.length)
 if (!tunnelOk) problems.push(`туннель не отвечает (${tunnelCode ?? 'нет ответа'}) — кнопки не работают`);
 if (pendingScore) problems.push(`ждут оценки нейросетью: ${pendingScore}`);
 
-// Робот-отклик (этап 6): отклики за сутки и его здоровье — если он включён в ⚙️
+// Робот-отклик (этап 6): отклики за сутки и его здоровье — если он включён в ⚙️. Автоотклик (6.1c): сколько из них
+// робот взял сам (🤖), сколько ты убрал из очереди (⛔) и к скольким письмо не вышло. Время попытки — apply_at
+// (у строк до 20.10.2026 его нет — по updatedAt)
 const robotOn = settings['apply.enabled'];
+const tried = (r) => (at(r.apply_at) || at(r.updatedAt)) >= since;
 const robotRows = rows.filter((r) => r.apply_by === 'robot' && at(r.applied_at) >= since);
-const robotManual = count(rows, (r) => ['test', 'external', 'hidden'].includes(r.apply_result) && at(r.updatedAt) >= since);
-const robotErrors = count(rows, (r) => r.apply_result === 'error' && r.status === 'approved' && at(r.updatedAt) >= since);
+const robotAuto = count(robotRows, (r) => r.apply_mode === 'auto');
+const robotManual = count(rows, (r) => ['test', 'external', 'hidden'].includes(r.apply_result) && tried(r));
+const robotErrors = count(rows, (r) => r.apply_result === 'error' && r.status === 'approved' && tried(r));
+const robotStopped = count(rows, (r) => r.apply_result === 'stopped' && at(r.apply_at) >= since);
+const robotNoLetter = count(rows, (r) => r.apply_result === 'no_letter' && at(r.apply_at) >= since);
 const robotQueue = count(rows, (r) => r.apply_state);
 const robotLineText =
   robotOn || robotRows.length || robotQueue
-    ? `🚀 Робот: ${robotRows.length}${robotRows.length ? ` (✉️ ${count(robotRows, (r) => r.apply_letter === 'attached')} · 💬 ${count(robotRows, (r) => r.apply_letter === 'chat')})` : ''}${robotManual ? ` · 🧩 вручную ${robotManual}` : ''}${robotErrors ? ` · ⚠️ ${robotErrors}` : ''}${robotQueue ? ` · в очереди ${robotQueue}` : ''}${settings['apply.paused'] ? ' · ⏸ пауза' : ''}`
+    ? `🚀 Робот: ${robotRows.length}${robotRows.length ? ` (${robotAuto ? `🤖 авто ${robotAuto} · ` : ''}✉️ ${count(robotRows, (r) => r.apply_letter === 'attached')} · 💬 ${count(robotRows, (r) => r.apply_letter === 'chat')})` : ''}${robotManual ? ` · 🧩 вручную ${robotManual}` : ''}${robotErrors ? ` · ⚠️ ${robotErrors}` : ''}${robotStopped ? ` · ⛔ убрал ${robotStopped}` : ''}${robotNoLetter ? ` · ✉️ письмо не вышло ${robotNoLetter}` : ''}${robotQueue ? ` · в очереди ${robotQueue}` : ''}${settings['apply.paused'] ? ' · ⏸ пауза' : ''}${settings['apply.enabled'] && settings['apply.auto'] ? ' · 🤖 автоотклик вкл' : ''}`
     : '';
 if (robotOn) {
   const h = $('Robot health').first()?.json ?? {};

@@ -14,10 +14,12 @@ const ranNode = (name) => {
     return []; // нода в этом запуске не выполнялась
   }
 };
-const settingChange = ranNode('Setting change')[0];
+// Изменения этого нажатия: обычно одно, у ▶️ автоотклика — несколько (apply.auto, apply.enabled, …)
+const settingChanges = ranNode('Setting change');
+const settingChange = settingChanges[0];
 const settings = {
   ...loadSettings($('Settings').all()),
-  ...(settingChange ? { [settingChange.name]: settingChange.value } : {}),
+  ...Object.fromEntries(settingChanges.map((c) => [c.name, c.value])),
 };
 const collectSchedule = scheduleFrom(settings);
 // Чёрный список: строки таблицы blacklist, без только что убранной («Delete ban» выполнилась раньше)
@@ -74,7 +76,7 @@ function settingsRootView(note) {
     `🔎 <b>Поиск</b>: ${periodText(settings['search.period'])} · везде — ${settings['search.anywhere'].length} сл., в названии — ${settings['search.in_name'].length}`,
     `🧹 <b>Фильтр</b>: правил ${rulesOn().length} из ${presetRules().length} · отклики — ${responsesText(settings['filter.max_responses'])} · стоп-слов ${settings['filter.stop_words'].length} · ЧС ${blacklist.length}`,
     `🤖 <b>Нейросеть</b>: ${providerText(settings['llm.provider'])} · теневой режим ${settings['llm.shadow'] ? 'вкл' : 'выкл'} · спорных случаев ${settings['llm.cases'].length}`,
-    `🚀 <b>Робот</b>: ${settings['apply.enabled'] ? 'вкл' : 'выкл'}${settings['apply.paused'] ? ' · ⏸ пауза' : ''} · сегодня ${robotToday(rows, now)}/${settings['apply.daily_limit']} · ${robotState().short}`,
+    `🚀 <b>Робот</b>: ${settings['apply.enabled'] ? 'вкл' : 'выкл'}${settings['apply.paused'] ? ' · ⏸ пауза' : ''}${autoOn(settings) ? ' · 🤖 автоотклик' : ''} · сегодня ${robotToday(rows, now)}/${settings['apply.daily_limit']} · ${robotState().short}`,
   ].filter((line) => line !== null);
   if (note) lines.push('', note);
   return {
@@ -298,6 +300,7 @@ function settingsApplyView() {
   const on = settings['apply.enabled'];
   const paused = settings['apply.paused'];
   const limit = settings['apply.daily_limit'];
+  const pace = robotPace(settings);
   const lines = [
     '🚀 <b>Робот-отклик</b>',
     '',
@@ -306,6 +309,8 @@ function settingsApplyView() {
       : 'Выключен: кнопки 🚀 под письмами нет, откликаешься сам',
     `Состояние: ${robotState().long}`,
     `Сегодня: ${robotToday(rows, now)} из ${limit} (день — с 09:00 по местному) · в очереди: ${count(rows, (r) => r.apply_state)}`,
+    `Темп: ${pace.name} — пауза ${paceGap(pace)} между откликами, не больше ${pace.hour} в час`,
+    `🤖 Автоотклик: ${autoOn(settings) ? 'вкл' : 'выкл'} · хвост: ${settings['apply.backlog'] ? 'карточки за 3 дня' : 'только новые после включения'} — запуск и журнал: кнопка «${MENU.auto}»`,
     '',
     `Окно робота — VNC ${VNC_URL} (на Mac — «Общий экран», режим «Управление»; на Windows и Linux — любой VNC-клиент). Капча и вход в hh — там; потом ▶️ или /go.`,
   ];
@@ -318,6 +323,8 @@ function settingsApplyView() {
       enabled: { text: `Робот: ${on ? 'вкл' : 'выкл'} ▸`, cb: 'sc:apply.enabled' },
       paused: { text: paused ? '▶️ Снять паузу' : '⏸ Пауза', cb: 'sc:apply.paused' },
       limit: { text: `Лимит: ${limit} в день ▸`, cb: 'sc:apply.daily_limit' },
+      pace: { text: `Темп: ${pace.name} ▸`, cb: 'sc:apply.pace' },
+      backlog: { text: `Хвост: ${settings['apply.backlog'] ? 'за 3 дня' : 'только новые'} ▸`, cb: 'sc:apply.backlog' },
     },
   };
 }
