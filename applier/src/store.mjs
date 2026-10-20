@@ -1,13 +1,15 @@
-// Состояние робота, которое должно пережить рестарт контейнера: блок (капча, выход из hh, лимит hh, сбои подряд)
-// и счётчики «дня» робота. Файл /data/state.json, запись атомарная. Очередь и статусы вакансий — в n8n (W9).
+// Состояние робота, которое должно пережить рестарт контейнера: блок (капча, выход из hh, лимит hh, сбои подряд),
+// счётчики «дня» робота и темп живых откликов (pace.mjs). Файл /data/state.json, запись атомарная. Очередь и статусы
+// вакансий — в n8n (W9).
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { config } from './config.mjs';
 import { log } from './log.mjs';
+import { EMPTY_PACE, paceAfter, paceView } from './pace.mjs';
 import { robotDayStart, writeJsonAtomic } from './util.mjs';
 
 const PATH = join(config.dataDir, 'state.json');
-const EMPTY = { blocked: null, day: null, lastApplyAt: null, lastInboxAt: null, notices: {} };
+const EMPTY = { blocked: null, day: null, lastApplyAt: null, lastInboxAt: null, notices: {}, pace: EMPTY_PACE };
 let state = null;
 
 function load() {
@@ -108,6 +110,16 @@ export const store = {
     s.notices[key] = new Date().toISOString();
     save();
     return true;
+  },
+  // Темп: живая попытка отклика закончилась (applied — отклик ушёл) → пауза до следующей и счёт часа
+  markAttempt({ applied, limits }) {
+    const s = load();
+    s.pace = paceAfter(s.pace, { applied, limits });
+    save();
+    return paceView(s.pace);
+  },
+  get pace() {
+    return load().pace ?? EMPTY_PACE;
   },
   markInbox() {
     load().lastInboxAt = new Date().toISOString();
