@@ -41,7 +41,7 @@
 | `llm.cases` | Vue без React: maybe, fullstack: maybe, AI на JS/TS: apply, React Native: skip (подписи по умолчанию прежние: у generic без своего списка они идут в промпт; с 19.10.2026 «fullstack» — бэкенд не на Node/Python, «AI на JS/TS» — AI на любом языке, новые подписи «fullstack не на Node/Python», «AI-разработка» узнаются так же) | список «случай: решение» (✏️) | W2 «Build prompt» |
 | `apply.enabled` | false | false · true | W5: письмо с [🚀 Откликнуться роботом]; W9: 🚀 при выключенном — тост и письмо без 🚀; выключили — очередь назад в ✅ (W7 «Robot kick» → W9 `dequeue`) |
 | `apply.paused` | false | false · true | W9: очередь копится, робот не отправляет; сняли паузу — W9 `tick` |
-| `apply.daily_limit` | 80 (до 20.10.2026 — 25) | 10 · 25 · 40 · 60 · 80 · 100 | W9 «Gate» и «Feed»: живых откликов робота в «день» (с 09:00 по местному); сверху — потолок робота `APPLIER_DAILY_CAP=100` |
+| `apply.daily_limit` | 80 (до 20.10.2026 — 25) | 10 · 25 · 30 · 40 · 60 · 80 · 100 | W9 «Gate» и «Feed»: живых откликов робота в «день» (с 09:00 по местному); сверху — потолок робота `APPLIER_DAILY_CAP=100` |
 | `apply.pace` | human | human (как руками: пауза 20–60 с, ≤ 30 в час) · normal (45–120 с, ≤ 15) · careful (2–5 мин, ≤ 8) | темп всех откликов робота (6.1c): W9 шлёт его в POST /apply, держит робот (`applier/src/pace.mjs`); сверху — `APPLIER_MIN_GAP=15`, `APPLIER_HOURLY_CAP=40` |
 | `apply.auto` | false | false · true | автоотклик (6.1c): W9 «Feed» сам берёт ✅ и карточки с apply нейросети; включает и выключает панель «🤖 Автоотклик» (`au:on` / `au:off`); выключили — его очередь назад в ✅ (W9 `autostop`) |
 | `apply.auto_since` | пусто | время ISO; пишет ▶️ Запустить | панель 🤖: «работает с …»; хвост выключен — карточки только после этой метки |
