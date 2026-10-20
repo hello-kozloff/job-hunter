@@ -82,6 +82,12 @@ async function captchaBlock(page, kind, tag) {
   return name;
 }
 
+// Капча в окне отклика после «Откликнуться» (блок smart): решает человек в окне робота — и его «Отправить» уходит
+// вместе с откликом (POST …/vacancy_response/popup). Предохранитель после такой попытки оставляет открытым только
+// отклик (20.10.2026: иначе он рвал ответ человека и hh писал «не удалось откликнуться»); закрывает его ▶️
+// (server.mjs → POST /resume) или следующая попытка (guardReset в начале applyFlow)
+let handOver = false;
+
 async function closeExtraPages(page) {
   for (const p of page.context().pages()) if (p !== page) await p.close().catch(() => {});
 }
@@ -241,6 +247,11 @@ export async function applyFlow({ vacancyId, letter = '', dry = false, resume = 
   } finally {
     net.stop();
     guardReset();
+    if (handOver) {
+      handOver = false;
+      guardAllow('respond');
+      log('guard.handover', { vacancyId: id, names: ['respond'] });
+    }
     await closeExtraPages(page);
   }
 }
@@ -293,6 +304,8 @@ async function liveApply({ page, id, letter, facts, prediction, choice, net, ste
         await closeExtraPages(page);
         return done('external', { note: 'отклик на сайте работодателя' });
       case 'captcha':
+        // Окно отклика с письмом остаётся на экране: человек решит капчу и отправит отклик сам
+        handOver = true;
         return done('captcha', { shot: await captchaBlock(page, screen.captcha, `captcha-${id}`) });
       case 'confirm':
         // «Вакансия в другой стране», «Скорее всего, будет отказ», «Разрешите работодателям из … видеть профиль» —

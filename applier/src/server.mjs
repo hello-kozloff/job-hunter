@@ -39,6 +39,7 @@ import {
   SHOT_NAME,
   backupSession,
   browserStatus,
+  guardReset,
   cookies,
   ensure,
   launchedHoursAgo,
@@ -210,6 +211,8 @@ const routes = {
       // «hh не принял отклик» (спам, правила): человек посмотрел аккаунт и нажал ▶️
       if (blocked?.kind === 'blocked') store.unblock('аккаунт проверен');
       if (!store.blocked) store.resetStreak();
+      // Человек решил капчу в окне отклика и отправил отклик (apply.mjs → handOver) — отклик снова закрыт
+      if (!store.blocked) guardReset();
       return { ok: true, loggedIn, blocked: store.blocked };
     }),
 
