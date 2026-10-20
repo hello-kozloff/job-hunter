@@ -43,3 +43,17 @@ test('ждут оценки: по времени, когда строка ста
   assert.doesNotMatch(await summary([old(iso(now - 5 * 60 * 1000))]), /ждут оценки нейросетью/, 'строка из очереди только что стала detailed');
   assert.match(await summary([old(iso(now - 2 * HOUR))]), /ждут оценки нейросетью: 1/);
 });
+
+test('W6 Archive status: 403 со страницей «Вам недоступна эта вакансия» — закрыта, другой 403 — нет', async () => {
+  const check = [{ id: 1, status: 'waiting', title: 'А', company: 'К', url: 'https://hh.ru', tg_message_id: 5 }, { id: 2, status: 'waiting', title: 'Б', company: 'К', url: 'https://hh.ru', tg_message_id: 6 }];
+  const out = await runNode('n8n/w6-summary/archive-status.js', {
+    input: [
+      { statusCode: 403, data: '<script>{"luxPageName": "ForbiddenPage"}</script>' },
+      { statusCode: 403, data: '<html>qrator</html>' },
+    ],
+    nodes: { Plan: { check } },
+    env: { USER_TZ: 'Asia/Bangkok' },
+  });
+  assert.deepEqual(out.map((o) => o.id), [1]);
+  assert.match(out[0].cardText, /🔒/);
+});

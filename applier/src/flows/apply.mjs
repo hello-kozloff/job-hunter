@@ -21,7 +21,7 @@ import { ensure, guardAllow, guardReset, setGuard, shot, shotOf } from '../brows
 import { log } from '../log.mjs';
 import { store } from '../store.mjs';
 import { CHAT_FRAME, HH_PAGE, SEL, TEXT, resumeOptionSel, vacancyUrl } from '../hh/selectors.mjs';
-import { GROUP, initialState, isCaptchaPage, isLoginUrl, resumeChoice, vacancyFacts, vacancyResumes } from '../hh/state.mjs';
+import { GROUP, initialState, isCaptchaPage, isForbiddenVacancy, isLoginUrl, resumeChoice, vacancyFacts, vacancyResumes } from '../hh/state.mjs';
 import { chatResult, letterResult, respondResult, sameText, screenText } from '../hh/xhr.mjs';
 import { pause, sleep } from '../util.mjs';
 import {
@@ -161,6 +161,7 @@ export async function applyFlow({ vacancyId, letter = '', dry = false, resume = 
   const facts = vacancyFacts(state, id);
   step('facts', { loggedIn: facts.loggedIn, applied: facts.applied, tests: facts.hasTests, archived: facts.archived });
 
+  if (!facts.found && isForbiddenVacancy(status, html)) return done('archived', { note: 'вакансия в закрытом режиме — соискателям недоступна' });
   if (!facts.found) return done(status === 404 ? 'archived' : 'error', { note: `вакансии нет на hh (HTTP ${status})` });
   if (!facts.loggedIn) {
     store.block('login');

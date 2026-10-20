@@ -25,6 +25,11 @@ export function initialState(html) {
   }
 }
 
+// Вакансия в закрытом режиме (20.10.2026): hh отдаёт 403 и свою страницу «Вам недоступна эта вакансия. Войдите как
+// пользователь, у которого есть доступ на просмотр…» — luxPageName ForbiddenPage (не зависит от языка сайта). Для
+// соискателя она закрыта, как архивная. Другой 403 (антибот, сбой) — не она
+export const isForbiddenVacancy = (status, html) => status === 403 && /"luxPageName":\s*"ForbiddenPage"/.test(String(html ?? ''));
+
 // Страница капчи — только по структуре: слово «captcha» встречается и на обычных страницах (CLAUDE.md §8.1)
 export function isCaptchaPage(url, html) {
   if (/\/account\/captcha/.test(String(url ?? ''))) return true;

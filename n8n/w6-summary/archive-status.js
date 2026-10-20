@@ -1,7 +1,8 @@
 // W6 · Archive status — какие вакансии из хвостов закрылись на hh.
 // Нода: Code, режим «Run Once for All Items».
 // Вход: ответы «Vacancy page» по порядку списка check из «Plan».
-// Закрыта: страница отдаёт 404/410 (вакансию удалили) или в ней status.archived / closedForApplicants.
+// Закрыта: страница отдаёт 404/410 (вакансию удалили), 403 со страницей «Вам недоступна эта вакансия» (закрытый режим,
+// 20.10.2026) или в ней status.archived / closedForApplicants.
 // Не ответила, капча и т. п. — не трогаем, проверим завтра.
 // Выход: только закрытые { id, tg_message_id, tg_letter_id, cardText, letterText } → карточка и письмо без кнопок.
 
@@ -16,7 +17,7 @@ const responses = $input.all().map((i) => i.json);
 
 return candidates.flatMap((r, i) => {
   const res = responses[i] ?? {};
-  let closed = res.statusCode === 404 || res.statusCode === 410;
+  let closed = res.statusCode === 404 || res.statusCode === 410 || forbiddenVacancy(res);
   if (!closed && res.statusCode === 200) {
     const page = parsePage(res);
     closed = Boolean(page.v && (page.v.status?.archived || page.v.closedForApplicants));
