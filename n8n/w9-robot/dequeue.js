@@ -22,7 +22,8 @@ return $input
       id: r.id,
       chatId: String($env.TG_CHAT_ID),
       messageId: r.tg_letter_id,
-      layout: autostop ? 'robot' : 'manual',
+      // Письма автоотклика в чате нет (6.1c) — перерисовывать нечего
+      layout: !r.tg_letter_id ? '' : autostop ? 'robot' : 'manual',
       result,
       url: r.url,
       apply_url: r.apply_url,

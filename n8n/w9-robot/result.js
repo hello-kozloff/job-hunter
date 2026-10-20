@@ -102,6 +102,11 @@ const rowOut = {
 };
 if (group === 'done' || group === 'closed') card = { messageId: row.tg_message_id, text: cardText(next) };
 // Темп (6.1c): робот сказал, когда можно следующий; больше минуты — ждём расписания, а не держим запуск
+// Автоотклик (6.1c): письма в чате нет — ни правки письма, ни скриншота ответом на него; исход — в журнале панели 🤖
+if (!row.tg_letter_id) {
+  layout = '';
+  shot = '';
+}
 const paceAt = Date.parse(body.pace?.nextAt ?? body.retryAt ?? '') || 0;
 const delay = Math.max(0, Math.ceil((paceAt - Date.now()) / 1000));
 if (delay > 60) more = false;
