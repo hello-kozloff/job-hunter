@@ -113,8 +113,9 @@ export async function deploy({ paused = false, applier = false } = {}) {
   }
 
   // Схема таблиц (n8n/schema.mjs): migrate только добавляет недостающее — повторный запуск ничего не меняет. Нужен вход
-  // владельца n8n (N8N_OWNER_* в .env пишет setup-owner); без него — подсказка, как сделать руками
-  if (env.N8N_OWNER_PASSWORD) node('scripts/n8n-api.mjs', ['migrate']);
+  // владельца n8n (N8N_OWNER_* в .env пишет setup-owner); без него — подсказка, как сделать руками. Сразу после
+  // перезапуска n8n /healthz уже отвечает, а REST ещё нет («Cannot POST /rest/login», 20.10.2026) — повтор
+  if (env.N8N_OWNER_PASSWORD) await retry('схема таблиц', () => node('scripts/n8n-api.mjs', ['migrate']));
   else console.log('⚠️ В .env нет N8N_OWNER_PASSWORD — схему таблиц не проверил. Новые колонки: node scripts/n8n-api.mjs migrate');
 
   // Робот посреди отклика: импорт и перезапуск n8n оборвали бы W9, который ждёт его ответа (13.10.2026: отклик
