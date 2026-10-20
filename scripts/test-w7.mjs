@@ -119,3 +119,23 @@ test('📋 Вакансии: вакансии выключенного резю�
   assert.match(on.text, /\/v13/);
   assert.doesNotMatch(on.text, /Скрыто/);
 });
+
+test('список: теневой режим выключен — во «⏳ Ждут решения» только 🟢 и неоценённые, 🟡 и 🔴 — во «📋 Все»', async () => {
+  const card = (id, decision) => ({ id, status: 'waiting', decision, card_at: '2026-10-20T10:00:00.000Z', createdAt: '2026-10-20T10:00:00.000Z', title: `В${id}`, company: 'К', url: 'https://hh.ru' });
+  const rows = [card(1, 'apply'), card(2, 'maybe'), card(3, 'skip'), card(4, 'error')];
+  const list = (settings, tab = 'wait') =>
+    runNode('n8n/w7-menu/render.js', {
+      nodes: { Job: job({ view: 'list', tab }), Rows: rows, Runs: [{}], Settings: settingRows(settings) },
+      env: { USER_TZ: 'Asia/Bangkok' },
+    }).then(([out]) => out);
+  let out = await list({ 'llm.shadow': false });
+  assert.match(out.text, /Ждут решения — 2/);
+  assert.match(out.text, /Без 🟡 и 🔴 \(2\) — теневой режим выключен/);
+  assert.match(out.text, /В1/);
+  assert.doesNotMatch(out.text, /В2|В3/);
+  assert.equal(out.b.tabs.find((t) => t.cb.startsWith('p:l:wait')).text.includes('2'), true);
+  assert.match((await list({ 'llm.shadow': false }, 'all')).text, /Все — 4/);
+  out = await list({});
+  assert.match(out.text, /Ждут решения — 4/);
+  assert.doesNotMatch(out.text, /теневой режим выключен/);
+});

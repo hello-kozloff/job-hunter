@@ -102,10 +102,14 @@ const resumesOff = new Set(
     .map((r) => r.id),
 );
 const listed = rows.filter((r) => !resumesOff.has(r.resume_id || 'r1'));
+// Теневой режим выключен (20.10.2026, решение пользователя): во «⏳ Ждут решения» — только 🟢 и неоценённые, 🟡 и 🔴
+// там не показываем (решать их не нужно) — они во «📋 Все»
+const shadowOff = !loadSettings($('Settings').all())['llm.shadow'];
+const waitHidden = (r) => shadowOff && r.status === 'waiting' && ['maybe', 'skip'].includes(r.decision);
 
 const inTab = (key, from = listed) => {
   const statuses = TABS[key].statuses;
-  return from.filter((r) => (statuses ? statuses.includes(r.status) : r.status !== 'seen'));
+  return from.filter((r) => (statuses ? statuses.includes(r.status) : r.status !== 'seen') && !(key === 'wait' && waitHidden(r)));
 };
 const counts = Object.fromEntries(Object.keys(TABS).map((key) => [key, inTab(key).length]));
 
@@ -137,9 +141,11 @@ function listView(tabKey, pageNo, note = '') {
   const lines = items.slice((page - 1) * PAGE, page * PAGE).map((r, i) => itemLines(r, (page - 1) * PAGE + i + 1));
   const { icon, name } = TABS[tab];
   const hidden = inTab(tab, rows).length - items.length;
+  const quiet = tab === 'wait' ? listed.filter(waitHidden).length : 0;
   const head =
     `📋 <b>Вакансии</b> · ${icon} ${name} — ${items.length}${pages > 1 ? ` · стр. ${page}/${pages}` : ''}` +
-    (hidden ? `\n<i>Скрыто ${hidden} — резюме выключено (⚙️ → 📄 Резюме)</i>` : '');
+    (hidden ? `\n<i>Скрыто ${hidden} — резюме выключено (⚙️ → 📄 Резюме)</i>` : '') +
+    (quiet ? `\n<i>Без 🟡 и 🔴 (${quiet}) — теневой режим выключен, они во «📋 Все»</i>` : '');
   const off = { text: '·', cb: 'p:x' };
   return {
     layout: 'list',
