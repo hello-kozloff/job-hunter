@@ -80,9 +80,12 @@ function cardText(r) {
     !r.decision && r.reasons
       ? `🧹 Отсеяна фильтром: ${esc(r.reasons)}`
       : `🤖 ${VERDICT[r.decision] ?? esc(r.decision)}${r.llm_reason ? ` — ${esc(r.llm_reason)}` : ''}`;
+  // Автоотклик (6.1c): решение за пользователя принял робот по apply нейросети — вместо строки «👤 …»
   const mine = CHOICE[r.my_decision]
     ? `👤 ${CHOICE[r.my_decision]}${r.my_reason === BAN_REASON ? ' · 🚫 компания в чёрном списке' : ''}`
-    : '';
+    : r.apply_mode === 'auto' && ['approved', 'applied'].includes(r.status)
+      ? '🤖 Автоотклик'
+      : '';
   // «📨 Откликался раньше» уже в строке «👤 …» — второй раз не пишем
   // Робот (этап 6): «🚀 … роботом»; нашёлся на hh без «📨 Отправил» (6.2) — «📨 … на hh»
   const who = r.apply_by === 'robot' ? '🚀 Отклик отправлен роботом' : r.apply_by === 'hh' ? '📨 Отклик есть на hh' : '📨 Отклик отправлен';

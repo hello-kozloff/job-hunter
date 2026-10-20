@@ -84,7 +84,16 @@ const SETTINGS = {
   // лимит живых откликов в «день» робота (с 09:00 по местному). Предохранитель APPLY_LIVE — в .env, не здесь
   'apply.enabled': { default: false, options: [false, true] },
   'apply.paused': { default: false, options: [false, true] },
-  'apply.daily_limit': { default: 25, options: [10, 15, 25, 40] },
+  // 20.10.2026 (автоотклик, решение пользователя «как я руками»): 80 в день, было 25
+  'apply.daily_limit': { default: 80, options: [25, 40, 60, 80, 100] },
+  // Темп всех откликов робота — пауза между ними и лимит часа (n8n/shared/robot.js → PACE; держит сам робот)
+  'apply.pace': { default: 'human', options: ['human', 'normal', 'careful'] },
+  // Автоотклик (6.1c, 20.10.2026): робот сам берёт ✅ и карточки с apply нейросети, пишет письмо и откликается
+  // (n8n/shared/auto.js). Включает и выключает панель «🤖 Автоотклик»; auto_since — когда включили
+  'apply.auto': { default: false, options: [false, true] },
+  'apply.auto_since': { default: '', stamp: true },
+  // Хвост: брать карточки за 3 дня до включения (true) или только пришедшие после него
+  'apply.backlog': { default: true, options: [true, false] },
   // Профиль (13.10.2026, docs/onboarding.md): резюме и факты о человеке. Пишет онбординг W11 (резюме PDF в боте)
   // или импорт (node scripts/n8n-api.mjs profile-import). Умолчания — поведение до онбординга: онбординг
   // записывает все свои строки явно. Пресет frontend — откалиброванные правила владельца в коде (W2, W5)

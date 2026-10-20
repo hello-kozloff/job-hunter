@@ -100,7 +100,7 @@ async function recheck(page, id) {
 // Откликнулись ли выбранным резюме (hh — истина: usedResumeIds). Резюме не выбрано — любым
 const appliedBy = (after, choice) => (choice ? Boolean(after.resumeList?.find((r) => r.hash === choice.hash)?.used) : Boolean(after.applied));
 
-export async function applyFlow({ vacancyId, letter = '', dry = false, resume = null }) {
+export async function applyFlow({ vacancyId, letter = '', dry = false, resume = null, requestId = null }) {
   const id = String(vacancyId).replace(/\D/g, '');
   const live = config.live && !dry;
   const t0 = Date.now();
@@ -111,6 +111,8 @@ export async function applyFlow({ vacancyId, letter = '', dry = false, resume = 
     tally(outcome, live, fields.note);
     log('apply', {
       vacancyId: id,
+      // Сверка с таблицей n8n: W9 шлёт <id строки>-<время>
+      requestId,
       outcome,
       live,
       via: fields.via,

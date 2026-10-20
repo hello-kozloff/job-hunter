@@ -9,8 +9,9 @@
 //   POST /login                    открыть вход hh в окне робота («Общий экран» → vnc://localhost:5901)
 //   POST /resume                   перепроверить вход и капчу, снять блок
 //   POST /captcha {text}           ответ на капчу-картинку (фото в Telegram): ввести и отправить
-//   POST /apply {vacancyId, letter, requestId, dry, resume?}   отклик; APPLY_LIVE=0 или dry: true — сухой прогон до кнопки;
-//                                                       resume { hash, title? } — каким резюме hh откликаться (этап 5)
+//   POST /apply {vacancyId, letter, requestId, dry, resume?, pace?}   отклик; APPLY_LIVE=0 или dry: true — сухой прогон до
+//                                                       кнопки; resume { hash, title? } — каким резюме hh откликаться (этап 5);
+//                                                       pace { min, max, hour } — темп (6.1c): рано или час исчерпан → 429
 //   POST /recon {vacancyIds?, inbox?, resume?, chooser?, negotiations?, maxPages?}   разведка без кликов — фоновое
 //                                                       задание, 202 (resume — резюме, E0; chooser — id вакансии: окно
 //                                                       отклика и выбор резюме, этап 5; negotiations — все «Отклики»
@@ -31,6 +32,7 @@ import { config } from './config.mjs';
 import { log } from './log.mjs';
 import { Busy, lock } from './lock.mjs';
 import { recallResult, rememberResult, store } from './store.mjs';
+import { paceCheck, paceLimits, paceView } from './pace.mjs';
 import { pause, prune, sleep } from './util.mjs';
 import {
   SHOTS,
@@ -108,6 +110,20 @@ function assertNotBlocked() {
   if (blocked) throw new HttpError(423, { blocked });
 }
 
+// Темп живых откликов (6.1c): потолок дня, пауза после прошлой попытки, лимит часа → 429 с reason и retryAt.
+// Сухой прогон не ограничиваем и не считаем
+function assertPace(limits) {
+  const today = store.today().applied;
+  if (config.live && today >= config.dailyCap) {
+    throw new HttpError(429, { error: `потолок дня робота: ${today} из ${config.dailyCap}`, reason: 'day', today, cap: config.dailyCap });
+  }
+  const wait = paceCheck(store.pace, limits);
+  if (wait) {
+    const what = wait.reason === 'gap' ? 'пауза между откликами' : `лимит часа: ${limits.hour}`;
+    throw new HttpError(429, { error: `${what}, можно с ${wait.retryAt}`, ...wait, pace: paceView(store.pace) });
+  }
+}
+
 // Фоновое задание (разведка): держит замок, прогресс — в GET /job
 let job = null;
 async function startJob(kind, run) {
@@ -152,6 +168,8 @@ async function health() {
     blocked: store.blocked,
     today: store.today(),
     cap: config.dailyCap,
+    // Темп живых откликов: следующая попытка не раньше nextAt, откликов за час (src/pace.mjs)
+    pace: { ...paceView(store.pace), hourCap: config.hourlyCap, minGap: config.minGap },
     lastApplyAt: store.lastApplyAt,
     lastInboxAt: store.lastInboxAt,
   };
@@ -254,14 +272,15 @@ const routes = {
     const cached = recallResult(vacancyId);
     if (cached && cached.group === 'done') return { ...cached, cached: true };
     assertNotBlocked();
-    // Потолок живых откликов за «день» робота — сверх лимита из настроек бота (его считает W9): защита от ошибки в n8n
-    const today = store.today().applied;
-    if (config.live && !dry && today >= config.dailyCap) {
-      throw new HttpError(429, { error: `потолок дня робота: ${today} из ${config.dailyCap}`, today, cap: config.dailyCap });
-    }
-    const result = await lock.run('apply', () => applyFlow({ vacancyId, letter, dry, resume }));
+    // Потолки дня и часа, пауза — сверх лимитов из настроек бота (их считает W9): защита от ошибки в n8n
+    const live = config.live && !dry;
+    const limits = paceLimits(body.pace, config);
+    if (live) assertPace(limits);
+    const requestId = body.requestId ?? null;
+    const result = await lock.run('apply', () => applyFlow({ vacancyId, letter, dry, resume, requestId }));
     rememberResult(vacancyId, result);
-    return { ...result, requestId: body.requestId ?? null };
+    const pace = live ? store.markAttempt({ applied: result.outcome === 'applied', limits }) : paceView(store.pace);
+    return { ...result, requestId, pace };
   },
 
   'POST /recon': async (body) => {
@@ -390,8 +409,14 @@ async function fakeRoute(key, req) {
       };
     case 'POST /apply': {
       if (store.blocked) return { status: 423, body: { blocked: store.blocked } };
+      // Темп — как у живого: так фейк проверяет паузы W9 (6.1c)
+      const limits = paceLimits(body.pace, config);
+      const wait = paceCheck(store.pace, limits);
+      if (wait) return { status: 429, body: { error: `фейк: ${wait.reason}`, ...wait, pace: paceView(store.pace) } };
       const out = await lock.run('apply', () => fakeApply(body));
-      return out.status === 200 ? { status: 200, body: { ...out.body, requestId: body.requestId ?? null } } : out;
+      if (out.status !== 200) return out;
+      const pace = store.markAttempt({ applied: out.body.outcome === 'applied', limits });
+      return { status: 200, body: { ...out.body, requestId: body.requestId ?? null, pace } };
     }
     case 'POST /captcha':
       return fakeCaptcha(body.text ?? '');
@@ -425,7 +450,7 @@ server.requestTimeout = 10 * 60 * 1000;
 server.headersTimeout = 60 * 1000;
 
 server.listen(config.port, () => {
-  log('start', { version: config.version, live: config.live, fake: config.fake, cap: config.dailyCap });
+  log('start', { version: config.version, live: config.live, fake: config.fake, cap: config.dailyCap, hourCap: config.hourlyCap, minGap: config.minGap });
   if (!config.fake) ensure().catch(() => {}); // браузер — сразу, чтобы /health знал, вошли ли мы
 });
 
