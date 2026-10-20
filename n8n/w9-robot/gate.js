@@ -152,7 +152,8 @@ if (!out.notice && out.wait === 'down' && queued.length && state.downDay !== day
     silent: !loud,
   };
 }
-if (!out.notice && out.wait === 'limit' && queued.length && state.limitDay !== dayKey) {
+// Автоотклик (6.1c): лимит дня видно на панели 🤖 — отдельным сообщением не пишем
+if (!out.notice && out.wait === 'limit' && queued.length && !out.auto && state.limitDay !== dayKey) {
   state.limitDay = dayKey;
   out.notice = {
     kind: 'info',

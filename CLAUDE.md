@@ -161,7 +161,7 @@ https://hh.ru/search/vacancy?text=frontend OR typescript OR javascript OR NAME:(
                  (🚀), 6.2 — W10 Inbox
 [W9 + авто]    автоотклик (6.1c, 20.10.2026, docs/stages/stage-6.md → 6.1c): «🤖 Автоотклик» → W7 панель (▶️ au:on / ⏹ au:off,
                  журнал 8 попыток по apply_at); тик W9 → Gate (+ hour, pace по /health робота, night) → Feed (n8n/shared/auto.js):
-                 ✅ с письмом → W9 enqueue (apply_mode = auto), waiting + apply → Auto claim → W5 письмо тихо → W9 enqueue;
+                 ✅ с письмом → W9 enqueue (apply_mode = auto), waiting + apply → Auto claim → W5 письмо (в чат не шлём — Quiet letter) → W9 enqueue;
                  в работе ≤ 2, лимит дня с очередью, тихие часы — ждёт; темп (пауза, лимит часа) держит робот (applier/src/pace.mjs);
                  после отклика — Wait до паузы робота → следующий; ⛔ → stopped; ⏹ → autostop (очередь авто назад в ✅)
 [W9 Robot]     🚀 под письмом → W3 → W9: очередь в колонке apply_state ('' → queued → applying), лимит дня, отклик через

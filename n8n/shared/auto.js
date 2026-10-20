@@ -5,6 +5,7 @@
 // esc, resumeList, robotResume).
 //
 // Решения пользователя (20.10.2026): берём ✅ пользователя и карточки с apply нейросети — сразу, без окна на отмену;
+// письма автоотклика в чат не шлём — их видно в журнале панели и в /v<id>;
 // вопросы работодателя и сайт работодателя — человеку; хвост — карточки за 3 дня (W6 через 3 дня без решения пишет
 // «⌛ устарела»), свежие первыми; ночью (тихие часы 23–09 по местному) автоотклик ждёт.
 
@@ -22,7 +23,9 @@ const autoOn = (s) => Boolean(s['apply.enabled'] && s['apply.auto']);
 const autoWindow = (now = Date.now()) => !quietHours(now);
 
 // Кандидаты: letters — карточки с apply нейросети (захватить → письмо W5 → очередь), ready — ✅ с письмом, которые
-// робот ещё не пробовал (сразу в очередь), stale — захваты, где письмо так и не пришло. Свежие карточки первыми
+// робот ещё не пробовал (сразу в очередь; у письма автоотклика сообщения в чате нет — 20.10.2026, решение пользователя:
+// «просто открыть карточку автоотклик и видеть, что журнал пополняется»), stale — захваты, где письмо так и не пришло.
+// Свежие карточки первыми
 function autoCandidates(rows, s, now = Date.now()) {
   const off = new Set(resumeList(s).filter((r) => !r.active).map((r) => r.id));
   const since = s['apply.backlog'] ? now - AUTO_FRESH_MS : Math.max(now - AUTO_FRESH_MS, Date.parse(s['apply.auto_since']) || now);
@@ -45,7 +48,7 @@ function autoCandidates(rows, s, now = Date.now()) {
     letters: rows
       .filter((r) => r.status === 'waiting' && r.decision === 'apply' && !r.my_decision && r.tg_message_id && usable(r) && retry(r))
       .sort(newest),
-    ready: rows.filter((r) => r.status === 'approved' && r.letter && r.tg_letter_id && !r.apply_result && usable(r)).sort(newest),
+    ready: rows.filter((r) => r.status === 'approved' && r.letter && !r.apply_result && usable(r)).sort(newest),
     stale: rows.filter(
       (r) =>
         r.status === 'approved' &&

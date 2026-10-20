@@ -91,4 +91,6 @@ if (!row.id) {
 }
 
 out.text = row.id ? letterText({ ...view, ok: Boolean(row.letter), mode: 'new' }) : '';
+// Письма автоотклика в чате нет (6.1c) — перерисовывать нечего
+if (!out.messageId) out.layout = '';
 return [{ json: out }];

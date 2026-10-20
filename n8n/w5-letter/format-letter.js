@@ -7,8 +7,9 @@
 //   подпись с резюме при нескольких резюме, n8n/shared/robot.js → robotButtonText).
 // Автоотклик (6.1c, 20.10.2026): auto — после записи письмо уходит в очередь робота (W5 «Robot queue» → W9 enqueue):
 //   новое письмо (✅ или захват автооткликом), автоотклик включён, вакансия подходит роботу; «🔄» и правка — нет: их
-//   человек правит сам. silent — письмо к захваченной карточке приходит без звука. auto_fail — такое письмо не вышло:
-//   без сообщения в ленту, карточка — снова «ждёт решения» («Auto fail»), Feed W9 попробует ещё раз через 15 мин.
+//   человек правит сам. quiet — письмо к захваченной карточке в чат не шлём, только записываем («Quiet letter»;
+//   решение пользователя: «в чате спам — хочу открыть карточку автоотклик и видеть, что журнал пополняется»).
+//   auto_fail — такое письмо не вышло: карточка — снова «ждёт решения» («Auto fail»), Feed W9 попробует через 15 мин.
 
 // @include n8n/shared/time.js
 
@@ -63,6 +64,7 @@ return $input.all().map((item) => {
       robot_button: robotButtonText(row),
       auto: robot && autoOn(settings) && (job.auto || r.mode === 'new'),
       silent: Boolean(job.auto),
+      quiet: Boolean(job.auto) && Boolean(r.ok),
       auto_fail: Boolean(job.auto) && !r.ok,
       apply_tries: (Number(row.apply_tries) || 0) + 1,
     },

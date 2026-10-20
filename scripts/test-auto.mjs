@@ -460,3 +460,44 @@ test('сборка: кнопка «🤖 Автоотклик» под полем
   assert.ok(letter.nodes.find((n) => n.name === 'Auto fail'));
   assert.equal(letter.nodes.find((n) => n.name === 'Robot queue').parameters.mode, 'each');
 });
+
+// ---------- Без сообщений в чате (20.10.2026: «в чате спам — хочу открыть панель и видеть журнал») ----------
+
+test('тихо: письмо автоотклика не уходит в чат, только записывается и встаёт в очередь', async () => {
+  const out = await format({ auto: true });
+  assert.equal(out.quiet, true);
+  assert.equal(out.auto, true);
+  assert.equal((await format({})).quiet, false, '✅ пользователя — письмо в чат, как раньше');
+  const w5 = built('w5-letter');
+  assert.deepEqual(w5.connections['Quiet?'].main[0].map((c) => c.node), ['Quiet letter']);
+  assert.deepEqual(w5.connections['Quiet letter'].main[0].map((c) => c.node), ['Auto jobs']);
+  assert.deepEqual(w5.connections['Auto failed?'].main[1].map((c) => c.node), ['Quiet?']);
+});
+
+test('тихо: без сообщения с письмом — ни правки, ни скриншота; ✅ с таким письмом Feed берёт', async () => {
+  const r = letterRow({ tg_letter_id: 0 });
+  assert.equal((await plan(r, { op: 'enqueue', id: r.id, auto: true })).layout, '');
+  const out = await result(
+    { statusCode: 200, body: { outcome: 'error', group: 'error', note: 'x', shot: 'a.jpg' } },
+    letterRow({ tg_letter_id: 0, apply_state: 'applying', apply_mode: 'auto' }),
+  );
+  assert.equal(out.layout, '');
+  assert.equal(out.shot, '');
+  assert.deepEqual(await feed([r]), [{ kind: 'enqueue', op: 'enqueue', auto: true, id: r.id }]);
+  const [d] = await runNode('n8n/w9-robot/dequeue.js', { input: [{ ...r, apply_state: 'queued' }], nodes: { Job: { op: 'autostop' } }, env: { TG_CHAT_ID: '1' } });
+  assert.equal(d.layout, '');
+});
+
+test('тихо: лимит дня при автоотклике — на панели, без сообщения', async () => {
+  const q = [queued()];
+  const today = Array.from({ length: 10 }, (_, i) => ({ id: 900 + i, apply_by: 'robot', applied_at: iso(Date.now() - MIN) }));
+  const run = (s) =>
+    runNode('n8n/w9-robot/gate.js', {
+      nodes: { Job: { op: 'tick', fromUser: false }, Settings: s, Queue: q, Today: today, Health: { ok: true, loggedIn: true } },
+    }).then(([o]) => o);
+  let out = await run(settings({ 'apply.daily_limit': 10 }));
+  assert.equal(out.wait, 'limit');
+  assert.equal(out.notice, null);
+  out = await run(settings({ 'apply.daily_limit': 10, 'apply.auto': false }));
+  assert.match(out.notice?.text ?? '', /Лимит робота на сегодня/);
+});

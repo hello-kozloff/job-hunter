@@ -2316,6 +2316,16 @@ const workflows = {
         }),
         options: {},
       }),
+      // Письмо автоотклика (6.1c) в чат не шлём — только записать и поставить в очередь робота
+      node('W5', 'Quiet?', 'if', 2.3, [2700, -150], ifTrue('W5', '={{ $json.quiet }}')),
+      node('W5', 'Quiet letter', 'dataTable', 1.1, [3300, -200], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        ...byId('={{ $json.id }}'),
+        columns: setColumns({ letter: '={{ $json.letter }}', letter_model: '={{ $json.letter_model }}' }),
+        options: {},
+      }),
       // Робот включён и вакансия ему подходит (этап 6) — письмо сразу с [🚀 Откликнуться роботом]
       node('W5', 'Robot letter?', 'if', 2.3, [2750, 0], ifTrue('W5', '={{ $json.robot }}')),
       // silent — письмо автоотклика к захваченной карточке (6.1c): без звука
@@ -2388,7 +2398,10 @@ const workflows = {
       ['Parse letter', 'Format letter'],
       ['Format letter', 'Auto failed?'],
       ['Auto failed?', 'Auto fail', 0],
-      ['Auto failed?', 'Robot letter?', 1],
+      ['Auto failed?', 'Quiet?', 1],
+      ['Quiet?', 'Quiet letter', 0],
+      ['Quiet letter', 'Auto jobs'],
+      ['Quiet?', 'Robot letter?', 1],
       ['Robot letter?', 'Send letter: robot', 0],
       ['Robot letter?', 'Send letter', 1],
       ['Send letter', 'Letter sent'],
