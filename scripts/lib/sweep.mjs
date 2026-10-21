@@ -1,5 +1,6 @@
 // Разовый догон (19.10.2026): что вернуть в обработку и что добавить из поиска hh за 30 дней.
-// Команда — node scripts/n8n-api.mjs sweep [--days 30] [--no-search] [--dry]; здесь — логика без сети и без n8n.
+// Команда — node scripts/n8n-api.mjs sweep [--days 30] [--no-search] [--resume] [--dry]; здесь — логика без сети и без n8n.
+// --resume (21.10.2026) — подборка hh «по резюме» за --days дней: её читает робот, разбор — тот же «Parse search».
 // Код Code-нод — те же файлы, что в n8n (W1 «Plan», «Parse search», «Filter search»), через песочницу тестов.
 // Страницы вакансий открывает уже W1: строки new — его очередь «Pending new» → «Candidates» (хвост — до 25 за сбор).
 import { runNode } from './sandbox.mjs';
@@ -31,8 +32,15 @@ export async function searchPlan(settingsRows) {
 // Ответы hh по страницам → записи vacancies, как в W1 «Parse search»; pages — [{ item (из плана), page, res }]
 export async function parsePages(pages) {
   const [out] = await runNode('n8n/w1-collector/parse-search.js', {
-    input: pages.map((p) => p.res),
-    nodes: { Plan: pages.map((p) => ({ ...p.item, page: p.page })) },
+    nodes: { Plan: pages.map((p) => ({ ...p.item, page: p.page })), 'Search hh': pages.map((p) => p.res) },
+  });
+  return out;
+}
+
+// Подборка по резюме: адреса (как поле robot у W1 «Plan») и ответы робота по ним → записи с via = resume, как в W1
+export async function parseRobot(robot, results) {
+  const [out] = await runNode('n8n/w1-collector/parse-search.js', {
+    nodes: { Plan: [{ label: '', page: 0, robot }], 'Search hh': [], 'Search resume': { statusCode: 200, body: { ok: true, results } } },
   });
   return out;
 }

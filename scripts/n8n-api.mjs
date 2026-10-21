@@ -21,6 +21,9 @@
 //                                                      бэкфилл seen — удалить. Страницы и оценку делают сборы W1 и W2.
 //                                                      --no-search — только перепроверка (правило или чёрный список
 //                                                      поменялись); --dry — только показать
+//   node scripts/n8n-api.mjs sweep --resume [--days 7] [--dry]  догон подборки hh «по резюме» (21.10.2026): робот
+//                                                      читает её за N дней (только GET), новые для базы — через фильтр
+//                                                      W1 в очередь (via = resume); отсеянные и seen не трогает
 //   node scripts/n8n-api.mjs profile-import <file.json> профиль и настройки бота в таблицу settings: JSON
 //                                                      { "имя настройки": значение } (docs/onboarding.md)
 //   node scripts/n8n-api.mjs profile-export [file.json] все строки settings в JSON того же вида (бэкап, перенос);
@@ -41,7 +44,7 @@ import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { readCode } from './lib/code.mjs';
 import { appliedUpdate, cardRenderer, planHhApplied } from './lib/hh-applied.mjs';
-import { BACKLOG, MAX_PAGES, SEARCH_PERIOD, parsePages, planSweep, reasonKeys, searchPlan, sweepUrl } from './lib/sweep.mjs';
+import { BACKLOG, MAX_PAGES, SEARCH_PERIOD, parsePages, parseRobot, planSweep, reasonKeys, searchPlan, sweepUrl } from './lib/sweep.mjs';
 
 import { readEnv, setEnv, local } from './lib/env.mjs';
 
@@ -241,12 +244,15 @@ async function blacklistSeed() {
 // вернутся из поиска новыми). Страницы вакансий и оценку делают обычные сборы W1 и W2: строки new — их очередь (хвост —
 // до 25 за сбор). Пока идёт догон, в runs запись kind = sweep, status = running — W1 «Busy» пропускает сбор.
 // --no-search — только перепроверка отсеянных (после правки правил или чёрного списка); --dry — только показать
+// --resume (21.10.2026) — вместо поиска hh подборка «по резюме» за --days дней (по умолчанию 7) через робота: только
+// новые строки, отсеянные и seen не трогаются
 async function sweepCommand(...args) {
   const dry = args.includes('--dry');
   const noSearch = args.includes('--no-search');
+  const resume = args.includes('--resume');
   const at = args.indexOf('--days');
-  const days = at >= 0 ? Number(args[at + 1]) : SEARCH_PERIOD;
-  if (!(days > 0)) throw new Error('usage: sweep [--days N] [--no-search] [--dry]');
+  const days = at >= 0 ? Number(args[at + 1]) : resume ? 7 : SEARCH_PERIOD;
+  if (!(days > 0) || (resume && noSearch)) throw new Error('usage: sweep [--days N] [--no-search | --resume] [--dry]');
 
   const vacancies = await dataTable('vacancies');
   const runs = await dataTable('runs');
@@ -279,23 +285,31 @@ async function sweepCommand(...args) {
     });
 
   try {
-    const search = noSearch ? { records: [], total: 0, requests: 0 } : await deepSearch(settingsRows);
+    const search = noSearch ? { records: [], total: 0, requests: 0 } : resume ? await robotSearch(settingsRows, days) : await deepSearch(settingsRows);
     const rows = await allRows(vacancies);
     const plan = await planSweep({ rows, records: search.records, settingsRows, blacklistRows, days });
+    // Подборка: только новые для базы — перепроверка отсеянных и уборка seen — дело обычного sweep
+    if (resume) Object.assign(plan, { requeue: [], seen: [], seenBack: 0, queue: plan.insert.filter((r) => r.status === 'new').length });
     const added = plan.insert.filter((r) => r.status === 'new');
     const cut = plan.insert.filter((r) => r.status === 'rejected');
     const reasons = {};
     for (const r of cut) for (const key of reasonKeys(r.reasons)) reasons[key] = (reasons[key] ?? 0) + 1;
     const line = (r) => `  ${r.title} — ${r.company}`;
 
-    if (!noSearch) {
+    if (resume) {
+      console.log(`Подборка hh по резюме за ${days} дн. (робот): страниц ${search.requests}${search.errors ? ` (не открылись ${search.errors})` : ''} · нашёл ${search.total} · без дублей ${search.records.length}`);
+    } else if (!noSearch) {
       console.log(`Поиск hh за ${SEARCH_PERIOD} дней: запросов ${search.requests} · нашёл ${search.total} · без дублей ${search.records.length}`);
+    }
+    if (!noSearch) {
       console.log(`Новых для базы: ${plan.insert.length} — в очередь ${added.length}, отсеяно ${cut.length}${cut.length ? ` (${Object.entries(reasons).map(([k, n]) => `${k} ${n}`).join(' · ')})` : ''}`);
       added.forEach((r) => console.log(line(r)));
     }
-    console.log(`Отсеянные за ${days} дн. — снова в очередь: ${plan.requeue.length}`);
-    plan.requeue.forEach((r) => console.log(`${line(r)} · было: ${r.was}`));
-    console.log(`Бэкфилл seen: удалить ${plan.seen.length}${noSearch ? '' : ` (живые из поиска придут новыми: ${plan.seenBack})`}`);
+    if (!resume) {
+      console.log(`Отсеянные за ${days} дн. — снова в очередь: ${plan.requeue.length}`);
+      plan.requeue.forEach((r) => console.log(`${line(r)} · было: ${r.was}`));
+      console.log(`Бэкфилл seen: удалить ${plan.seen.length}${noSearch ? '' : ` (живые из поиска придут новыми: ${plan.seenBack})`}`);
+    }
     console.log(`Очередь страниц: ${plan.queue} → W1 доберёт за ~${Math.ceil(plan.queue / BACKLOG)} сборов (хвост — по ${BACKLOG})`);
     if (dry) return console.log('--dry: ничего не записано');
 
@@ -325,6 +339,50 @@ async function sweepCommand(...args) {
     await Promise.resolve(finish({ status: 'error', error: String(e.message).slice(0, 500) })).catch(() => {});
     throw e;
   }
+}
+
+// Подборка hh «по резюме» за days дней (21.10.2026): адреса — из W1 «Plan» (поле robot), страница 0 каждого резюме,
+// по её total — остальные (по 5 за запрос к роботу). Читает робот — только GET, занят откликом — ждёт до 60 с.
+// Страница 0 не открылась (капча, выход из hh) — ошибка; дальние — счётчиком errors
+async function robotSearch(settingsRows, days) {
+  const [first] = await searchPlan(settingsRows);
+  const queries = (first.robot ?? []).filter((q) => q.page === 0);
+  if (!queries.length) throw new Error('Подборки нет: у активных резюме нет связи с hh (хеша) или удалёнки в ⚙️ → 🔎 Поиск');
+  const env = readEnv();
+  if (!env.APPLIER_TOKEN) throw new Error('В .env нет APPLIER_TOKEN — подборку читает робот');
+  const call = async (urls) => {
+    const res = await fetch(`http://127.0.0.1:${local().applierPort}/search`, {
+      method: 'POST',
+      headers: { 'x-applier-token': env.APPLIER_TOKEN, 'content-type': 'application/json' },
+      body: JSON.stringify({ urls, wait: 60000 }),
+      signal: AbortSignal.timeout(400000),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status !== 200) throw new Error(`робот ответил ${res.status}: ${JSON.stringify(body).slice(0, 200)}`);
+    return body.results;
+  };
+  const robot = [];
+  const results = [];
+  let total = 0;
+  for (const q of queries) {
+    const url0 = sweepUrl(q.url, 0, days);
+    const [r0] = await call([url0]);
+    if (!r0?.ok) throw new Error(`подборка «${q.label}» не прочитана: ${r0?.error ?? 'нет ответа'}`);
+    robot.push({ ...q, url: url0 });
+    results.push(r0);
+    total += r0.total;
+    const pages = Math.min(Math.ceil(r0.total / 100), MAX_PAGES);
+    for (let page = 1; page < pages; page += 5) {
+      const urls = Array.from({ length: Math.min(5, pages - page) }, (_, i) => sweepUrl(q.url, page + i, days));
+      const rs = await call(urls);
+      urls.forEach((url, i) => {
+        robot.push({ ...q, url, page: page + i });
+        results.push(rs[i] ?? { url, ok: false, error: 'нет ответа' });
+      });
+    }
+  }
+  const out = await parseRobot(robot, results);
+  return { records: out.vacancies, total, requests: robot.length, errors: results.filter((r) => !r.ok).length };
 }
 
 // Поиск hh за SEARCH_PERIOD дней по запросам W1 «Plan»: страница 0, по её total — остальные. Заголовки — из собранного

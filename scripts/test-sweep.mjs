@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { PAGE_REASONS, RETIRED_REASONS, planSweep, reasonKeys, sweepUrl } from './lib/sweep.mjs';
+import { PAGE_REASONS, RETIRED_REASONS, parsePages, parseRobot, planSweep, reasonKeys, sweepUrl } from './lib/sweep.mjs';
 
 const settingRows = (obj) => Object.entries(obj).map(([name, value]) => ({ name, value_json: JSON.stringify(value) }));
 
@@ -89,4 +89,17 @@ test('план: новые из поиска, перепроверка отсе�
   assert.deepEqual(plan.seen, [1]);
   assert.equal(plan.seenBack, 1);
   assert.equal(plan.queue, 4);
+});
+
+test('подборка по резюме (--resume): адрес W1 за 7 дней, записи с via = resume; обычный поиск разбирается как раньше', async () => {
+  const url = 'https://hh.ru/search/vacancy?resume=ad21daa1ff10d9b4ac0039ed1f395547644163&work_format=REMOTE&education=not_required_or_not_specified&search_period=1&order_by=publication_time&items_on_page=100&enable_snippets=true&page=0';
+  const week = sweepUrl(url, 2, 7);
+  assert.deepEqual([new URL(week).searchParams.get('search_period'), new URL(week).searchParams.get('page')], ['7', '2']);
+  const v = (id) => ({ vacancyId: id, name: `AI-инженер ${id}`, company: { id: 5, visibleName: 'К' }, area: { name: 'Москва' } });
+  const robot = [{ url, label: 'по резюме hh', page: 0, resumeId: '', resumeName: '' }];
+  const out = await parseRobot(robot, [{ url, ok: true, total: 2, vacancies: [v(1), v(2)] }]);
+  assert.deepEqual(out.vacancies.map((r) => [r.external_id, r.via]), [['1', 'resume'], ['2', 'resume']]);
+  const state = JSON.stringify({ vacancySearchResult: { vacancies: [v(3)], totalResults: 1 } }).replace(/"/g, '&quot;');
+  const hh = await parsePages([{ item: { label: 'удалёнка' }, page: 0, res: { statusCode: 200, data: `<template id="HH-Lux-InitialState">${state}</template>` } }]);
+  assert.deepEqual(hh.vacancies.map((r) => [r.external_id, r.via]), [['3', undefined]]);
 });

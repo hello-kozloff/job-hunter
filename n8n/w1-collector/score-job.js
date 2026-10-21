@@ -4,7 +4,9 @@
 // Выход: один item { report, runId, run } → «Finish run» (итог в журнал runs) и «Score» (Execute Workflow,
 // без ожидания). W2 сам берёт строки detailed из таблицы, а без этой ноды в W2 ушёл бы весь результат поиска
 // со 100 вакансиями; по runId W2 допишет в журнал число карточек.
-// report — блок «🔎 Сбор» (HTML): запросы к hh, что искали, сколько новых и что отсеял фильтр, следующий сбор.
+// report — блок «🔎 Сбор» (HTML): запросы к hh, что искали, сколько новых и что отсеял фильтр, подборка hh по резюме
+// (21.10.2026: её читает робот — сколько нашёл hh, сколько новых сверх обычного поиска или почему пропуск), следующий
+// сбор.
 // W2 шлёт его одним живым сообщением без звука (прошлое удаляет) или ставит сверху итога «📊 Оценено»
 // (решения пользователя 07.10.2026).
 
@@ -43,7 +45,9 @@ const plural = (n, one, few, many) => {
 
 const plan = $('Plan').first().json;
 const search = $('Parse search').first().json;
-const requests = search.requests ?? [];
+// Обычный поиск (страницы «Search hh») и подборка по резюме (робот) считаются отдельно
+const requests = (search.requests ?? []).filter((r) => !r.robot);
+const robotRequests = (search.requests ?? []).filter((r) => r.robot);
 const fresh = all('Filter search'); // новые: new | rejected
 // Страницы вакансий («Candidates»): строки этого сбора и хвост очереди new — после сбоя или разового догона
 const freshIds = new Set(fresh.map((r) => r.external_id));
@@ -97,6 +101,19 @@ const countLine = [
 
 // Отсеянные: название — ссылка на hh, причины. «только из РФ: «цитата»» показываем с цитатой — видно ложные срабатывания
 const SHOW = 5;
+// Подборка по резюме: нашёл hh (страница 0 каждого резюме), новых сверх обычного поиска (via = resume), пропуски
+let robotLine = '';
+if (robotRequests.length) {
+  const read = robotRequests.filter((r) => r.status === 200);
+  const found = read.filter((r) => r.page === 0 && r.total != null);
+  const skipped = [...new Set(robotRequests.filter((r) => r.status !== 200).map((r) => r.status))];
+  const parts = [];
+  if (found.length) parts.push(`hh нашёл ${found.length > 1 ? found.map((r) => `${r.label} ${r.total}`).join(' + ') : found[0].total}`);
+  if (read.length) parts.push(`сверх обычного поиска новых ${fresh.filter((r) => r.via === 'resume').length}`);
+  if (skipped.length) parts.push(`пропуск — ${skipped.join(', ')}`);
+  robotLine = `📄 Подборка hh по резюме: ${esc(parts.join(', '))}`;
+}
+
 const rejectedLines = rejected
   .slice(0, SHOW)
   .map((r) => `🚫 <a href="${esc(r.url)}">${esc(r.title)}</a> — ${esc(cut(String(r.reasons ?? ''), 120))}`);
@@ -124,6 +141,10 @@ const searchLinks = searched.flatMap(({ r, rs }) =>
     return [`🔗 <a href="${esc(url)}">Открыть ${what}${several ? ` (${esc(r.name)})` : ''} на hh</a>`];
   }),
 );
+// Подборка открывается только у вошедшего в hh — в браузере человека ссылка работает
+for (const q of (plan.robot ?? []).filter((x) => x.page === 0)) {
+  searchLinks.push(`🔗 <a href="${esc(q.url)}">Открыть подборку по резюме на hh${q.resumeName ? ` (${esc(q.resumeName)})` : ''}</a>`);
+}
 // Расписание — из настроек бота (⚙️ → 🕐 Сбор)
 const next = nextCollect(Date.now(), scheduleFrom(settings));
 const report = [
@@ -131,6 +152,7 @@ const report = [
   catchupLine,
   requestLine,
   countLine,
+  robotLine,
   ...rejectedLines,
   queueLine,
   `<blockquote expandable>${searchedText}</blockquote>`,
