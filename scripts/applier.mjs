@@ -20,6 +20,9 @@
 //   node scripts/applier.mjs cv-dry <файл.json>      сухой прогон записи резюме: робот заполняет формы hh и не сохраняет
 //                                                    (всегда dry: true); файл — { hash?, changes: [{ kind: title | about |
 //                                                    skills | place, … }] }; снимки форм — в fixtures/applier/
+//   node scripts/applier.mjs search <адрес> […]       подборка hh «по резюме» (только GET, как W1): адреса
+//                                                    https://hh.ru/search/vacancy?resume=<хеш>&… → сколько нашёл hh,
+//                                                    сколько на странице, первые названия
 //   node scripts/applier.mjs record start|stop       запись: вы откликаетесь сами в окне робота, он смотрит
 //   node scripts/applier.mjs paste                   во время записи: буфер обмена Mac (pbpaste) → туда, где курсор
 //                                                    в окне робота (VNC передаёт только латиницу, письмо — русское)
@@ -227,6 +230,22 @@ const commands = {
     console.log(`«О себе»: ${v.about.length} знаков · ключевых навыков: ${v.keySkills.length} из ${v.limits.keySkills}`);
     for (const p of v.places) console.log(`💼 ${p.company} — ${p.position} (${p.start || '?'} — ${p.end || 'сейчас'}): ${p.description.length} знаков`);
     if (r.backup) console.log(`бэкап: /data/resume/${r.backup}`);
+  },
+
+  async search(args) {
+    if (!args.length) throw new Error('search <адрес подборки hh по резюме> […]');
+    console.log(`Читаю подборку hh по резюме (только чтение): ${args.length} стр.…`);
+    const r = await api('POST', '/search', { urls: args, wait: 60000 });
+    for (const x of r.results) {
+      const q = new URL(x.url).searchParams;
+      const what = `период ${q.get('search_period') ?? 'всё время'} · ${q.getAll('work_format').join(', ') || 'любой формат'} · стр. ${q.get('page') ?? 0}`;
+      if (!x.ok) {
+        console.log(`  ${what}: ❌ ${x.error}`);
+        continue;
+      }
+      console.log(`  ${what}: hh нашёл ${x.total}, на странице ${x.vacancies.length}`);
+      for (const v of x.vacancies.slice(0, 3)) console.log(`    ${v.vacancyId} «${v.name}» · ${v.publicationTime?.$?.slice(0, 10) ?? '?'}`);
+    }
   },
 
   async 'cv-dry'(args) {

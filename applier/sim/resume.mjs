@@ -1,5 +1,6 @@
 // Симуляция разведки, чтения и записи резюме (часть D: E0, S2, E2/E3): настоящие src/flows/recon.mjs → reconResume и
 // src/flows/resume.mjs → readResume, writeResume на поддельном hh (формы — с теми же data-qa, что в записи E0).
+// Там же — подборка hh «по резюме» (21.10.2026, src/flows/search.mjs → readSearch): тоже только чтение.
 // Проверяет, что разведка открывает только «Мои резюме», резюме и страницы правки (ссылки-действия — никогда), строгий
 // предохранитель рвёт любой не-GET к hh и снимается после разведки, капча и выход из hh останавливают обход.
 // Запуск — sim/run.sh resume: одноразовый контейнер из образа робота без сети, свой каталог данных.
@@ -10,6 +11,7 @@ import { config } from '../src/config.mjs';
 import { browserContext, ensure, guardBlocks, shutdown } from '../src/browser.mjs';
 import { RECON_DIR, reconResume } from '../src/flows/recon.mjs';
 import { RESUME_DIR, readResume, writeResume } from '../src/flows/resume.mjs';
+import { readSearch } from '../src/flows/search.mjs';
 import { store } from '../src/store.mjs';
 
 if (config.dataDir === '/data') throw new Error('симуляция — только со своим DATA_DIR, не с томом робота (sim/run.sh)');
@@ -122,6 +124,13 @@ const PAGES = {
     ),
   '/applicant/resumes/edit/experience': () =>
     html({}, `<form><textarea data-qa="experience-description" name="description" maxlength="4000">Опыт</textarea></form>`),
+  // Подборка по резюме: hh применяет только резюме этого аккаунта (A), чужое молча отбрасывает — вся база
+  '/search/vacancy': (url) => {
+    const mine = url.searchParams.get('resume') === A;
+    const page = Number(url.searchParams.get('page') ?? 0);
+    const vacancies = mine ? [{ vacancyId: 900 + page * 2, name: `AI-инженер (сим ${page})` }, { vacancyId: 901 + page * 2, name: 'Frontend (сим)' }] : [{ vacancyId: 1, name: 'Сортировщик' }];
+    return html({ vacancySearchResult: { criteria: { resume: mine ? A : null }, totalResults: mine ? 4 : 959920, vacancies } }, '<h1>Вакансии</h1>');
+  },
   '/sim/after': () => html({}, `<p>после разведки</p><script>fetch('/shards/resume/after', { method: 'POST', body: 'x' }).catch(() => {});</script>`),
 };
 
@@ -163,7 +172,8 @@ async function handle(route) {
     }
     return route.fulfill({ status: 200, headers: CORS, contentType: 'application/json', body: '{}' });
   }
-  if (url.pathname === '/applicant/resumes' && mode === 'captcha') {
+  const entry = url.pathname === '/applicant/resumes' || url.pathname === '/search/vacancy';
+  if (entry && mode === 'captcha') {
     return route.fulfill({
       status: 200,
       contentType: 'text/html; charset=utf-8',
@@ -171,7 +181,7 @@ async function handle(route) {
     });
   }
   // Вход пропал: hh отдаёт страницу гостю (редирект 302 Chromium без сети в симуляции не проходит)
-  if (url.pathname === '/applicant/resumes' && mode === 'login') {
+  if (entry && mode === 'login') {
     return route.fulfill({
       status: 200,
       contentType: 'text/html; charset=utf-8',
@@ -180,7 +190,7 @@ async function handle(route) {
   }
   const page = PAGES[url.pathname] ?? FORMS[url.pathname];
   if (!page) return route.fulfill({ status: 404, contentType: 'text/plain', body: 'нет' });
-  return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: page() });
+  return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: page(url) });
 }
 
 const ok = [];
@@ -287,6 +297,44 @@ await scenario('выход из hh — страница гостю, дальше
   assert.deepEqual([read.ok, read.error, store.blocked], [false, 'login', null]);
 });
 
+// ---------- Подборка по резюме (21.10.2026) ----------
+const SEARCH = (hash, page) => `https://hh.ru/search/vacancy?resume=${hash}&work_format=REMOTE&search_period=1&page=${page}`;
+
+await scenario('подборка: две страницы, выдача как есть, только GET', async () => {
+  seen.length = 0;
+  mode = 'ok';
+  during = true;
+  const r = await readSearch({ urls: [SEARCH(A, 0), SEARCH(A, 1)] });
+  during = false;
+  assert.deepEqual(r.results.map((x) => [x.ok, x.total, x.vacancies.map((v) => v.vacancyId)]), [[true, 4, [900, 901]], [true, 4, [902, 903]]]);
+  // «Шум» страниц (автосохранение, аналитика) рвёт строгий предохранитель — до hh не доходит ни один не-GET
+  assert.deepEqual(seen.filter((s) => s.method !== 'GET'), [], 'не-GET дошёл до hh во время чтения подборки');
+});
+
+await scenario('подборка: hh отбросил резюме (чужое) — ошибка, вся база не уходит', async () => {
+  mode = 'ok';
+  const r = await readSearch({ urls: [SEARCH(B, 0), SEARCH(A, 0)] });
+  assert.deepEqual(r.results.map((x) => [x.ok, x.error ?? x.total]), [[false, 'resume'], [true, 4]]);
+});
+
+await scenario('подборка: капча — блок, следующие адреса не открываем', async () => {
+  seen.length = 0;
+  mode = 'captcha';
+  const r = await readSearch({ urls: [SEARCH(A, 0), SEARCH(A, 1)] });
+  assert.deepEqual(r.results.map((x) => x.error), ['captcha', 'skipped']);
+  assert.equal(store.blocked?.kind, 'captcha');
+  assert.equal(seen.filter((s) => s.path === '/search/vacancy').length, 1);
+  store.unblock('симуляция');
+});
+
+await scenario('подборка: выход из hh — login, без блока', async () => {
+  mode = 'login';
+  const r = await readSearch({ urls: [SEARCH(A, 0), SEARCH(A, 1)] });
+  assert.deepEqual(r.results.map((x) => x.error), ['login', 'skipped']);
+  assert.equal(store.blocked, null);
+  mode = 'ok';
+});
+
 // ---------- Запись (E2/E3) ----------
 const CHANGES = [
   { kind: 'title', value: 'Senior Frontend-разработчик (сим)' },
@@ -351,5 +399,5 @@ await scenario('запись: на hh уже так — ничего не сох
 });
 
 await shutdown();
-console.log(`\n${ok.length} из 8 сценариев прошли`);
-process.exit(ok.length === 8 ? 0 : 1);
+console.log(`\n${ok.length} из 12 сценариев прошли`);
+process.exit(ok.length === 12 ? 0 : 1);

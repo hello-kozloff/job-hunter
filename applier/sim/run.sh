@@ -3,7 +3,7 @@
 # папке контейнера. Код — с Mac (src и sim только для чтения): образ пересобирать не нужно, нужен лишь сам образ
 # job-hunter-applier (scripts/deploy.sh --applier).
 #   sim/run.sh [часть имени]         живой отклик (sim/live.mjs), например sim/run.sh quick
-#   sim/run.sh resume                разведка резюме (sim/resume.mjs, часть D)
+#   sim/run.sh resume                разведка, чтение и запись резюме, подборка по резюме (sim/resume.mjs)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 SIM=live
