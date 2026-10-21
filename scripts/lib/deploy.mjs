@@ -3,10 +3,14 @@
 //
 // Шаги — как в прежнем scripts/deploy.sh:
 //   1. сборка workflow из n8n/**/*.js;
-//   2. туннель и профили compose по .env (NGROK_DOMAIN → WEBHOOK_URL, tunnel; APPLIER_TOKEN → applier);
-//   3. docker compose up (n8n, ngrok при туннеле); робот — только с applier: true (дождаться конца действия, пересобрать);
+//   2. туннель и профили compose по .env (NGROK_DOMAIN → WEBHOOK_URL, tunnel; APPLIER_TOKEN → applier;
+//      CLAUDE_CODE_OAUTH_TOKEN → claude);
+//   3. docker compose up (n8n, ngrok при туннеле); Claude по подписке (claude-cli) — сборка и запуск на каждом деплое:
+//      состояния нет, образ в кэше; робот — только с applier: true (дождаться конца действия, пересобрать);
 //      без applier — тоже дождаться, пока робот закончит отклик: перезапуск n8n оборвал бы W9 на полпути;
-//   4. credentials из .env — через pipe прямо в контейнер, на диск хоста ключи не пишутся;
+//   4. схема таблиц (n8n-api.mjs migrate, 19.10.2026): недостающие колонки — до импорта workflow, иначе запись
+//      «Map Automatically» в новую колонку упала бы; credentials из .env — через pipe прямо в контейнер, на диск хоста
+//      ключи не пишутся;
 //   5. импорт workflow (снимает публикацию со всех) и публикация рабочих:
 //      W4 (тревоги), W5 (письма), W7 (меню), W1 (сбор), W2 (оценка), W9 (робот), W11 (профиль) — всегда: в n8n 2.42
 //      неопубликованный Error workflow и вызываемый (Execute Workflow) не запускаются;
@@ -86,7 +90,7 @@ export async function deploy({ paused = false, applier = false } = {}) {
   node('scripts/build-workflows.mjs');
 
   let env = readEnv();
-  if (env.NGROK_DOMAIN || env.APPLIER_TOKEN) node('scripts/n8n-api.mjs', ['tunnel-env']);
+  if (env.NGROK_DOMAIN || env.APPLIER_TOKEN || env.CLAUDE_CODE_OAUTH_TOKEN) node('scripts/n8n-api.mjs', ['tunnel-env']);
   env = readEnv();
   const { n8nContainer, n8nPort, applierPort } = local(env);
   const tunnel = Boolean(env.NGROK_DOMAIN);
@@ -94,12 +98,25 @@ export async function deploy({ paused = false, applier = false } = {}) {
   sh('docker', ['compose', 'up', '-d', '--wait', 'n8n', ...(tunnel ? ['ngrok'] : [])]);
   await waitHealthz(n8nPort, 120);
 
+  // Claude по подписке (docs/claude-cli.md) — до импорта workflow, чтобы новые ноды «Claude CLI» застали новый сервис.
+  // Вызов, который шёл в момент перезапуска, n8n повторит (оценка) или покажет ошибку (письмо — «🔄»)
+  if (env.CLAUDE_CODE_OAUTH_TOKEN) {
+    sh('docker', ['compose', 'build', 'claude-cli']);
+    sh('docker', ['compose', 'up', '-d', '--wait', 'claude-cli']);
+  }
+
   if (applier) {
     if (!env.APPLIER_TOKEN) throw new Error('Для робота нужен APPLIER_TOKEN в .env (openssl rand -hex 24) — см. .env.example');
     await waitApplierIdle(applierPort, env.APPLIER_TOKEN);
     sh('docker', ['compose', 'build', 'applier']);
     sh('docker', ['compose', 'up', '-d', '--wait', 'applier']);
   }
+
+  // Схема таблиц (n8n/schema.mjs): migrate только добавляет недостающее — повторный запуск ничего не меняет. Нужен вход
+  // владельца n8n (N8N_OWNER_* в .env пишет setup-owner); без него — подсказка, как сделать руками. Сразу после
+  // перезапуска n8n /healthz уже отвечает, а REST ещё нет («Cannot POST /rest/login», 20.10.2026) — повтор
+  if (env.N8N_OWNER_PASSWORD) await retry('схема таблиц', () => node('scripts/n8n-api.mjs', ['migrate']));
+  else console.log('⚠️ В .env нет N8N_OWNER_PASSWORD — схему таблиц не проверил. Новые колонки: node scripts/n8n-api.mjs migrate');
 
   // Робот посреди отклика: импорт и перезапуск n8n оборвали бы W9, который ждёт его ответа (13.10.2026: отклик
   // ушёл, а записать итог W9 не успел — строку вылечила очередь через 6 мин). Ждём, пока робот закончит

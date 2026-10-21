@@ -55,12 +55,22 @@ const SETTINGS = {
       'tutor', 'instructor', "o'qituvchi", 'oqituvchi', 'преподавател*', 'тестировщик*', 'наставник*'],
     words: true,
   },
-  // Нейросеть (W2, W5): провайдер; теневой режим — карточки и на skip (выкл — skip только в сводке)
-  'llm.provider': { default: 'gemini', options: ['gemini', 'claude'] },
+  // Нейросеть (W2, W5, W11, W13): провайдер; теневой режим — карточки и на skip (выкл — skip только в сводке).
+  // claude-cli — Claude по подписке (19.10.2026, docs/claude-cli.md): сервис claude-cli, модели — ниже
+  'llm.provider': { default: 'gemini', options: ['gemini', 'claude', 'claude-cli'] },
+  // Модели Claude по подписке: оценка (W2) и тексты (W5 письма, W11 профиль, W13 резюме). Только полные ID — их
+  // же принимает сервис claude-cli; Fable нет (на Pro в claude -p она списывает платные кредиты)
+  'llm.cli_score': { default: 'claude-haiku-5-5', options: ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5'] },
+  'llm.cli_text': { default: 'claude-sonnet-5-5', options: ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5'] },
   'llm.shadow': { default: true, options: [true, false] },
+  // С какой минуты считать совпадения теневого режима (ISO, 19.10.2026; n8n/shared/shadow.js). Пусто — все карточки.
+  // Пишет кнопка «🔄 Теневой заново» (⚙️ → 🤖): stamp — значение «сейчас»
+  'llm.shadow_since': { default: '', stamp: true },
   // Спорные случаи — список «случай: решение» (✏️, решение пользователя 07.10.2026: текстом, а не кнопками).
   // По умолчанию — четыре встроенных случая промпта W2 с их решениями; отличие от них уходит в промпт
-  // «Поправками кандидата» (n8n/w2-score/build-prompt.js)
+  // «Поправками кандидата» (n8n/w2-score/build-prompt.js). Подписи по умолчанию — прежние (19.10.2026 случаи стали
+  // «fullstack не на Node/Python» и «AI-разработка», но у пресета generic без своего списка эти подписи попадают в
+  // промпт строками — менять их значит менять чужие промпты; владельцу новые подписи записал импорт)
   'llm.cases': {
     default: [
       { case: 'Vue без React', decision: 'maybe' },
@@ -74,7 +84,16 @@ const SETTINGS = {
   // лимит живых откликов в «день» робота (с 09:00 по местному). Предохранитель APPLY_LIVE — в .env, не здесь
   'apply.enabled': { default: false, options: [false, true] },
   'apply.paused': { default: false, options: [false, true] },
-  'apply.daily_limit': { default: 25, options: [10, 15, 25, 40] },
+  // 20.10.2026 (автоотклик, решение пользователя «как я руками»): 80 в день, было 25; 10 — первый запуск под присмотром
+  'apply.daily_limit': { default: 80, options: [10, 25, 30, 40, 60, 80, 100] },
+  // Темп всех откликов робота — пауза между ними и лимит часа (n8n/shared/robot.js → PACE; держит сам робот)
+  'apply.pace': { default: 'human', options: ['human', 'normal', 'careful'] },
+  // Автоотклик (6.1c, 20.10.2026): робот сам берёт ✅ и карточки с apply нейросети, пишет письмо и откликается
+  // (n8n/shared/auto.js). Включает и выключает панель «🤖 Автоотклик»; auto_since — когда включили
+  'apply.auto': { default: false, options: [false, true] },
+  'apply.auto_since': { default: '', stamp: true },
+  // Хвост: брать карточки за 3 дня до включения (true) или только пришедшие после него
+  'apply.backlog': { default: true, options: [true, false] },
   // Профиль (13.10.2026, docs/onboarding.md): резюме и факты о человеке. Пишет онбординг W11 (резюме PDF в боте)
   // или импорт (node scripts/n8n-api.mjs profile-import). Умолчания — поведение до онбординга: онбординг
   // записывает все свои строки явно. Пресет frontend — откалиброванные правила владельца в коде (W2, W5)
@@ -125,7 +144,9 @@ const SETTINGS = {
 };
 
 // Встроенные спорные случаи промпта W2: как узнать их в списке пользователя, решение по умолчанию
-// и формулировка для поправки
+// и формулировка для поправки. 19.10.2026: AI — на любом языке, fullstack — только с бэкендом не на Node.js и не на
+// Python (fullstack на Node/Python — apply по правилам). Прежние подписи («AI на JS/TS», «fullstack») узнаются:
+// сохранённые списки не ломаются
 const BUILTIN_CASES = {
   vue: {
     aliases: ['vue без react', 'vue', 'nuxt', 'vue/nuxt', 'vue nuxt'],
@@ -133,14 +154,34 @@ const BUILTIN_CASES = {
     prompt: 'основной стек — Vue (Vue.js, Nuxt), а React нет в обязательных требованиях',
   },
   fullstack: {
-    aliases: ['fullstack', 'full stack', 'full-stack', 'фулстек', 'фуллстек', 'fullstack с react'],
+    aliases: [
+      'fullstack не на node/python',
+      'fullstack не на node',
+      'fullstack',
+      'full stack',
+      'full-stack',
+      'фулстек',
+      'фуллстек',
+      'fullstack с react',
+    ],
     default: 'maybe',
-    prompt: 'fullstack: в обязательных требованиях и React, и бэкенд на любом языке',
+    prompt: 'fullstack, где бэкенд не на Node.js и не на Python, или упор на бэкенд',
   },
-  ai_js: {
-    aliases: ['ai на js/ts', 'ai на js', 'ai на ts', 'ai js/ts', 'ai js', 'ai', 'разработка на ai'],
+  ai: {
+    aliases: [
+      'ai-разработка',
+      'ai разработка',
+      'разработка на ai',
+      'ai на любом языке',
+      'ai',
+      'ai на js/ts',
+      'ai на js',
+      'ai на ts',
+      'ai js/ts',
+      'ai js',
+    ],
     default: 'apply',
-    prompt: 'разработка на AI на JS/TS (Node.js, NestJS, TypeScript): интеграции LLM, AI-агенты, RAG',
+    prompt: 'разработка на AI на любом языке (интеграции LLM, AI-агенты, RAG), кроме мобильной',
   },
   react_native: {
     aliases: ['react native', 'react-native', 'rn'],
@@ -201,6 +242,7 @@ function validSetting(spec, value) {
       value.every((c) => CASE_RE.test(c?.case ?? '') && ['apply', 'maybe', 'skip'].includes(c?.decision))
     );
   }
+  if (spec.stamp) return typeof value === 'string' && (value === '' || Number.isFinite(Date.parse(value)));
   if (spec.text) return typeof value === 'string' && value.length <= spec.text;
   if (spec.tz) {
     try {

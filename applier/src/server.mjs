@@ -9,12 +9,17 @@
 //   POST /login                    открыть вход hh в окне робота («Общий экран» → vnc://localhost:5901)
 //   POST /resume                   перепроверить вход и капчу, снять блок
 //   POST /captcha {text}           ответ на капчу-картинку (фото в Telegram): ввести и отправить
-//   POST /apply {vacancyId, letter, requestId, dry, resume?}   отклик; APPLY_LIVE=0 или dry: true — сухой прогон до кнопки;
-//                                                       resume { hash, title? } — каким резюме hh откликаться (этап 5)
-//   POST /recon {vacancyIds?, inbox?, resume?, chooser?}   разведка без кликов — фоновое задание, 202 (resume — резюме, E0;
-//                                                       chooser — id вакансии: окно отклика и выбор резюме, этап 5)
+//   POST /apply {vacancyId, letter, requestId, dry, resume?, pace?}   отклик; APPLY_LIVE=0 или dry: true — сухой прогон до
+//                                                       кнопки; resume { hash, title? } — каким резюме hh откликаться (этап 5);
+//                                                       pace { min, max, hour } — темп (6.1c): рано или час исчерпан → 429
+//   POST /recon {vacancyIds?, inbox?, resume?, chooser?, negotiations?, maxPages?}   разведка без кликов — фоновое
+//                                                       задание, 202 (resume — резюме, E0; chooser — id вакансии: окно
+//                                                       отклика и выбор резюме, этап 5; negotiations — все «Отклики»
+//                                                       листанием, maxPages — не больше N страниц, docs/hh-applied.md)
 //   POST /resume/read {hash?}      резюме hh: поля из страницы резюме, только GET (часть D, S2); бэкап — /data/resume
 //   POST /resume/write {hash, changes, dry}  записать разделы резюме формами hh; RESUME_LIVE=0 или dry — сухой прогон
+//   POST /search {urls, wait?}     подборка hh «по резюме» для W1 (21.10.2026): адреса /search/vacancy?resume=<хеш>,
+//                                                       только GET → выдача каждого; занят — ждёт до wait мс (≤ 60 000), потом 409
 //   POST /record {on}              запись: пользователь откликается сам в окне робота
 //   POST /record/paste {text}      во время записи: вставить текст (письмо с Mac) туда, где курсор
 //   POST /shot                     скриншот окна сейчас
@@ -29,12 +34,14 @@ import { config } from './config.mjs';
 import { log } from './log.mjs';
 import { Busy, lock } from './lock.mjs';
 import { recallResult, rememberResult, store } from './store.mjs';
+import { paceCheck, paceLimits, paceView } from './pace.mjs';
 import { pause, prune, sleep } from './util.mjs';
 import {
   SHOTS,
   SHOT_NAME,
   backupSession,
   browserStatus,
+  guardReset,
   cookies,
   ensure,
   launchedHoursAgo,
@@ -47,11 +54,23 @@ import {
 import { LOGIN_URL, SEL } from './hh/selectors.mjs';
 import { applyFlow } from './flows/apply.mjs';
 import { captchaKind, captchaShown, visible } from './flows/dom.mjs';
-import { reconChooser, reconInbox, reconResume, reconVacancies } from './flows/recon.mjs';
+import { readNegotiations, reconChooser, reconInbox, reconResume, reconVacancies } from './flows/recon.mjs';
 import { readResume, writeResume } from './flows/resume.mjs';
+import { readSearch } from './flows/search.mjs';
 import { cleanChanges } from './hh/resume.mjs';
+import { cleanSearchUrls } from './hh/search.mjs';
 import { recordStart, recordStop, recording } from './flows/record.mjs';
-import { FAKE_OUTCOMES, fakeApply, fakeCaptcha, fakePush, fakeQueue, fakeResume, fakeResumeRead, fakeResumeWrite } from './fake.mjs';
+import {
+  FAKE_OUTCOMES,
+  fakeApply,
+  fakeCaptcha,
+  fakePush,
+  fakeQueue,
+  fakeResume,
+  fakeResumeRead,
+  fakeResumeWrite,
+  fakeSearch,
+} from './fake.mjs';
 
 if (config.token.length < 16) {
   console.error('APPLIER_TOKEN не задан или короче 16 символов — без него API робота открыт, не стартую');
@@ -106,6 +125,20 @@ function assertNotBlocked() {
   if (blocked) throw new HttpError(423, { blocked });
 }
 
+// Темп живых откликов (6.1c): потолок дня, пауза после прошлой попытки, лимит часа → 429 с reason и retryAt.
+// Сухой прогон не ограничиваем и не считаем
+function assertPace(limits) {
+  const today = store.today().applied;
+  if (config.live && today >= config.dailyCap) {
+    throw new HttpError(429, { error: `потолок дня робота: ${today} из ${config.dailyCap}`, reason: 'day', today, cap: config.dailyCap });
+  }
+  const wait = paceCheck(store.pace, limits);
+  if (wait) {
+    const what = wait.reason === 'gap' ? 'пауза между откликами' : `лимит часа: ${limits.hour}`;
+    throw new HttpError(429, { error: `${what}, можно с ${wait.retryAt}`, ...wait, pace: paceView(store.pace) });
+  }
+}
+
 // Фоновое задание (разведка): держит замок, прогресс — в GET /job
 let job = null;
 async function startJob(kind, run) {
@@ -150,6 +183,8 @@ async function health() {
     blocked: store.blocked,
     today: store.today(),
     cap: config.dailyCap,
+    // Темп живых откликов: следующая попытка не раньше nextAt, откликов за час (src/pace.mjs)
+    pace: { ...paceView(store.pace), hourCap: config.hourlyCap, minGap: config.minGap },
     lastApplyAt: store.lastApplyAt,
     lastInboxAt: store.lastInboxAt,
   };
@@ -190,6 +225,8 @@ const routes = {
       // «hh не принял отклик» (спам, правила): человек посмотрел аккаунт и нажал ▶️
       if (blocked?.kind === 'blocked') store.unblock('аккаунт проверен');
       if (!store.blocked) store.resetStreak();
+      // Человек решил капчу в окне отклика и отправил отклик (apply.mjs → handOver) — отклик снова закрыт
+      if (!store.blocked) guardReset();
       return { ok: true, loggedIn, blocked: store.blocked };
     }),
 
@@ -252,28 +289,30 @@ const routes = {
     const cached = recallResult(vacancyId);
     if (cached && cached.group === 'done') return { ...cached, cached: true };
     assertNotBlocked();
-    // Потолок живых откликов за «день» робота — сверх лимита из настроек бота (его считает W9): защита от ошибки в n8n
-    const today = store.today().applied;
-    if (config.live && !dry && today >= config.dailyCap) {
-      throw new HttpError(429, { error: `потолок дня робота: ${today} из ${config.dailyCap}`, today, cap: config.dailyCap });
-    }
-    const result = await lock.run('apply', () => applyFlow({ vacancyId, letter, dry, resume }));
+    // Потолки дня и часа, пауза — сверх лимитов из настроек бота (их считает W9): защита от ошибки в n8n
+    const live = config.live && !dry;
+    const limits = paceLimits(body.pace, config);
+    if (live) assertPace(limits);
+    const requestId = body.requestId ?? null;
+    const result = await lock.run('apply', () => applyFlow({ vacancyId, letter, dry, resume, requestId }));
     rememberResult(vacancyId, result);
-    return { ...result, requestId: body.requestId ?? null };
+    const pace = live ? store.markAttempt({ applied: result.outcome === 'applied', limits }) : paceView(store.pace);
+    return { ...result, requestId, pace };
   },
 
   'POST /recon': async (body) => {
     assertNotBlocked();
     const ids = Array.isArray(body.vacancyIds) ? body.vacancyIds : [];
     const chooser = String(body.chooser ?? '').replace(/\D/g, '');
-    if (!ids.length && !body.inbox && !body.resume && !chooser) {
-      throw new HttpError(400, { error: 'нужны vacancyIds, inbox: true, resume: true или chooser — id вакансии' });
+    if (!ids.length && !body.inbox && !body.resume && !chooser && !body.negotiations) {
+      throw new HttpError(400, { error: 'нужны vacancyIds, inbox: true, resume: true, negotiations: true или chooser — id вакансии' });
     }
     const started = await startJob('recon', async (progress) => ({
       vacancies: ids.length ? await reconVacancies(ids, progress) : null,
       inbox: body.inbox ? await reconInbox(progress) : null,
       resume: body.resume ? await reconResume(progress) : null,
       chooser: chooser ? await reconChooser(chooser, progress) : null,
+      negotiations: body.negotiations ? await readNegotiations({ maxPages: Number(body.maxPages) || 0 }, progress) : null,
     }));
     return { status: 202, body: { ok: true, job: { kind: started.kind, state: started.state } } };
   },
@@ -294,6 +333,16 @@ const routes = {
     if (c.error) throw new HttpError(400, { error: c.error });
     const dry = body.dry !== false || !config.resumeLive;
     return lock.run('resume-write', () => writeResume({ hash, changes: c.changes, dry }));
+  },
+
+  // Подборка hh по резюме для W1 (21.10.2026). Робот занят откликом — W1 ждёт до wait, иначе 409 и пропуск до
+  // следующего сбора (период «за сутки» перекрывает пропуск)
+  'POST /search': async (body) => {
+    assertNotBlocked();
+    const c = cleanSearchUrls(body.urls);
+    if (c.error) throw new HttpError(400, { error: c.error });
+    const wait = Math.min(Math.max(Number(body.wait) || 0, 0), 60000);
+    return lock.run('search', () => readSearch({ urls: c.urls }), { wait });
   },
 
   'POST /record': async (body) => {
@@ -387,8 +436,14 @@ async function fakeRoute(key, req) {
       };
     case 'POST /apply': {
       if (store.blocked) return { status: 423, body: { blocked: store.blocked } };
+      // Темп — как у живого: так фейк проверяет паузы W9 (6.1c)
+      const limits = paceLimits(body.pace, config);
+      const wait = paceCheck(store.pace, limits);
+      if (wait) return { status: 429, body: { error: `фейк: ${wait.reason}`, ...wait, pace: paceView(store.pace) } };
       const out = await lock.run('apply', () => fakeApply(body));
-      return out.status === 200 ? { status: 200, body: { ...out.body, requestId: body.requestId ?? null } } : out;
+      if (out.status !== 200) return out;
+      const pace = store.markAttempt({ applied: out.body.outcome === 'applied', limits });
+      return { status: 200, body: { ...out.body, requestId: body.requestId ?? null, pace } };
     }
     case 'POST /captcha':
       return fakeCaptcha(body.text ?? '');
@@ -401,6 +456,11 @@ async function fakeRoute(key, req) {
       if (store.blocked) return { status: 423, body: { blocked: store.blocked } };
       const c = cleanChanges(body.changes);
       return c.error ? { status: 400, body: { error: c.error } } : { status: 200, body: fakeResumeWrite(c.changes) };
+    }
+    case 'POST /search': {
+      if (store.blocked) return { status: 423, body: { blocked: store.blocked } };
+      const c = cleanSearchUrls(body.urls);
+      return c.error ? { status: 400, body: { error: c.error } } : { status: 200, body: fakeSearch(c.urls) };
     }
     case 'POST /notice':
       return { status: 200, body: noticeAck(body) };
@@ -422,7 +482,7 @@ server.requestTimeout = 10 * 60 * 1000;
 server.headersTimeout = 60 * 1000;
 
 server.listen(config.port, () => {
-  log('start', { version: config.version, live: config.live, fake: config.fake, cap: config.dailyCap });
+  log('start', { version: config.version, live: config.live, fake: config.fake, cap: config.dailyCap, hourCap: config.hourlyCap, minGap: config.minGap });
   if (!config.fake) ensure().catch(() => {}); // браузер — сразу, чтобы /health знал, вошли ли мы
 });
 

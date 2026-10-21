@@ -7,6 +7,8 @@
 
 // @include n8n/shared/time.js
 
+// @include n8n/shared/shadow.js
+
 // @include n8n/shared/settings.js
 
 // @include n8n/shared/schedule.js
@@ -25,6 +27,7 @@ const now = Date.now();
 const since = now - DAY;
 const at = (s) => Date.parse(s) || 0;
 const rows = $('All rows').all().map((i) => i.json).filter((r) => r.id);
+const settings = loadSettings($('Settings').all());
 const expired = new Set(from('Expire rows').map((r) => r.id));
 const archived = new Set(from('Archive status').map((r) => r.id));
 
@@ -46,6 +49,14 @@ const topReasons = Object.entries(reasons)
 // Время оценки — card_at (пишет W2); у строк до этапа 5 его нет — берём время создания
 const scored = rows.filter((r) => r.decision && at(r.card_at || r.createdAt) >= since);
 const count = (list, f) => list.filter(f).length;
+// Подборка hh «по резюме» (21.10.2026): что она дала сверх обычного поиска (via = resume) — строка, пока подборка хоть
+// раз что-то принесла
+const viaResume = (r) => r.via === 'resume';
+const resumeFresh = fresh.filter(viaResume);
+const resumeScored = scored.filter(viaResume);
+const resumeLine = rows.some(viaResume)
+  ? `📄 Из них только из подборки hh по резюме: ${resumeFresh.length} → оценено ${resumeScored.length}${resumeScored.length ? ` (🟢 ${count(resumeScored, (r) => r.decision === 'apply')})` : ''}`
+  : '';
 
 // Решения пользователя за сутки (по времени последнего изменения строки) и отправленные отклики
 const mine = rows.filter((r) => r.my_decision && at(r.updatedAt) >= since);
@@ -55,10 +66,9 @@ const sent = count(rows, (r) => at(r.applied_at) >= since);
 const tailsWaiting = count(rows, (r) => r.status === 'waiting' && !expired.has(r.id) && !archived.has(r.id));
 const tailsApproved = count(rows, (r) => r.status === 'approved' && !archived.has(r.id));
 
-// Теневой режим: оценки пользователя там, где решение нейросети известно
-// («📨 откликался раньше» — my_decision = earlier — не сравниваем: отклик был до бота)
-const shadow = rows.filter((r) => ['apply', 'maybe', 'skip'].includes(r.my_decision) && ['apply', 'maybe', 'skip'].includes(r.decision));
-const agree = count(shadow, (r) => r.my_decision === r.decision);
+// Теневой режим: оценки пользователя там, где решение нейросети известно, — с метки «🔄 Теневой заново»
+// (n8n/shared/shadow.js)
+const shadow = shadowStats(rows, settings['llm.shadow_since']);
 
 // Сбои: запуски n8n за сутки (публичный API), туннель, хвост оценки нейросетью
 const NAMES = {
@@ -87,7 +97,7 @@ for (const e of errors) errorsBy[NAMES[e.workflowId] ?? e.workflowId] = (errorsB
 const windowEnd = now - 10 * 60 * 1000;
 const windowStart = windowEnd - DAY;
 // Расписание — из настроек бота (⚙️ → 🕐 Сбор). На паузе сборов не ждём — и не тревожим
-const sch = scheduleFrom(loadSettings($('Settings').all()));
+const sch = scheduleFrom(settings);
 const expected = countCollectSlots(windowStart, windowEnd, sch);
 const collected = count(
   $('Runs')
@@ -100,10 +110,11 @@ const collected = count(
     at(r.started_at) <= windowEnd,
 );
 // Ждут оценки дольше 30 мин: W2 запускается сразу после сбора, свежие строки detailed — норма
-// (scoring — W2 сейчас оценивает; застрявшие в scoring вернёт ветка «Unstick»)
+// (scoring — W2 сейчас оценивает; застрявшие в scoring вернёт ветка «Unstick»). Время — когда строка стала detailed
+// (updatedAt), а не создана: строки из очереди и разового догона создавались давно (19.10.2026)
 const pendingScore = count(
   rows,
-  (r) => ['detailed', 'scoring'].includes(r.status) && at(r.createdAt) < now - 30 * 60 * 1000,
+  (r) => ['detailed', 'scoring'].includes(r.status) && at(r.updatedAt) < now - 30 * 60 * 1000,
 );
 const tunnelCode = $input.first().json.statusCode;
 const tunnelOk = !$env.NGROK_DOMAIN || tunnelCode === 403; // 403 = туннель жив, политика не пускает чужих
@@ -120,16 +131,21 @@ if (errors.length)
 if (!tunnelOk) problems.push(`туннель не отвечает (${tunnelCode ?? 'нет ответа'}) — кнопки не работают`);
 if (pendingScore) problems.push(`ждут оценки нейросетью: ${pendingScore}`);
 
-// Робот-отклик (этап 6): отклики за сутки и его здоровье — если он включён в ⚙️
-const settings = loadSettings($('Settings').all());
+// Робот-отклик (этап 6): отклики за сутки и его здоровье — если он включён в ⚙️. Автоотклик (6.1c): сколько из них
+// робот взял сам (🤖), сколько ты убрал из очереди (⛔) и к скольким письмо не вышло. Время попытки — apply_at
+// (у строк до 20.10.2026 его нет — по updatedAt)
 const robotOn = settings['apply.enabled'];
+const tried = (r) => (at(r.apply_at) || at(r.updatedAt)) >= since;
 const robotRows = rows.filter((r) => r.apply_by === 'robot' && at(r.applied_at) >= since);
-const robotManual = count(rows, (r) => ['test', 'external', 'hidden'].includes(r.apply_result) && at(r.updatedAt) >= since);
-const robotErrors = count(rows, (r) => r.apply_result === 'error' && r.status === 'approved' && at(r.updatedAt) >= since);
+const robotAuto = count(robotRows, (r) => r.apply_mode === 'auto');
+const robotManual = count(rows, (r) => ['test', 'external', 'hidden'].includes(r.apply_result) && tried(r));
+const robotErrors = count(rows, (r) => r.apply_result === 'error' && r.status === 'approved' && tried(r));
+const robotStopped = count(rows, (r) => r.apply_result === 'stopped' && at(r.apply_at) >= since);
+const robotNoLetter = count(rows, (r) => r.apply_result === 'no_letter' && at(r.apply_at) >= since);
 const robotQueue = count(rows, (r) => r.apply_state);
 const robotLineText =
   robotOn || robotRows.length || robotQueue
-    ? `🚀 Робот: ${robotRows.length}${robotRows.length ? ` (✉️ ${count(robotRows, (r) => r.apply_letter === 'attached')} · 💬 ${count(robotRows, (r) => r.apply_letter === 'chat')})` : ''}${robotManual ? ` · 🧩 вручную ${robotManual}` : ''}${robotErrors ? ` · ⚠️ ${robotErrors}` : ''}${robotQueue ? ` · в очереди ${robotQueue}` : ''}${settings['apply.paused'] ? ' · ⏸ пауза' : ''}`
+    ? `🚀 Робот: ${robotRows.length}${robotRows.length ? ` (${robotAuto ? `🤖 авто ${robotAuto} · ` : ''}✉️ ${count(robotRows, (r) => r.apply_letter === 'attached')} · 💬 ${count(robotRows, (r) => r.apply_letter === 'chat')})` : ''}${robotManual ? ` · 🧩 вручную ${robotManual}` : ''}${robotErrors ? ` · ⚠️ ${robotErrors}` : ''}${robotStopped ? ` · ⛔ убрал ${robotStopped}` : ''}${robotNoLetter ? ` · ✉️ письмо не вышло ${robotNoLetter}` : ''}${robotQueue ? ` · в очереди ${robotQueue}` : ''}${settings['apply.paused'] ? ' · ⏸ пауза' : ''}${settings['apply.enabled'] && settings['apply.auto'] ? ' · 🤖 автоотклик вкл' : ''}`
     : '';
 if (robotOn) {
   const h = $('Robot health').first()?.json ?? {};
@@ -142,14 +158,13 @@ const date = localDM(now);
 const lines = [
   `☀️ <b>Сводка за сутки</b> · ${date}`,
   `🔎 Новых вакансий: ${fresh.length} → фильтр отсеял ${rejected.length}${topReasons ? ` (${topReasons})` : ''}`,
+  resumeLine,
   `🤖 Оценено: ${scored.length}${scored.length ? ` — 🟢 ${count(scored, (r) => r.decision === 'apply')} · 🟡 ${count(scored, (r) => r.decision === 'maybe')} · 🔴 ${count(scored, (r) => r.decision === 'skip')}` : ''}${count(scored, (r) => r.decision === 'error') ? ` · ⚠️ ${count(scored, (r) => r.decision === 'error')}` : ''}`,
   `👤 Твои решения: ✅ ${count(mine, (r) => r.my_decision === 'apply')} · 🤔 ${count(mine, (r) => r.my_decision === 'maybe')} · ❌ ${count(mine, (r) => r.my_decision === 'skip')} · 📨 отправлено ${sent}${count(mine, (r) => r.my_decision === 'earlier') ? ` · 📨 раньше ${count(mine, (r) => r.my_decision === 'earlier')}` : ''}`,
   robotLineText,
   `⏳ Хвосты: без решения ${tailsWaiting} · ✅ без отклика ${tailsApproved}`,
   expired.size || archived.size ? `⌛ Устарели: ${expired.size} · 🔒 закрылись на hh: ${archived.size}` : '',
-  shadow.length >= 50
-    ? `🧪 Теневой режим: ${shadow.length}/50, совпало ${agree} (${Math.round((agree / shadow.length) * 100)}%) — пора разбирать, напиши Claude`
-    : `🧪 Теневой режим: ${shadow.length}/50${shadow.length ? `, совпало ${agree} (${Math.round((agree / shadow.length) * 100)}%)` : ''}`,
+  shadow.pairs >= SHADOW_GOAL ? `${shadowLine(shadow)} — пора разбирать, напиши Claude` : shadowLine(shadow),
   sch.paused ? '⏸ Сбор на паузе (⚙️ Настройки → 🕐 Сбор)' : '',
   problems.length
     ? `⚠️ Сбои: ${problems.join(' · ')}`

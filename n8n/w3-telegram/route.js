@@ -13,9 +13,10 @@
 //      (op resume), ответ на фото капчи (подпись начинается с ROBOT_PROMPTS.captcha) — op captcha, text — ответ.
 //   { action: 'reply', replyTo, messageId, chatId, text } — ответ (reply) на вопрос «почему?», карточку или письмо.
 //   { action: 'panel', view, tab, page, id, chatId, queryId, messageId, userMessageId } — меню бота → W7 Bot menu:
-//      кнопки под полем ввода («📋 Вакансии», «📊 Статистика», «⚙️ Настройки»), команды /start, /menu, /vacancies,
-//      /stats, /settings, /v<id> и кнопки панели (callback_data p:…, s:…, sc:…, sn).
-//      view = list | stats | start | open | noop | sync | settings;
+//      кнопки под полем ввода («📋 Вакансии», «📊 Статистика», «🤖 Автоотклик», «⚙️ Настройки»), команды /start, /menu,
+//      /vacancies, /stats, /auto, /settings, /v<id> и кнопки панели (callback_data p:…, s:…, sc:…, sn, au:…).
+//      view = list | stats | start | open | noop | sync | settings | auto;
+//      auto (6.1c): панель автоотклика; change = { name: 'apply.auto', set } — ▶️ Запустить / ⏹ Остановить (au:on|off);
 //      settings: section — раздел, change = { name, toggle? } — следующее значение настройки или правило фильтра,
 //      collectNow — собрать сейчас, ask — вопрос со списком, input = { name, text } — ответ на него (promptId — вопрос),
 //      unban — убрать компанию из чёрного списка, id — компания для подтверждения (/bl<id>);
@@ -78,6 +79,11 @@ if (cb) {
   if (data === 'p:s') return panel({ ...pressed, view: 'stats' });
   if (data === 'p:n') return panel({ chatId, queryId: cb.id, view: 'list', resume: true });
   if (data === 'p:x') return panel({ ...pressed, view: 'noop' });
+  // 🤖 Автоотклик (6.1c): значение явное — двойное нажатие ▶️ не выключит
+  const auto = data.match(/^au:(on|off|r)$/);
+  if (auto) {
+    return panel({ ...pressed, view: 'auto', ...(auto[1] !== 'r' && { change: { name: 'apply.auto', set: auto[1] === 'on' } }) });
+  }
 
   // ⚙️ Настройки (W7): раздел, следующее значение настройки, «🔄 Собрать сейчас»
   const section = data.match(/^s:([a-z]+)$/);
@@ -195,6 +201,7 @@ const command = text.match(/^\/([a-z]+)(\d*)(?:@\w+)?(?:\s|$)/i);
 const name = command?.[1].toLowerCase();
 if (text === MENU.list || name === 'vacancies') return panel({ ...typed, view: 'list' });
 if (text === MENU.stats || name === 'stats') return panel({ ...typed, view: 'stats' });
+if (text === MENU.auto || name === 'auto') return panel({ ...typed, view: 'auto' });
 if (text === MENU.settings || name === 'settings') return panel({ ...typed, view: 'settings', section: 'root' });
 if (name === 'start' || name === 'menu') return panel({ ...typed, view: 'start' });
 if (name === 'v' && command[2]) return panel({ ...typed, view: 'open', id: Number(command[2]) });

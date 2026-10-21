@@ -4,11 +4,15 @@
 // Static data (global): alertedSince — блок, о котором уже сообщили (одна тревога на блок, по since);
 //   alertMessageId — та тревога (снят блок → «✅ снова в работе»); downDay, limitDay — сообщения «не отвечает» и
 //   «лимит» — раз в «день» робота.
-// Выход: { heal[], next, wait, notice, resolved, views[] }
+// Выход: { heal[], next, wait, notice, resolved, views[], pace, today, limit, auto }
 //   heal — починка: applying дольше 6 мин (n8n или робот упали посреди отклика) → queued; в очереди, но решение
 //          сменили (не ✅) или резюме вакансии больше не связано с hh → снять. Повтор безопасен: робот перед кликом
 //          проверяет «уже откликались» на hh;
-//   next — кого отправлять (старейшая queued, + resume { hash, title } — каким резюме hh откликаться); null — нельзя: wait = disabled | paused | down | blocked | busy | limit;
+//   next — кого отправлять (старейшая queued, + resume { hash, title } — каким резюме hh откликаться); null — нельзя:
+//          wait = disabled | paused | down | blocked | busy | limit | hour (лимит часа) | pace (пауза между откликами) |
+//          night (в очереди только автоотклик, а сейчас тихие часы — 6.1c);
+//   pace — темп для POST /apply { min, max, hour } (⚙️ → 🚀 Робот, n8n/shared/robot.js → PACE); today, limit — отклики
+//          за «день» и лимит дня (их ждёт «Feed» автоотклика);
 //   notice — сообщение: { kind: captcha | alert | info, key, text, shot, silent, button }; key — для POST /notice
 //            робота: параллельные запуски W9 видят один блок, а отправит тревогу только первый;
 //   resolved — блок снят: { messageId, text, promptId } — поправить прошлую тревогу и удалить фото капчи;
@@ -42,7 +46,23 @@ const health = h.ok && !h.error ? h : null;
 const state = $getWorkflowStaticData('global');
 const dayKey = new Date(robotDayStart(now)).toISOString().slice(0, 10);
 const limit = s['apply.daily_limit'];
-const out = { heal: [], next: null, wait: '', notice: null, resolved: null, views: [] };
+// Темп (6.1c): пауза и лимит часа держит робот — n8n смотрит его /health, чтобы не звать зря
+const pace = robotPace(s);
+const robotPaceNow = health?.pace ?? {};
+const nextAt = Date.parse(robotPaceNow.nextAt ?? '') || 0;
+const out = {
+  heal: [],
+  next: null,
+  wait: '',
+  notice: null,
+  resolved: null,
+  views: [],
+  pace: { min: pace.min, max: pace.max, hour: pace.hour },
+  today,
+  limit,
+  // Автоотклик включён — ветка «Feed» (6.1c)
+  auto: Boolean(s['apply.enabled'] && s['apply.auto']),
+};
 
 // 1. Починка
 for (const r of queue) {
@@ -53,6 +73,9 @@ for (const r of queue) {
 const healed = new Map(out.heal.map((x) => [x.id, x.to]));
 const queued = queue.filter((r) => r.status === 'approved' && (healed.get(r.id) ?? r.apply_state) === 'queued');
 const applying = queue.some((r) => r.status === 'approved' && r.apply_state === 'applying' && !healed.has(r.id));
+// Ночью (тихие часы) автоотклик ждёт, вакансии по 🚀 — уходят как раньше
+const night = quietHours(now);
+const sendable = queued.filter((r) => !(night && r.apply_mode === 'auto'));
 
 // 2. Можно ли сейчас
 if (!s['apply.enabled']) out.wait = 'disabled';
@@ -61,6 +84,9 @@ else if (!health) out.wait = 'down';
 else if (health.blocked) out.wait = 'blocked';
 else if (health.busy || applying) out.wait = 'busy';
 else if (today >= limit) out.wait = 'limit';
+else if ((Number(robotPaceNow.hour) || 0) >= pace.hour) out.wait = 'hour';
+else if (nextAt > now) out.wait = 'pace';
+else if (queued.length && !sendable.length) out.wait = 'night';
 
 // 3. Сообщения: блок — один раз на блок (по since), «не отвечает» и «лимит» — раз в «день» робота
 const loud = job.fromUser || !quietHours(now);
@@ -126,7 +152,8 @@ if (!out.notice && out.wait === 'down' && queued.length && state.downDay !== day
     silent: !loud,
   };
 }
-if (!out.notice && out.wait === 'limit' && queued.length && state.limitDay !== dayKey) {
+// Автоотклик (6.1c): лимит дня видно на панели 🤖 — отдельным сообщением не пишем
+if (!out.notice && out.wait === 'limit' && queued.length && !out.auto && state.limitDay !== dayKey) {
   state.limitDay = dayKey;
   out.notice = {
     kind: 'info',
@@ -137,7 +164,14 @@ if (!out.notice && out.wait === 'limit' && queued.length && state.limitDay !== d
 }
 
 // 4. Нажали 🚀, а робот ждёт — письмо сразу говорит, чего
-const WAIT = { paused: 'снятия паузы (⚙️ → 🚀 Робот)', down: 'запуска робота', blocked: BLOCK[health?.blocked?.kind] ?? 'проверки', limit: 'завтра, после 09:00 (лимит дня)' };
+const WAIT = {
+  paused: 'снятия паузы (⚙️ → 🚀 Робот)',
+  down: 'запуска робота',
+  blocked: BLOCK[health?.blocked?.kind] ?? 'проверки',
+  limit: 'завтра, после 09:00 (лимит дня)',
+  hour: `следующего часа (лимит — ${pace.hour} в час)`,
+  pace: `паузы между откликами (до ${localTime(new Date(nextAt || now).toISOString())})`,
+};
 if (job.fromUser && job.op === 'enqueue' && WAIT[out.wait]) {
   const r = queued.find((x) => x.id === job.id);
   if (r) {
@@ -154,5 +188,5 @@ if (job.fromUser && job.op === 'enqueue' && WAIT[out.wait]) {
 }
 
 // 5. Кого отправлять
-if (!out.wait && queued.length) out.next = { ...queued[0], resume: robotResume(s, queued[0]).resume };
+if (!out.wait && sendable.length) out.next = { ...sendable[0], resume: robotResume(s, sendable[0]).resume };
 return [{ json: out }];

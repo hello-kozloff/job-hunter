@@ -5,6 +5,11 @@
 //   с кнопками [📝 Отклик на hh] [🔗 Вакансия] / [🔄 Переписать] [📨 Отправил] / [↩️ Отменить отклик]; robot (этап 6: робот включён в ⚙️,
 //   вакансия ✅ без теста и не на сайте работодателя) → «Send letter: robot» — ещё и [🚀 Откликнуться роботом] сверху (robot_button —
 //   подпись с резюме при нескольких резюме, n8n/shared/robot.js → robotButtonText).
+// Автоотклик (6.1c, 20.10.2026): auto — после записи письмо уходит в очередь робота (W5 «Robot queue» → W9 enqueue):
+//   новое письмо (✅ или захват автооткликом), автоотклик включён, вакансия подходит роботу; «🔄» и правка — нет: их
+//   человек правит сам. quiet — письмо к захваченной карточке в чат не шлём, только записываем («Quiet letter»;
+//   решение пользователя: «в чате спам — хочу открыть карточку автоотклик и видеть, что журнал пополняется»).
+//   auto_fail — такое письмо не вышло: карточка — снова «ждёт решения» («Auto fail»), Feed W9 попробует через 15 мин.
 
 // @include n8n/shared/time.js
 
@@ -12,6 +17,7 @@
 // @include n8n/shared/settings.js
 // @include n8n/shared/resumes.js
 // @include n8n/shared/robot.js
+// @include n8n/shared/auto.js
 // @include n8n/shared/letter.js
 
 const jobs = new Map($('Jobs').all().map((i) => [i.json.id, i.json]));
@@ -45,6 +51,8 @@ return $input.all().map((item) => {
       // Нейросеть повторилась (Parse letter) — предупреждение в тексте письма
       same: r.same ?? '',
       letter: r.letter ?? '',
+      // Кто написал письмо — колонка letter_model («Letter sent»), подпись в шапке и после перерисовки в W3/W9
+      letter_model: r.letter_model ?? '',
       instruction: job.instruction ?? '',
       // Новое письмо — новая отметка об отклике не нужна: строка остаётся approved
       text: letterText({ ...row, ...r, status: 'approved', instruction: job.instruction, robot_hint: robotHint }),
@@ -54,6 +62,11 @@ return $input.all().map((item) => {
       letter_notes: row.letter_notes ?? '',
       robot,
       robot_button: robotButtonText(row),
+      auto: robot && autoOn(settings) && (job.auto || r.mode === 'new'),
+      silent: Boolean(job.auto),
+      quiet: Boolean(job.auto) && Boolean(r.ok),
+      auto_fail: Boolean(job.auto) && !r.ok,
+      apply_tries: (Number(row.apply_tries) || 0) + 1,
     },
   };
 });

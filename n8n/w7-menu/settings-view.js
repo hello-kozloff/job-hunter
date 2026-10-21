@@ -14,10 +14,12 @@ const ranNode = (name) => {
     return []; // нода в этом запуске не выполнялась
   }
 };
-const settingChange = ranNode('Setting change')[0];
+// Изменения этого нажатия: обычно одно, у ▶️ автоотклика — несколько (apply.auto, apply.enabled, …)
+const settingChanges = ranNode('Setting change');
+const settingChange = settingChanges[0];
 const settings = {
   ...loadSettings($('Settings').all()),
-  ...(settingChange ? { [settingChange.name]: settingChange.value } : {}),
+  ...Object.fromEntries(settingChanges.map((c) => [c.name, c.value])),
 };
 const collectSchedule = scheduleFrom(settings);
 // Чёрный список: строки таблицы blacklist, без только что убранной («Delete ban» выполнилась раньше)
@@ -35,7 +37,8 @@ const mskHourLocal = (h) => {
 const periodText = (days) => SEARCH_LABELS.search_period[days] ?? `за ${days} дн.`;
 const responsesText = (n) => (n ? `больше ${n}` : 'не отсекать');
 const VERDICT_TEXT = { apply: '🟢 apply', maybe: '🟡 maybe', skip: '🔴 skip' };
-const providerText = (p) => (p === 'claude' ? 'Claude' : 'Gemini');
+const PROVIDER_TEXT = { gemini: 'Gemini', claude: 'Claude API', 'claude-cli': 'Claude по подписке' };
+const providerText = (p) => PROVIDER_TEXT[p] ?? PROVIDER_TEXT.gemini;
 // Правила пресета (у generic — без фронтенд-правил) и включённые из них
 const presetRules = () => Object.keys(filterRulesFor(settings['profile.preset']));
 const rulesOn = () => presetRules().filter((id) => !settings['filter.rules_off'].includes(id));
@@ -73,7 +76,7 @@ function settingsRootView(note) {
     `🔎 <b>Поиск</b>: ${periodText(settings['search.period'])} · везде — ${settings['search.anywhere'].length} сл., в названии — ${settings['search.in_name'].length}`,
     `🧹 <b>Фильтр</b>: правил ${rulesOn().length} из ${presetRules().length} · отклики — ${responsesText(settings['filter.max_responses'])} · стоп-слов ${settings['filter.stop_words'].length} · ЧС ${blacklist.length}`,
     `🤖 <b>Нейросеть</b>: ${providerText(settings['llm.provider'])} · теневой режим ${settings['llm.shadow'] ? 'вкл' : 'выкл'} · спорных случаев ${settings['llm.cases'].length}`,
-    `🚀 <b>Робот</b>: ${settings['apply.enabled'] ? 'вкл' : 'выкл'}${settings['apply.paused'] ? ' · ⏸ пауза' : ''} · сегодня ${robotToday(rows, now)}/${settings['apply.daily_limit']} · ${robotState().short}`,
+    `🚀 <b>Робот</b>: ${settings['apply.enabled'] ? 'вкл' : 'выкл'}${settings['apply.paused'] ? ' · ⏸ пауза' : ''}${autoOn(settings) ? ' · 🤖 автоотклик' : ''} · сегодня ${robotToday(rows, now)}/${settings['apply.daily_limit']} · ${robotState().short}`,
   ].filter((line) => line !== null);
   if (note) lines.push('', note);
   return {
@@ -226,36 +229,59 @@ function settingsConfirmView(id) {
   };
 }
 
+// Совпадения теневого режима и с какой минуты они считаются (llm.shadow_since, n8n/shared/shadow.js)
+function shadowNote() {
+  const since = settings['llm.shadow_since'];
+  const { pairs, agree } = shadowStats(rows, since);
+  const from = Date.parse(since) ? `с ${localDate(since)} ${localTime(since)}` : 'по всем карточкам';
+  return `Совпадения ${from}: ${pairs}/${SHADOW_GOAL}${pairs ? `, совпало ${agree} (${Math.round((agree / pairs) * 100)}%)` : ''}. «🔄 Теневой заново» — считать с этой минуты, оценки не меняются`;
+}
+
+// Claude по подписке (19.10.2026, docs/claude-cli.md): модели оценки и текстов — кнопками «▸» (раскладка set_llm_cli)
 function settingsLlmView() {
   const provider = settings['llm.provider'];
+  const cli = provider === 'claude-cli';
   const model = provider === 'claude' ? $env.CLAUDE_MODEL || 'claude-haiku-4-5' : $env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
   const lines = [
     '🤖 <b>Нейросеть</b>',
     '',
-    `Модель: ${providerText(provider)} (${esc(model)}) — оценка вакансий и письма`,
+    cli
+      ? `Модель: Claude по подписке — оценка ${esc(modelLabel(settings['llm.cli_score']))}, письма и резюме ${esc(modelLabel(settings['llm.cli_text']))}`
+      : `Модель: ${providerText(provider)} (${esc(model)}) — оценка вакансий и письма`,
     settings['llm.shadow']
       ? 'Теневой режим: вкл — карточки на все оценки, включая 🔴'
       : 'Теневой режим: выкл — 🔴 без карточек: только в итоге после сбора и в меню на вкладке ❌',
+    shadowNote(),
     '',
     '<b>Спорные случаи</b> — какое решение ставить:',
     ...(settings['llm.cases'].length
       ? settings['llm.cases'].map((c) => `• ${esc(c.case)} — ${VERDICT_TEXT[c.decision]}`)
       : ['• нет — нейросеть решает по общим правилам']),
     '',
-    '✏️ — прислать список «случай: решение» через запятую. Встроенные случаи — Vue без React, fullstack, AI на JS/TS, React Native: убрал из списка — правило не действует, поменял решение — меняется. Новые случаи описывай как угодно, нейросеть их поймёт.',
+    '✏️ — прислать список «случай: решение» через запятую. Встроенные случаи — Vue без React, fullstack (бэкенд не на Node/Python), AI-разработка (любой язык), React Native: убрал из списка — правило не действует, поменял решение — меняется. Новые случаи описывай как угодно, нейросеть их поймёт.',
   ];
   if (provider === 'claude') {
-    lines.push('', '⚠️ Для Claude нужен ключ ANTHROPIC_API_KEY в .env и деплой — без него оценка встанет с ошибкой.');
+    lines.push('', '⚠️ Для Claude API нужен ключ ANTHROPIC_API_KEY в .env и деплой — без него оценка встанет с ошибкой.');
+  }
+  if (cli) {
+    lines.push(
+      '',
+      'Claude по подписке: токен CLAUDE_CODE_OAUTH_TOKEN в .env и деплой (docs/claude-cli.md). Лимит подписки общий с твоей работой в Claude: кончился или вход слетел — этот запрос делает Gemini, в письме и в сообщении о сборе будет строка. Оценки не берут подписку, когда окно лимита занято на 80%.',
+    );
   }
   if (mainResumeNote) lines.push('', 'Модель и теневой режим — общие для всех резюме; спорные случаи ниже — основного.', mainResumeNote);
   const notes = changeNotes();
   if (notes.length) lines.push('', ...notes);
   return {
-    layout: 'set_llm',
+    layout: cli ? 'set_llm_cli' : 'set_llm',
     text: lines.join('\n'),
     b: {
       provider: { text: `Модель: ${providerText(provider)} ▸`, cb: 'sc:llm.provider' },
       shadow: { text: `Теневой: ${settings['llm.shadow'] ? 'вкл' : 'выкл'} ▸`, cb: 'sc:llm.shadow' },
+      ...(cli && {
+        score: { text: `Оценка: ${modelLabel(settings['llm.cli_score'])} ▸`, cb: 'sc:llm.cli_score' },
+        texts: { text: `Тексты: ${modelLabel(settings['llm.cli_text'])} ▸`, cb: 'sc:llm.cli_text' },
+      }),
     },
   };
 }
@@ -274,6 +300,7 @@ function settingsApplyView() {
   const on = settings['apply.enabled'];
   const paused = settings['apply.paused'];
   const limit = settings['apply.daily_limit'];
+  const pace = robotPace(settings);
   const lines = [
     '🚀 <b>Робот-отклик</b>',
     '',
@@ -282,6 +309,8 @@ function settingsApplyView() {
       : 'Выключен: кнопки 🚀 под письмами нет, откликаешься сам',
     `Состояние: ${robotState().long}`,
     `Сегодня: ${robotToday(rows, now)} из ${limit} (день — с 09:00 по местному) · в очереди: ${count(rows, (r) => r.apply_state)}`,
+    `Темп: ${pace.name} — пауза ${paceGap(pace)} между откликами, не больше ${pace.hour} в час`,
+    `🤖 Автоотклик: ${autoOn(settings) ? 'вкл' : 'выкл'} · хвост: ${settings['apply.backlog'] ? 'карточки за 3 дня' : 'только новые после включения'} — запуск и журнал: кнопка «${MENU.auto}»`,
     '',
     `Окно робота — VNC ${VNC_URL} (на Mac — «Общий экран», режим «Управление»; на Windows и Linux — любой VNC-клиент). Капча и вход в hh — там; потом ▶️ или /go.`,
   ];
@@ -294,6 +323,8 @@ function settingsApplyView() {
       enabled: { text: `Робот: ${on ? 'вкл' : 'выкл'} ▸`, cb: 'sc:apply.enabled' },
       paused: { text: paused ? '▶️ Снять паузу' : '⏸ Пауза', cb: 'sc:apply.paused' },
       limit: { text: `Лимит: ${limit} в день ▸`, cb: 'sc:apply.daily_limit' },
+      pace: { text: `Темп: ${pace.name} ▸`, cb: 'sc:apply.pace' },
+      backlog: { text: `Хвост: ${settings['apply.backlog'] ? 'за 3 дня' : 'только новые'} ▸`, cb: 'sc:apply.backlog' },
     },
   };
 }

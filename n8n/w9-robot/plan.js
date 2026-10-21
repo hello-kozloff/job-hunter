@@ -1,8 +1,11 @@
 // W9 · Plan — 🚀 или ⛔ под письмом: можно ли, куда перевести очередь, что ответить и как перерисовать письмо.
 // Нода: Code, режим «Run Once for All Items». Вход: «Row» — строка вакансии (пустой item — строки нет);
 // «Job» — нажатие; «Settings» — настройки бота.
-// Выход: { id, op, ok, save, toast, layout, chatId, messageId, queryId, text, url, apply_url, robot_button }
-//   save: enqueue — '' → queued (✅, письмо есть, нет теста, робот включён); stop — queued → ''; '' — ничего не пишем.
+// Выход: { id, op, ok, save, mode, tries, toast, layout, chatId, messageId, queryId, text, url, apply_url, robot_button }
+//   save: enqueue — '' → queued (✅, письмо есть, нет теста, робот включён); stop — queued → '' (apply_result = stopped:
+//   автоотклик её больше не возьмёт); '' — ничего не пишем.
+//   Автоотклик (6.1c, job.auto — W5 после письма, «Feed» W9): не нажатие — без тоста; только пока автоотклик включён,
+//   не после ⛔ (stopped); mode = auto → apply_mode, tries = 0 (попытки письма не в счёт сбоев робота). 🚀 — mode = ''.
 //   Запись — Update с условием («Enqueue» / «Unqueue»): двойное нажатие или робот, успевший взять вакансию, ничего
 //   не сломают — «Done» это увидит. layout — вид письма: wait (⏳ + ⛔) | robot (с 🚀) | manual (без 🚀) | '' — не трогать.
 
@@ -12,6 +15,7 @@
 // @include n8n/shared/settings.js
 // @include n8n/shared/resumes.js
 // @include n8n/shared/robot.js
+// @include n8n/shared/auto.js
 // @include n8n/shared/letter.js
 
 const job = $('Job').first().json;
@@ -22,6 +26,8 @@ const out = {
   op: job.op,
   ok: false,
   save: '',
+  mode: job.auto ? 'auto' : '',
+  tries: job.auto ? 0 : Number(row.apply_tries) || 0,
   toast: '',
   layout: '',
   chatId: job.chatId,
@@ -37,6 +43,14 @@ let view = { ...row };
 
 if (!row.id) {
   out.toast = 'Вакансии нет в таблице';
+} else if (job.op === 'enqueue' && job.auto) {
+  // Автоотклик: письмо осталось как есть (с 🚀), если вакансия ему уже не подходит — выключили, ⛔, ❌, тест
+  if (autoOn(s) && !s['apply.paused'] && !row.apply_state && row.status === 'approved' && row.apply_result !== 'stopped' && robotEligible(row) && robotResume(s, row).ok) {
+    out.ok = true;
+    out.save = 'enqueue';
+    out.layout = 'wait';
+    view = { ...row, apply_state: 'queued', apply_mode: 'auto', apply_result: '', apply_note: '' };
+  }
 } else if (job.op === 'enqueue') {
   if (row.apply_state) {
     out.toast = '⏳ Уже в очереди робота';
@@ -61,13 +75,13 @@ if (!row.id) {
     out.save = 'enqueue';
     out.toast = s['apply.paused'] ? '⏸ В очереди: робот на паузе (⚙️ → 🚀 Робот)' : '🚀 Робот откликается…';
     out.layout = 'wait';
-    view = { ...row, apply_state: 'queued', apply_result: '', apply_note: '' };
+    view = { ...row, apply_state: 'queued', apply_mode: '', apply_result: '', apply_note: '' };
   }
 } else if (row.apply_state === 'queued') {
   out.ok = true;
   out.save = 'unqueue';
   out.toast = '⛔ Убрал из очереди робота';
-  view = { ...row, apply_state: '' };
+  view = { ...row, apply_state: '', apply_result: 'stopped' };
   out.layout = robotEligible(view, s['apply.enabled']) ? 'robot' : 'manual';
 } else if (row.apply_state === 'applying') {
   out.toast = '🤖 Уже отправляется — отменить нельзя';
@@ -77,4 +91,6 @@ if (!row.id) {
 }
 
 out.text = row.id ? letterText({ ...view, ok: Boolean(row.letter), mode: 'new' }) : '';
+// Письма автоотклика в чате нет (6.1c) — перерисовывать нечего
+if (!out.messageId) out.layout = '';
 return [{ json: out }];

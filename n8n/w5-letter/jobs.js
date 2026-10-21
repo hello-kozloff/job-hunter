@@ -4,8 +4,9 @@
 //   из W3 (Execute Workflow, «Accept all data») — { id, letter_mode, instruction, replace }:
 //     letter_mode = new (нажата ✅) | redo («🔄 Переписать») | revise (ответ на письмо, instruction — пожелание);
 //     replace — id сообщений, которые удалить, когда новое письмо отправлено («Old letters»);
+//   из W9 «Write letter» (автоотклик, 6.1c) — { id, letter_mode: new, auto: true }: письмо к захваченной карточке;
 //   из Manual → «Approved» — строки status = approved без письма (письма к уже нажатым ✅).
-// Выход: { id, mode, instruction, replace }
+// Выход: { id, mode, instruction, replace, auto }
 
 return $input
   .all()
@@ -17,5 +18,6 @@ return $input
       mode: ['new', 'redo', 'revise'].includes(j.letter_mode) ? j.letter_mode : 'new',
       instruction: String(j.instruction ?? '').trim(),
       replace: (Array.isArray(j.replace) ? j.replace : []).map(Number).filter(Boolean),
+      auto: j.auto === true,
     },
   }));

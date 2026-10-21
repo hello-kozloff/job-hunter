@@ -1,17 +1,19 @@
 // W7 · Render — панель меню бота: список вакансий, карточка, статистика или приветствие с кнопками меню.
 // Нода: Code, режим «Run Once for All Items».
-// Вход: «Job» — что показать (view = list | open | stats | start); «Rows» — вся таблица vacancies;
+// Вход: «Job» — что показать (view = list | open | stats | start | settings | auto); «Rows» — вся таблица vacancies;
 //       $input — «Runs»: последние записи журнала сборов runs (для статистики).
 // Выход: { route, view, layout, edit, chatId, messageId, text, b, deleteIds, tab, page }
 //   route — выход «Layout» (Switch): раскладка × отправить новое сообщение (чётный) / править панель (нечётный),
 //           10 — приветствие с кнопками под полем ввода;
 //   b — подписи и callback_data кнопок: раскладки фиксированные (Telegram-нода не умеет менять число кнопок);
 //   deleteIds — что удалить после отправки: нажатие пользователя и прошлую панель (одна живая панель в чате).
-// Static data (global): panel = { messageId, view, id, tab, page } — текущая панель: что на ней (list | open | stats,
+// Static data (global): panel = { messageId, view, id, tab, page } — текущая панель: что на ней (list | open | stats | auto,
 //                       id — открытая вакансия) и вкладка, куда вернут «⬅️ К списку» и «📋 К вакансиям»;
 //                       greetingId — приветствие (при новом /start старое удаляется).
 
 // @include n8n/shared/time.js
+
+// @include n8n/shared/shadow.js
 
 // @include n8n/shared/card.js
 // @include n8n/shared/menu.js
@@ -22,6 +24,7 @@
 // @include n8n/shared/search.js
 // @include n8n/shared/schedule.js
 // @include n8n/shared/robot.js
+// @include n8n/shared/auto.js
 
 const job = $('Job').first().json;
 const rows = $('Rows')
@@ -58,14 +61,17 @@ const LAYOUTS = [
   'open_rescue',
   'set_apply',
   'set_rules_generic',
+  'set_llm_cli',
+  'auto',
 ];
 // Выходы «Layout» после раскладок: приветствие, вопрос ⚙️ со списком (ForceReply)
 const ROUTE_START = LAYOUTS.length * 2;
 const ROUTE_PROMPT = LAYOUTS.length * 2 + 1;
 const chatId = String(job.chatId || $env.TG_CHAT_ID);
-// sync — после «📨 Отправил» / «↩️ Отменить» под письмом (W3 «Sync job»): перерисовать панель,
-// только если на ней открыта эта вакансия — иначе на ней нечего обновлять
-if (job.view === 'sync' && !(panel.view === 'open' && Number(panel.id) === Number(job.id) && panel.messageId)) {
+// sync — после «📨 Отправил» / «↩️ Отменить» под письмом (W3 «Sync job») и после каждого отклика робота (W9): перерисовать
+// панель, только если на ней открыта эта вакансия или автоотклик (журнал, 6.1c) — иначе на ней нечего обновлять
+const syncAuto = job.view === 'sync' && panel.view === 'auto';
+if (job.view === 'sync' && !(panel.messageId && (syncAuto || (panel.view === 'open' && Number(panel.id) === Number(job.id))))) {
   return [];
 }
 // Кнопка в панели, перерисовка после решения, sync — правим панель; кнопка меню, /v…, «📋 К вакансиям» — новая.
@@ -88,9 +94,22 @@ function span(ms) {
 
 // ---------- Список ----------
 
-const inTab = (key) => {
+// Вакансии выключенного резюме (20.10.2026, решение пользователя) в списке не показываем: резюме включили — вернулись.
+// Открыть по /v<id> можно; у основного резюме resume_id пустой
+const resumesOff = new Set(
+  resumeList(loadSettings($('Settings').all()))
+    .filter((r) => !r.active)
+    .map((r) => r.id),
+);
+const listed = rows.filter((r) => !resumesOff.has(r.resume_id || 'r1'));
+// Теневой режим выключен (20.10.2026, решение пользователя): во «⏳ Ждут решения» — только 🟢 и неоценённые, 🟡 и 🔴
+// там не показываем (решать их не нужно) — они во «📋 Все»
+const shadowOff = !loadSettings($('Settings').all())['llm.shadow'];
+const waitHidden = (r) => shadowOff && r.status === 'waiting' && ['maybe', 'skip'].includes(r.decision);
+
+const inTab = (key, from = listed) => {
   const statuses = TABS[key].statuses;
-  return rows.filter((r) => (statuses ? statuses.includes(r.status) : r.status !== 'seen'));
+  return from.filter((r) => (statuses ? statuses.includes(r.status) : r.status !== 'seen') && !(key === 'wait' && waitHidden(r)));
 };
 const counts = Object.fromEntries(Object.keys(TABS).map((key) => [key, inTab(key).length]));
 
@@ -121,7 +140,12 @@ function listView(tabKey, pageNo, note = '') {
   const page = Math.min(Math.max(1, Number(pageNo) || 1), pages);
   const lines = items.slice((page - 1) * PAGE, page * PAGE).map((r, i) => itemLines(r, (page - 1) * PAGE + i + 1));
   const { icon, name } = TABS[tab];
-  const head = `📋 <b>Вакансии</b> · ${icon} ${name} — ${items.length}${pages > 1 ? ` · стр. ${page}/${pages}` : ''}`;
+  const hidden = inTab(tab, rows).length - items.length;
+  const quiet = tab === 'wait' ? listed.filter(waitHidden).length : 0;
+  const head =
+    `📋 <b>Вакансии</b> · ${icon} ${name} — ${items.length}${pages > 1 ? ` · стр. ${page}/${pages}` : ''}` +
+    (hidden ? `\n<i>Скрыто ${hidden} — резюме выключено (⚙️ → 📄 Резюме)</i>` : '') +
+    (quiet ? `\n<i>Без 🟡 и 🔴 (${quiet}) — теневой режим выключен, они во «📋 Все»</i>` : '');
   const off = { text: '·', cb: 'p:x' };
   return {
     layout: 'list',
@@ -200,8 +224,8 @@ function openView(id) {
 // ---------- Статистика ----------
 
 function statsView() {
-  // Журнал сборов runs (W1 «Start run» / «Finish run»), свежие сверху
-  const last = runs[0];
+  // Журнал сборов runs (W1 «Start run» / «Finish run»), свежие сверху; разовый догон (sweep) — не сбор
+  const last = runs.find((r) => r.kind !== 'sweep');
   const next = nextCollect(now, collectSchedule);
 
   // За сутки — как в утренней сводке W6: окно до «сейчас − 10 мин», только сборы по расписанию
@@ -241,11 +265,7 @@ function statsView() {
   const waiting = rows.filter((r) => r.status === 'waiting');
   const oldest = Math.min(...waiting.map((r) => at(r.card_at || r.createdAt)));
   const status = (s) => count(rows, (r) => r.status === s);
-  // Теневой режим — только решения apply / maybe / skip («📨 откликался раньше» не сравниваем)
-  const DECISIONS = ['apply', 'maybe', 'skip'];
-  const shadow = rows.filter((r) => DECISIONS.includes(r.my_decision) && DECISIONS.includes(r.decision));
   const earlier = count(rows, (r) => r.status === 'applied' && r.my_decision === 'earlier');
-  const agree = count(shadow, (r) => r.my_decision === r.decision);
   const errors = count(scored, (r) => r.decision === 'error');
 
   const lines = [
@@ -265,7 +285,8 @@ function statsView() {
     `• ✅ ${status('approved')} · 🤔 ${status('maybe')} · ❌ ${status('skipped')} · 📨 отправлено ${status('applied') - earlier}${earlier ? ` · 📨 раньше ${earlier}` : ''}`,
     `• ⌛ устарели ${status('expired')} · 🔒 закрылись ${status('archived')}`,
     '',
-    `🧪 Теневой режим: ${shadow.length}/50${shadow.length ? `, совпало ${agree} (${pct(agree, shadow.length)}%)` : ''}`,
+    // Теневой режим — с метки «🔄 Теневой заново» (n8n/shared/shadow.js)
+    shadowLine(shadowStats(rows, settings['llm.shadow_since'])),
   ];
   // Робот-отклик (этап 6): сегодня — с 09:00 по местному
   const robotSent = rows.filter((r) => r.status === 'applied' && r.apply_by === 'robot');
@@ -286,6 +307,8 @@ function statsView() {
 
 // @include n8n/w7-menu/settings-view.js
 
+// @include n8n/w7-menu/auto-view.js
+
 // ---------- Приветствие ----------
 
 const GREETING = [
@@ -294,6 +317,7 @@ const GREETING = [
   `${MENU.list} — база по вкладкам: ⏳ ждут решения · ✅ откликнусь и 🤔 · 📨 отправлено · ❌ мимо · 🚫 отсеяно фильтром · 📋 все. ` +
     'Команда вида <code>/v169</code> в строке открывает карточку — решение можно принять прямо там.',
   `${MENU.stats} — когда был и будет сбор, сколько вакансий рассмотрено.`,
+  `${MENU.auto} — робот сам откликается на ✅ и карточки с apply нейросети: запуск, остановка, лимиты и журнал откликов.`,
   `${MENU.settings} — расписание сбора, пауза и «собрать сейчас».`,
   '',
   'Новые вакансии по-прежнему приходят карточками.',
@@ -308,7 +332,7 @@ const ONBOARDING = [
   '📄 <b>Пришли резюме в PDF</b> — просто файлом в этот чат. С hh: «Мои резюме» → резюме → «Скачать» → PDF.',
   'Я покажу, что понял, задам три вопроса (подпись, контакт для HR, часовой пояс) — и начну искать.',
   '',
-  '🔒 Резюме уйдёт в нейросеть (Gemini или Claude) для разбора, оценки вакансий и писем. Бесплатный Gemini может использовать данные для обучения.',
+  '🔒 Резюме уйдёт в нейросеть (Gemini или Claude) для разбора, оценки вакансий и писем. Бесплатный Gemini может использовать данные для обучения, подписка Claude — если в claude.ai включено «Help improve Claude».',
 ].join('\n');
 
 if (job.view === 'start') {
@@ -348,7 +372,9 @@ if (job.view === 'settings' && SETTING_PROMPTS[job.ask]) {
   ];
 }
 
-const view = ['open', 'sync'].includes(job.view)
+const view = job.view === 'auto' || syncAuto
+  ? autoView()
+  : ['open', 'sync'].includes(job.view)
   ? openView(Number(job.id))
   : job.view === 'settings'
     ? settingsView(job.section)

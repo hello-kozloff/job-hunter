@@ -5,7 +5,7 @@
 //   sim/run.sh quick           только сценарии, в имени которых есть «quick»
 import assert from 'node:assert/strict';
 import { config } from '../src/config.mjs';
-import { browserContext, ensure, shutdown } from '../src/browser.mjs';
+import { browserContext, browserStatus, ensure, shutdown } from '../src/browser.mjs';
 import { applyFlow } from '../src/flows/apply.mjs';
 import { store } from '../src/store.mjs';
 import { sameText } from '../src/hh/xhr.mjs';
@@ -68,6 +68,19 @@ const SCENARIOS = [
     expect: { outcome: 'applied', via: 'quick', letter: 'attached', posts: ['/applicant/vacancy_response/popup', '/applicant/vacancy_response/edit_ajax'] },
   },
   {
+    name: 'modal-letter-button: письмо необязательное — поле под «Добавить сопроводительное»',
+    type: 'modal',
+    letterButton: true,
+    expect: { outcome: 'applied', via: 'modal', letter: 'attached', posts: [POPUP], trace: { s: 'modal', letter: true, toggled: true } },
+  },
+  {
+    name: 'quick-stuck: после отклика «Приложить» и «Чат» не нажимаются — отклик всё равно отправлен',
+    type: 'quickResponse',
+    edit: [200, {}],
+    attachStuck: true,
+    expect: { outcome: 'applied', via: 'quick', letter: 'none', warning: /письмо не приложилось/, posts: [POPUP] },
+  },
+  {
     name: 'limit: hh ответил «лимит откликов»',
     type: 'modal',
     respond: [400, { error: 'negotiationsLimitExceeded' }],
@@ -91,13 +104,13 @@ const SCENARIOS = [
     name: 'captcha: капча внутри окна отклика → человеку',
     type: 'modal',
     captchaInModal: true,
-    expect: { outcome: 'captcha', blocked: 'smart', posts: [] },
+    expect: { outcome: 'captcha', blocked: 'smart', posts: [], handover: true },
   },
   {
     name: 'captcha-late: капча появилась, пока робот вставлял письмо — не жать',
     type: 'modal',
     captchaInModal: 'late',
-    expect: { outcome: 'captcha', blocked: 'smart', posts: [] },
+    expect: { outcome: 'captcha', blocked: 'smart', posts: [], handover: true },
   },
   {
     name: 'already: прогноз hh — отклик уже есть',
@@ -253,6 +266,9 @@ for (const sc of SCENARIOS.filter((s) => s.name.includes(only))) {
     if (e.resumeUsed !== undefined) assert.equal(r.resume?.used, e.resumeUsed, 'hh показывает резюме использованным');
     if (e.resumeSelect !== undefined) assert.equal(r.resume?.select, e.resumeSelect, 'нужно ли выбирать в окне');
     if (e.noClick) assert.ok(!r.trace.some((t) => t.s === 'act:click'), 'клика по «Откликнуться» не было');
+    // Капча в окне отклика: человек решит её в окне робота — его отклик предохранитель пропустит, остальное — нет
+    // (20.10.2026: без этого hh писал «не удалось откликнуться»); у остальных исходов всё закрыто
+    assert.deepEqual(browserStatus().allowed, e.handover ? ['respond'] : [], 'открыто после попытки');
     if (e.note) assert.match(r.note ?? '', e.note, 'заметка');
     if (e.trace) assert.ok(r.trace.some((t) => Object.entries(e.trace).every(([k, v]) => t[k] === v)), `шаг ${JSON.stringify(e.trace)}`);
     assert.ok(posts.some((p) => p.blocked && p.path === '/shards/applicant/sim_stats'), '«аналитика» страницы порвана');

@@ -3,10 +3,13 @@
 // нет связи — { error }); «Gate» → next — вакансия, которую взяли («Claim»); «Job».
 // Выход: { id, chatId, messageId, layout, text, url, apply_url, robot_button — вид письма для «View»;
 //          row — что записать («Save result»); card — { messageId, text } или null; shot — скриншот при сбое;
-//          sync — задание W7 (перерисовать панель); more — сразу вызвать W9 снова (очередь не пуста) }
+//          sync — задание W7 (перерисовать панель); more — вызвать W9 снова (очередь не пуста); delay — через сколько
+//          секунд (до паузы робота между откликами, 6.1c; дольше минуты — подхватит расписание) }
 // Группы исходов (applier/src/hh/state.mjs → GROUP): done | manual | closed | block | error | dry; ответы HTTP:
 //   409 (робот занят), 5xx, нет связи → retry — назад в очередь без счёта попыток; 423 (блок), 429 (потолок дня
 //   робота) → block. Таймаут — тоже retry: если робот успел откликнуться, при повторе он увидит «уже откликались».
+//   429 (6.1c): reason gap / hour — пауза между откликами или лимит часа (робот держит темп сам) → retry; day — потолок
+//   дня → block. apply_at — когда робот закончил попытку (журнал 🤖 и сводка W6): у всех исходов, кроме retry.
 
 // @include n8n/shared/time.js
 
@@ -28,11 +31,11 @@ let outcome = body.outcome;
 if (res.error || !code) [group, outcome] = ['retry', 'unreachable'];
 else if (code === 409) [group, outcome] = ['retry', 'busy'];
 else if (code === 423) [group, outcome] = ['block', body.blocked?.kind ?? 'blocked'];
-else if (code === 429) [group, outcome] = ['block', 'cap'];
+else if (code === 429) [group, outcome] = ['gap', 'hour'].includes(body.reason) ? ['retry', 'pace'] : ['block', 'cap'];
 else if (code !== 200 || !group) [group, outcome] = ['error', 'error'];
 
 const warnings = Array.isArray(body.warnings) ? body.warnings.filter(Boolean).join('; ') : '';
-const update = { apply_state: '', apply_tries: triesBefore };
+const update = { apply_state: '', apply_tries: triesBefore, apply_at: now };
 let layout = 'robot';
 let card = null;
 let shot = '';
@@ -40,9 +43,10 @@ let more = true;
 
 if (group === 'retry' || group === 'block') {
   // Назад в очередь: робот занят, не отвечает или ждёт человека (тревогу пришлёт «Gate» следующего тика)
-  Object.assign(update, { apply_state: 'queued' });
+  Object.assign(update, { apply_state: 'queued', apply_at: row.apply_at ?? '' });
   layout = 'wait';
-  more = group === 'block';
+  // Потолок дня робота — до завтра: без самовызова (иначе петля 429); пауза робота — тик, когда она кончится
+  more = group === 'block' ? outcome !== 'cap' : outcome === 'pace';
 } else if (group === 'done') {
   Object.assign(update, {
     status: 'applied',
@@ -94,8 +98,18 @@ const rowOut = {
   apply_tries: Math.max(0, Number(next.apply_tries) || 0),
   has_test: Boolean(next.has_test),
   apply_type: next.apply_type ?? 'hh',
+  apply_at: next.apply_at ?? '',
 };
 if (group === 'done' || group === 'closed') card = { messageId: row.tg_message_id, text: cardText(next) };
+// Темп (6.1c): робот сказал, когда можно следующий; больше минуты — ждём расписания, а не держим запуск
+// Автоотклик (6.1c): письма в чате нет — ни правки письма, ни скриншота ответом на него; исход — в журнале панели 🤖
+if (!row.tg_letter_id) {
+  layout = '';
+  shot = '';
+}
+const paceAt = Date.parse(body.pace?.nextAt ?? body.retryAt ?? '') || 0;
+const delay = Math.max(0, Math.ceil((paceAt - Date.now()) / 1000));
+if (delay > 60) more = false;
 
 return [
   {
@@ -122,6 +136,7 @@ return [
       caption: shot ? `${group === 'dry' ? '🧪' : '⚠️'} ${esc(row.title)} · ${esc(String(body.note ?? outcome)).slice(0, 200)}` : '',
       sync: { action: 'panel', view: 'sync', id: row.id, chatId: job.chatId, tab: '', page: 1, queryId: '', messageId: 0, userMessageId: 0 },
       more,
+      delay: more ? delay : 0,
     },
   },
 ];

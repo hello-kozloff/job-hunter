@@ -1,0 +1,14 @@
+{
+  "name": "job-hunter-claude-cli",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Claude по подписке для n8n: официальный Claude Code CLI (claude -p) без инструментов, HTTP API в форме Claude Messages API, запасной Gemini",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test"
+  }
+}

@@ -78,6 +78,23 @@ const searchUrl = (page, s, params = searchQueries(s)[0]?.params ?? searchParams
     .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
     .join('&')}`;
 
+// Подборка hh «по резюме» (21.10.2026): hh сам подбирает вакансии к резюме — без наших слов и ролей. Работает только у
+// вошедшего соискателя (анонимно hh параметр resume молча отбрасывает), поэтому её читает робот (applier POST /search).
+// Только удалёнка (решение пользователя 21.10.2026); образование и период — как у основного поиска
+const RESUME_SEARCH_LABEL = 'по резюме hh';
+const resumeSearchUrl = (page, s, hash) =>
+  `${SEARCH_URL}?${[
+    ['resume', hash],
+    ['work_format', 'REMOTE'],
+    ...s['search.education'].map((e) => ['education', e]),
+    ['search_period', String(s['search.period'])],
+    ['order_by', 'publication_time'],
+    ['items_on_page', '100'],
+    ['enable_snippets', 'true'],
+    ['page', String(page)],
+  ]
+    .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+    .join('&')}`;
 // Что искали, по-человечески: где какие слова и строка фильтров
 function describeSearch(s) {
   const formats = s['search.formats'].map((f) => FORMAT_NAMES[f]);

@@ -62,6 +62,10 @@ function vacancyPage(id, sc) {
     defaultHash: defaultOf(sc),
     // Окно выбора резюме: ok | missing (в списке нет второго резюме) | broken (клик по опции ничего не выбирает) | none (ячейка не кнопка)
     chooser: sc.chooser ?? 'ok',
+    // Письмо необязательное (19.10.2026): поле свёрнуто под «Добавить сопроводительное» в подвале окна
+    letterButton: Boolean(sc.letterButton),
+    // После отклика «Приложить» и «Чат» закрыты прозрачным слоем: клик Playwright зависает (19.10.2026 так на hh)
+    attachStuck: Boolean(sc.attachStuck),
     errorText: sc.errorText ?? 'Произошла ошибка, попробуйте ещё раз',
   };
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Sim ${id}</title>
@@ -98,16 +102,19 @@ function success(quick) {
   out.append(el('<div data-qa="vacancy-response-success-standard-notification">Резюме доставлено. Вы откликнулись</div>'));
   if (quick) out.append(el('<a data-qa="responded-success-attach-cover-letter" href="#">Приложить сопроводительное письмо</a>'));
   out.append(el('<a data-qa="vacancy-response-link-view-topic" href="#">Чат</a>'));
+  if (SIM.attachStuck) document.body.append(el('<div data-sim="overlay" style="position:fixed;inset:0;z-index:100"></div>'));
 }
+const LETTER_INPUT = '<textarea data-qa="vacancy-response-popup-form-letter-input">Старое письмо из прошлого отклика</textarea>';
 function showModal() {
   document.body.append(el(\`<div role="dialog">
     <div data-qa="modal-header">Отклик на вакансию</div>
     <\${SIM.chooser === 'none' ? 'div' : 'div role="button" tabindex="0"'} data-sim="resume-cell"><div data-qa="resume-title">\${SIM.resumes.find((r) => r.hash === selected).title}</div></div>
     <div data-qa="hidden-resume-warning" class="collapsed">Чтобы откликнуться на эту вакансию, поменяйте видимость резюме</div>
-    <textarea data-qa="vacancy-response-popup-form-letter-input">Старое письмо из прошлого отклика</textarea>
+    <div id="letter">\${SIM.letterButton ? '' : LETTER_INPUT}</div>
     <div id="captcha"></div>
     <div id="err"></div>
     <button data-qa="response-popup-close">×</button>
+    \${SIM.letterButton ? '<button type="button" data-qa="add-cover-letter">Добавить сопроводительное</button>' : ''}
     <button data-qa="vacancy-response-submit-popup">Откликнуться</button>
   </div>\`));
   if (SIM.captchaInModal) {
@@ -173,8 +180,12 @@ document.addEventListener('click', async (e) => {
   }
   if (qa === 'relocation-warning-confirm' || qa === 'sim-allow') { closeDialogs(); return proceed(); }
   if (qa === 'response-popup-close') return closeDialogs();
+  if (qa === 'add-cover-letter') {
+    document.getElementById('letter').innerHTML = LETTER_INPUT;
+    return e.target.closest('[data-qa]').remove();
+  }
   if (qa === 'vacancy-response-submit-popup') {
-    const letter = document.querySelector('[data-qa="vacancy-response-popup-form-letter-input"]').value;
+    const letter = document.querySelector('[role=dialog] [data-qa="vacancy-response-popup-form-letter-input"]')?.value ?? null;
     const r = await respond(letter);
     if (r.body.success === 'true') { closeDialogs(); return success(false); }
     document.getElementById('err').textContent = SIM.errorText;

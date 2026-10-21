@@ -17,8 +17,11 @@ const LETTER_SAME = {
 // Робот (этап 6): строку очереди и итога даёт robotLine из n8n/shared/robot.js (подключается перед этим файлом)
 // Несколько резюме: последняя строка, прямо над кнопками, — каким резюме отклик (письмо написано по нему, им откликнется
 // робот, его выбрать на hh вручную), пока отклик не отправлен; после отклика роботом резюме называет строка «🚀 Отправлено»
+// Модель (19.10.2026, решение пользователя: «всегда мелко») — в конце шапки, из колонки letter_model (modelLabel —
+// n8n/shared/card.js); fallback — только сразу после W5: Claude по подписке не смог, письмо написал запасной Gemini
 function letterText(r) {
-  const head = `${LETTER_HEAD[r.mode] ?? LETTER_HEAD.new} · <a href="${r.url}">${esc(r.title)}</a> · ${esc(r.company)}`;
+  const model = r.letter_model ? ` · <i>${esc(modelLabel(r.letter_model))}</i>` : '';
+  const head = `${LETTER_HEAD[r.mode] ?? LETTER_HEAD.new} · <a href="${r.url}">${esc(r.title)}</a> · ${esc(r.company)}${model}`;
   if (!r.ok) {
     return [head, `⚠️ Письмо не получилось: ${esc(r.problem)}`, 'Нажми «🔄 Переписать», чтобы попробовать ещё раз.'].join('\n');
   }
@@ -27,6 +30,7 @@ function letterText(r) {
   const robot = typeof robotLine === 'function' ? robotLine(r) : '';
   return [
     head,
+    r.fallback ? `⚠️ Claude по подписке: ${esc(r.fallback.note)} — письмо написал Gemini.` : '',
     r.mode === 'revise' && r.instruction ? `<i>Пожелание: «${esc(r.instruction)}»</i>` : '',
     LETTER_SAME[r.same] ?? '',
     `<pre>${esc(r.letter)}</pre>`,

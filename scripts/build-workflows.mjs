@@ -153,7 +153,7 @@ const { MENU } = new Function(`${read('n8n/shared/menu.js')}\nreturn { MENU };`)
 // «✍️ Записал причину» (W3), сообщение о сборе и итог после карточек (W2), утренняя сводка (W6)
 const MENU_KEYBOARD = {
   replyMarkup: 'replyKeyboard',
-  replyKeyboard: replyKeyboard([[MENU.list, MENU.stats], [MENU.settings]]),
+  replyKeyboard: replyKeyboard([[MENU.list, MENU.stats], [MENU.auto, MENU.settings]]),
   replyKeyboardOptions: { resize_keyboard: true },
 };
 
@@ -170,12 +170,12 @@ const answerQuery = (wf, name, position, queryId, text, extra = {}) =>
   );
 
 // Запуск другого workflow без ожидания (его ноде-триггеру «When Executed by Another Workflow»
-// с «Accept all data» уходят items как есть)
-const runWorkflow = (wf, name, position, workflowId) =>
+// с «Accept all data» уходят items как есть). each — отдельный запуск на каждый item (W9 «Job» читает только первый)
+const runWorkflow = (wf, name, position, workflowId, { each = false } = {}) =>
   node(wf, name, 'executeWorkflow', 1.2, position, {
     source: 'database',
     workflowId: { __rl: true, mode: 'id', value: workflowId },
-    mode: 'once',
+    mode: each ? 'each' : 'once',
     options: { waitForSubWorkflow: false },
   });
 
@@ -269,12 +269,12 @@ const byId = (expression) => ({
 });
 
 // Запрос к API нейросети: тело готовит «Build prompt» ($json.body), ответ разбирает «Parse verdict».
-// Ключ — из credential n8n; полный ответ без исключений на 4xx/5xx, по одному запросу раз в interval мс
-const llmRequest = ({ url, credential, headers = [], interval }) => ({
+// Ключ — из credential n8n (у сервиса Claude по подписке ключа нет: он в своей сети compose); полный ответ без
+// исключений на 4xx/5xx, запросы стартуют раз в interval мс — n8n не ждёт ответа перед следующим (очередь — у сервиса)
+const llmRequest = ({ url, credential, headers = [], interval, timeout = 60000 }) => ({
   method: 'POST',
   url,
-  authentication: 'predefinedCredentialType',
-  nodeCredentialType: credential,
+  ...(credential && { authentication: 'predefinedCredentialType', nodeCredentialType: credential }),
   sendHeaders: headers.length > 0,
   ...(headers.length > 0 && { specifyHeaders: 'keypair', headerParameters: pairs(headers) }),
   sendBody: true,
@@ -284,9 +284,62 @@ const llmRequest = ({ url, credential, headers = [], interval }) => ({
   options: {
     batching: { batch: { batchSize: 1, batchInterval: interval } },
     response: { response: { fullResponse: true, neverError: true, responseFormat: 'json' } },
-    timeout: 60000,
+    timeout,
   },
 });
+
+// Нейросеть (W2, W5, W11, W13): развилка по llm.provider ($json.provider из Build) и три HTTP-ноды — Claude API,
+// Claude по подписке (сервис claude-cli, docs/claude-cli.md) и Gemini; ответы — в одну Parse-ноду (в запуске один
+// провайдер, порядок items тот же). Имена «Claude» и «Gemini» прежние — их id в n8n не меняются. [x, y] — развилка;
+// gemini — интервал Gemini (бесплатный тариф), cli — интервал и таймаут «Claude CLI» (deadline_ms в теле — чуть меньше)
+const CLAUDE_CLI_URL = 'http://claude-cli:3000/v1/messages';
+const llmBranch = (wf, [x, y], { gemini, cli = 1000, cliTimeout = 180000 }) => [
+  node(wf, 'Provider', 'switch', 3.4, [x, y], {
+    mode: 'expression',
+    numberOutputs: 3,
+    output: "={{ ({ claude: 0, 'claude-cli': 1 })[$json.provider] ?? 2 }}",
+    options: {},
+  }),
+  node(
+    wf,
+    'Claude',
+    'httpRequest',
+    4.5,
+    [x + 220, y - 100],
+    llmRequest({
+      url: 'https://api.anthropic.com/v1/messages',
+      credential: 'anthropicApi',
+      headers: [['anthropic-version', '2023-06-01']],
+      interval: 1000,
+    }),
+    { credentials: { anthropicApi: { id: IDS.claudeCredential, name: 'Claude' } }, onError: 'continueRegularOutput' },
+  ),
+  node(
+    wf,
+    'Gemini',
+    'httpRequest',
+    4.5,
+    [x + 220, y + 100],
+    llmRequest({
+      url: '=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.model }}:generateContent',
+      credential: 'googlePalmApi',
+      interval: gemini,
+    }),
+    { credentials: { googlePalmApi: { id: IDS.geminiCredential, name: 'Gemini' } }, onError: 'continueRegularOutput' },
+  ),
+  node(wf, 'Claude CLI', 'httpRequest', 4.5, [x + 220, y + 300], llmRequest({ url: CLAUDE_CLI_URL, interval: cli, timeout: cliTimeout }), {
+    onError: 'continueRegularOutput',
+  }),
+];
+const llmLinks = (build, parse) => [
+  [build, 'Provider'],
+  ['Provider', 'Claude', 0],
+  ['Provider', 'Claude CLI', 1],
+  ['Provider', 'Gemini', 2],
+  ['Claude', parse],
+  ['Claude CLI', parse],
+  ['Gemini', parse],
+];
 
 // W7: раскладки кнопок панели меню. Telegram-нода не умеет менять число кнопок на ходу, поэтому раскладки
 // фиксированные, а подписи и callback_data считает «Render» ($json.b). Порядок = номера выходов «Layout»
@@ -440,8 +493,12 @@ const PANEL_LAYOUTS = [
         [panelButton('provider.text'), panelButton('provider.cb')],
         [panelButton('shadow.text'), panelButton('shadow.cb')],
       ],
-      // Спорные случаи — списком «случай: решение» (решение пользователя 07.10.2026: текстом, а не кнопками)
-      [['✏️ Спорные случаи', 'sw:llm.cases']],
+      // Спорные случаи — списком «случай: решение» (решение пользователя 07.10.2026: текстом, а не кнопками);
+      // «🔄 Теневой заново» — считать совпадения с этой минуты (19.10.2026, llm.shadow_since)
+      [
+        ['✏️ Спорные случаи', 'sw:llm.cases'],
+        ['🔄 Теневой заново', 'sc:llm.shadow_since'],
+      ],
       [['⬅️ Настройки', 's:root']],
     ],
   ],
@@ -461,7 +518,8 @@ const PANEL_LAYOUTS = [
       ],
     ],
   ],
-  // ⚙️ → 🚀 Робот (этап 6): вкл/выкл, пауза очереди, лимит в день; ▶️ — продолжить после капчи или входа (W9)
+  // ⚙️ → 🚀 Робот (этап 6): вкл/выкл, пауза очереди, лимит в день, темп и хвост автоотклика (6.1c); ▶️ — продолжить
+  // после капчи или входа (W9)
   [
     'set apply',
     [
@@ -471,9 +529,14 @@ const PANEL_LAYOUTS = [
       ],
       [[panelButton('limit.text'), panelButton('limit.cb')]],
       [
-        ['▶️ Продолжить', 'rb:go'],
-        ['⬅️ Настройки', 's:root'],
+        [panelButton('pace.text'), panelButton('pace.cb')],
+        [panelButton('backlog.text'), panelButton('backlog.cb')],
       ],
+      [
+        ['🤖 Автоотклик', 'au:r'],
+        ['▶️ Продолжить', 'rb:go'],
+      ],
+      [['⬅️ Настройки', 's:root']],
     ],
   ],
   // 6 правил фильтра без фронтенд-правил (пресет generic, 13.10.2026: n8n/shared/settings.js → filterRulesFor)
@@ -485,6 +548,39 @@ const PANEL_LAYOUTS = [
         [panelButton(`r${i + 1}.text`), panelButton(`r${i + 1}.cb`)],
       ]),
       [['⬅️ Фильтр', 's:filter']],
+    ],
+  ],
+  // ⚙️ → 🤖 при Claude по подписке (19.10.2026, docs/claude-cli.md): ещё и модели оценки и текстов — по кругу
+  [
+    'set llm cli',
+    [
+      [
+        [panelButton('provider.text'), panelButton('provider.cb')],
+        [panelButton('shadow.text'), panelButton('shadow.cb')],
+      ],
+      [
+        [panelButton('score.text'), panelButton('score.cb')],
+        [panelButton('texts.text'), panelButton('texts.cb')],
+      ],
+      [
+        ['✏️ Спорные случаи', 'sw:llm.cases'],
+        ['🔄 Теневой заново', 'sc:llm.shadow_since'],
+      ],
+      [['⬅️ Настройки', 's:root']],
+    ],
+  ],
+  // 🤖 Автоотклик (6.1c): ▶️ Запустить / ⏹ Остановить, обновить журнал, темп и лимиты, ▶️ после блока робота
+  [
+    'auto',
+    [
+      [
+        [panelButton('toggle.text'), panelButton('toggle.cb')],
+        ['🔄 Обновить', 'au:r'],
+      ],
+      [
+        ['⚙️ Темп и лимиты', 's:apply'],
+        ['▶️ Продолжить', 'rb:go'],
+      ],
     ],
   ],
 ];
@@ -980,7 +1076,7 @@ const recoveryChain = (wf, workflowName, from, [x, y]) => {
     ],
   };
 };
-const W1_RECOVERY = recoveryChain('W1', 'W1 Collector', 'Finish run', [2420, 0]);
+const W1_RECOVERY = recoveryChain('W1', 'W1 Collector', 'Finish run', [2420, 200]);
 const W2_RECOVERY = recoveryChain('W2', 'W2 Score', 'Called by W1', [1980, 900]);
 
 // Перерисовать сообщение — текст и кнопки (rows = null — убрать все кнопки). По умолчанию — нода W3
@@ -1275,6 +1371,27 @@ const workflows = {
         options: {},
       }),
       settingsNode('W1', [880, 0]),
+      // Последний успешный сбор (19.10.2026): простой дольше суток — «Plan» ищет за 3 или 7 дней (догон)
+      node(
+        'W1',
+        'Last ok',
+        'dataTable',
+        1.1,
+        [990, 150],
+        {
+          resource: 'row',
+          operation: 'get',
+          dataTableId: RUNS,
+          matchType: 'allConditions',
+          filters: { conditions: [{ keyName: 'status', keyValue: 'ok' }] },
+          returnAll: false,
+          limit: 1,
+          orderBy: true,
+          orderByColumn: 'createdAt',
+          orderByDirection: 'DESC',
+        },
+        { executeOnce: true, alwaysOutputData: true },
+      ),
       code('W1', 'Plan', 'n8n/w1-collector/plan.js', [1100, 0]),
       node(
         'W1',
@@ -1285,25 +1402,43 @@ const workflows = {
         // Готовый адрес запроса — из «Plan» (настройки и профиль): удалёнка и, если есть, офис в городе
         hhRequest({ url: '={{ $json.url }}', batching: true }),
       ),
+      // Подборка hh «по резюме» (21.10.2026): только у вошедшего соискателя — читает робот, все адреса одним запросом.
+      // Занят откликом — ждёт до 60 с; сбой — строка в сообщении о сборе, сбор идёт дальше (onError: continue)
+      node('W1', 'Robot?', 'if', 2.3, [1430, 220], ifTrue('W1', "={{ ($('Plan').first().json.robot ?? []).length > 0 }}")),
+      applierNode(
+        'W1',
+        'Search resume',
+        [1540, 380],
+        {
+          method: 'POST',
+          path: '/search',
+          body: "={{ JSON.stringify({ urls: $('Plan').first().json.robot.map((q) => q.url), wait: 60000 }) }}",
+          timeout: 400000,
+          full: true,
+        },
+        { executeOnce: true },
+      ),
       code('W1', 'Parse search', 'n8n/w1-collector/parse-search.js', [1540, 0]),
       node('W1', 'OK?', 'if', 2.3, [1760, 0], ifTrue('W1', '={{ $json.ok }}')),
+      // Ветки «OK?» n8n (execution order v1) выполняет сверху вниз, каждую целиком: сигнал стражу → вставка новых →
+      // страницы вакансий из очереди new (вставленные выше уже в ней) → итог сбора и оценка
       // Сигнал стражу healthchecks.io: поиск прошёл. Нет сигнала дольше нормы — страж сам пишет в Telegram
-      node('W1', 'HC ping?', 'if', 2.3, [1980, -300], ifTrue('W1', '={{ Boolean($env.HC_PING_URL) }}')),
+      node('W1', 'HC ping?', 'if', 2.3, [1980, -400], ifTrue('W1', '={{ Boolean($env.HC_PING_URL) }}')),
       node(
         'W1',
         'HC ping',
         'httpRequest',
         4.5,
-        [2200, -300],
+        [2200, -400],
         { method: 'GET', url: '={{ $env.HC_PING_URL }}', options: { timeout: 10000 } },
         { onError: 'continueRegularOutput' },
       ),
-      node('W1', 'Split vacancies', 'splitOut', 1, [1980, -100], {
+      node('W1', 'Split vacancies', 'splitOut', 1, [1980, -200], {
         fieldToSplitOut: 'vacancies',
         include: 'noOtherFields',
         options: {},
       }),
-      node('W1', 'Is new', 'dataTable', 1.1, [2200, -100], {
+      node('W1', 'Is new', 'dataTable', 1.1, [2200, -200], {
         resource: 'row',
         operation: 'rowNotExists',
         dataTableId: VACANCIES,
@@ -1320,33 +1455,52 @@ const workflows = {
         'Blacklist',
         'dataTable',
         1.1,
-        [2420, -100],
+        [2420, -200],
         { resource: 'row', operation: 'get', dataTableId: BLACKLIST, returnAll: true },
         { executeOnce: true, alwaysOutputData: true },
       ),
-      code('W1', 'Filter search', 'n8n/w1-collector/filter-search.js', [2640, -100]),
-      node('W1', 'Insert', 'dataTable', 1.1, [2860, -100], {
+      code('W1', 'Filter search', 'n8n/w1-collector/filter-search.js', [2640, -200]),
+      node('W1', 'Insert', 'dataTable', 1.1, [2860, -200], {
         resource: 'row',
         operation: 'insert',
         dataTableId: VACANCIES,
         columns: AUTO_MAP,
         options: {},
       }),
-      node('W1', 'Is candidate', 'if', 2.3, [3080, -100], ifTrue('W1', "={{ $json.status === 'new' }}")),
+      // Очередь страниц (19.10.2026): все строки new — только что вставленные и хвост прошлых сборов (упавший сбор,
+      // разовый догон). Ниже ветки вставки: n8n (execution order v1) выполнит её после «Insert». Строк нет — ветка
+      // дальше не идёт
+      node(
+        'W1',
+        'Pending new',
+        'dataTable',
+        1.1,
+        [1980, 0],
+        {
+          resource: 'row',
+          operation: 'get',
+          dataTableId: VACANCIES,
+          matchType: 'allConditions',
+          filters: { conditions: [{ keyName: 'status', keyValue: 'new' }] },
+          returnAll: true,
+        },
+        { executeOnce: true },
+      ),
+      code('W1', 'Candidates', 'n8n/w1-collector/candidates.js', [2200, 0]),
       node(
         'W1',
         'Vacancy page',
         'httpRequest',
         4.5,
-        [3300, -200],
+        [2420, 0],
         hhRequest({
           url: '={{ $json.url }}',
           headers: [...BROWSER_HEADERS, ['Referer', 'https://hh.ru/search/vacancy']],
           batching: true,
         }),
       ),
-      code('W1', 'Parse vacancy', 'n8n/w1-collector/parse-vacancy.js', [3520, -200]),
-      node('W1', 'Update', 'dataTable', 1.1, [3740, -200], {
+      code('W1', 'Parse vacancy', 'n8n/w1-collector/parse-vacancy.js', [2640, 0]),
+      node('W1', 'Update', 'dataTable', 1.1, [2860, 0], {
         resource: 'row',
         operation: 'update',
         dataTableId: VACANCIES,
@@ -1357,9 +1511,9 @@ const workflows = {
       }),
       // Оценка сразу после сбора. Ниже ветки вакансий: n8n (execution order v1) выполняет её последней,
       // когда новые вакансии уже detailed. Вызывается на каждом успешном сборе — так дооцениваются и хвосты после сбоев
-      code('W1', 'Score job', 'n8n/w1-collector/score-job.js', [1980, 0]),
+      code('W1', 'Score job', 'n8n/w1-collector/score-job.js', [1980, 200]),
       // Итог сбора — в журнал. Выше «Score»: n8n (execution order v1) запишет его до вызова W2
-      node('W1', 'Finish run', 'dataTable', 1.1, [2200, 0], {
+      node('W1', 'Finish run', 'dataTable', 1.1, [2200, 200], {
         resource: 'row',
         operation: 'update',
         dataTableId: RUNS,
@@ -1377,14 +1531,14 @@ const workflows = {
         options: {},
       }),
       ...W1_RECOVERY.nodes,
-      runWorkflow('W1', 'Score', [2200, 150], IDS.score),
-      node('W1', 'To file', 'convertToFile', 1.1, [1980, 300], {
+      runWorkflow('W1', 'Score', [2200, 350], IDS.score),
+      node('W1', 'To file', 'convertToFile', 1.1, [1980, 500], {
         operation: 'toText',
         sourceProperty: 'html',
         binaryPropertyName: 'data',
         options: { fileName: 'hh-fail.html' },
       }),
-      node('W1', 'Save fixture', 'readWriteFile', 1.1, [2200, 300], {
+      node('W1', 'Save fixture', 'readWriteFile', 1.1, [2200, 500], {
         operation: 'write',
         fileName: "=/home/node/.n8n-files/fixtures/hh-fail-{{ $now.toFormat('yyyyLLdd-HHmmss') }}.html",
         dataPropertyName: 'data',
@@ -1396,7 +1550,7 @@ const workflows = {
         'Fail run',
         'dataTable',
         1.1,
-        [2420, 300],
+        [2420, 500],
         {
           resource: 'row',
           operation: 'update',
@@ -1411,7 +1565,7 @@ const workflows = {
         },
         { onError: 'continueRegularOutput' },
       ),
-      node('W1', 'Stop', 'stopAndError', 1, [2640, 300], {
+      node('W1', 'Stop', 'stopAndError', 1, [2640, 500], {
         errorType: 'errorMessage',
         errorMessage: "={{ $('Parse search').first().json.reason }}",
       }),
@@ -1422,9 +1576,13 @@ const workflows = {
       ['Busy', 'Start'],
       ['Start', 'Start run'],
       ['Start run', 'Settings'],
-      ['Settings', 'Plan'],
+      ['Settings', 'Last ok'],
+      ['Last ok', 'Plan'],
       ['Plan', 'Search hh'],
-      ['Search hh', 'Parse search'],
+      ['Search hh', 'Robot?'],
+      ['Robot?', 'Search resume', 0],
+      ['Robot?', 'Parse search', 1],
+      ['Search resume', 'Parse search'],
       ['Parse search', 'OK?'],
       ['OK?', 'Split vacancies', 0],
       ['OK?', 'HC ping?', 0],
@@ -1433,8 +1591,9 @@ const workflows = {
       ['Is new', 'Blacklist'],
       ['Blacklist', 'Filter search'],
       ['Filter search', 'Insert'],
-      ['Insert', 'Is candidate'],
-      ['Is candidate', 'Vacancy page', 0],
+      ['OK?', 'Pending new', 0],
+      ['Pending new', 'Candidates'],
+      ['Candidates', 'Vacancy page'],
       ['Vacancy page', 'Parse vacancy'],
       ['Parse vacancy', 'Update'],
       ['OK?', 'Score job', 0],
@@ -1488,35 +1647,9 @@ const workflows = {
         options: {},
       }),
       code('W2', 'Build prompt', 'n8n/w2-score/build-prompt.js', [1100, 0]),
-      node('W2', 'Claude?', 'if', 2.3, [1320, 0], ifTrue('W2', "={{ $json.provider === 'claude' }}")),
-      node(
-        'W2',
-        'Claude',
-        'httpRequest',
-        4.5,
-        [1540, -100],
-        llmRequest({
-          url: 'https://api.anthropic.com/v1/messages',
-          credential: 'anthropicApi',
-          headers: [['anthropic-version', '2023-06-01']],
-          interval: 1000,
-        }),
-        { credentials: { anthropicApi: { id: IDS.claudeCredential, name: 'Claude' } }, onError: 'continueRegularOutput' },
-      ),
-      node(
-        'W2',
-        'Gemini',
-        'httpRequest',
-        4.5,
-        [1540, 100],
-        llmRequest({
-          url: '=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.model }}:generateContent',
-          credential: 'googlePalmApi',
-          // Бесплатный Gemini: 10–15 запросов в минуту → не чаще одного в 7 с
-          interval: 7000,
-        }),
-        { credentials: { googlePalmApi: { id: IDS.geminiCredential, name: 'Gemini' } }, onError: 'continueRegularOutput' },
-      ),
+      // Бесплатный Gemini: 10–15 запросов в минуту → не чаще одного в 7 с; Claude по подписке (Haiku) отвечает за ~5 с —
+      // запросы раз в 6 с не копят очередь у сервиса
+      ...llmBranch('W2', [1320, 0], { gemini: 7000, cli: 6000 }),
       code('W2', 'Parse verdict', 'n8n/w2-score/parse-verdict.js', [1760, 0]),
       // Настройки бота: провайдер, профиль и правила (Build prompt), теневой режим (Format card, Quiet skips)
       settingsNode('W2', [660, 0]),
@@ -1668,11 +1801,7 @@ const workflows = {
       ['Pending', 'Claim'],
       ['Claim', 'Settings'],
       ['Settings', 'Build prompt'],
-      ['Build prompt', 'Claude?'],
-      ['Claude?', 'Claude', 0],
-      ['Claude?', 'Gemini', 1],
-      ['Claude', 'Parse verdict'],
-      ['Gemini', 'Parse verdict'],
+      ...llmLinks('Build prompt', 'Parse verdict'),
       ['Parse verdict', 'Format card'],
       ['Parse verdict', 'Quiet skips'],
       ['Parse verdict', 'First save'],
@@ -2149,7 +2278,8 @@ const workflows = {
     IDS.letter,
     'W5 Letter',
     [
-      // Вызов из W3 (✅, «🔄 Переписать», ответ на письмо): items { id, letter_mode, instruction }
+      // Вызов из W3 (✅, «🔄 Переписать», ответ на письмо): items { id, letter_mode, instruction }; из W9 «Write letter»
+      // (автоотклик, 6.1c): { id, letter_mode: new, auto: true }
       node('W5', 'Called by W3', 'executeWorkflowTrigger', 1.1, [0, -100], { inputSource: 'passthrough' }),
       // Ручной запуск — письма ко всем ✅ без письма
       node('W5', 'Manual', 'manualTrigger', 1, [0, 100], {}),
@@ -2178,44 +2308,52 @@ const workflows = {
       // Провайдер нейросети и профиль (резюме, подпись, образцы писем) — из настроек бота
       settingsNode('W5', [1100, 0]),
       code('W5', 'Build letter', 'n8n/w5-letter/build-letter.js', [1760, 0]),
-      node('W5', 'Claude?', 'if', 2.3, [1980, 0], ifTrue('W5', "={{ $json.provider === 'claude' }}")),
-      node(
-        'W5',
-        'Claude',
-        'httpRequest',
-        4.5,
-        [2200, -100],
-        llmRequest({
-          url: 'https://api.anthropic.com/v1/messages',
-          credential: 'anthropicApi',
-          headers: [['anthropic-version', '2023-06-01']],
-          interval: 1000,
-        }),
-        { credentials: { anthropicApi: { id: IDS.claudeCredential, name: 'Claude' } }, onError: 'continueRegularOutput' },
-      ),
-      node(
-        'W5',
-        'Gemini',
-        'httpRequest',
-        4.5,
-        [2200, 100],
-        llmRequest({
-          url: '=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.model }}:generateContent',
-          credential: 'googlePalmApi',
-          interval: 5000,
-        }),
-        { credentials: { googlePalmApi: { id: IDS.geminiCredential, name: 'Gemini' } }, onError: 'continueRegularOutput' },
-      ),
+      ...llmBranch('W5', [1980, 0], { gemini: 5000 }),
       code('W5', 'Parse letter', 'n8n/w5-letter/parse-letter.js', [2420, 0]),
       code('W5', 'Format letter', 'n8n/w5-letter/format-letter.js', [2640, 0]),
+      // Автоотклик (6.1c): письмо к захваченной карточке не вышло — без сообщения, карточка снова ждёт решения
+      // (если её не тронули), apply_tries — попытки письма: Feed W9 возьмёт её ещё раз через 15 мин, всего 2 раза
+      node('W5', 'Auto failed?', 'if', 2.3, [2700, -250], ifTrue('W5', '={{ $json.auto_fail }}')),
+      node('W5', 'Auto fail', 'dataTable', 1.1, [2860, -300], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        matchType: 'allConditions',
+        filters: {
+          conditions: [
+            { keyName: 'id', keyValue: '={{ $json.id }}' },
+            { keyName: 'status', keyValue: 'approved' },
+            { keyName: 'letter', condition: 'isEmpty' },
+          ],
+        },
+        columns: setColumns({
+          status: 'waiting',
+          apply_result: 'no_letter',
+          apply_tries: '={{ $json.apply_tries }}',
+          apply_queued_at: '={{ new Date().toISOString() }}',
+          apply_at: '={{ new Date().toISOString() }}',
+        }),
+        options: {},
+      }),
+      // Письмо автоотклика (6.1c) в чат не шлём — только записать и поставить в очередь робота
+      node('W5', 'Quiet?', 'if', 2.3, [2700, -150], ifTrue('W5', '={{ $json.quiet }}')),
+      node('W5', 'Quiet letter', 'dataTable', 1.1, [3300, -200], {
+        resource: 'row',
+        operation: 'update',
+        dataTableId: VACANCIES,
+        ...byId('={{ $json.id }}'),
+        columns: setColumns({ letter: '={{ $json.letter }}', letter_model: '={{ $json.letter_model }}' }),
+        options: {},
+      }),
       // Робот включён и вакансия ему подходит (этап 6) — письмо сразу с [🚀 Откликнуться роботом]
       node('W5', 'Robot letter?', 'if', 2.3, [2750, 0], ifTrue('W5', '={{ $json.robot }}')),
+      // silent — письмо автоотклика к захваченной карточке (6.1c): без звука
       telegram('W5', 'Send letter', [2860, 100], {
         markup: {
           replyMarkup: 'inlineKeyboard',
           inlineKeyboard: keyboard(letterButtons('$json')),
         },
-        fields: { reply_to_message_id: '={{ $json.replyTo }}' },
+        fields: { reply_to_message_id: '={{ $json.replyTo }}', disable_notification: '={{ $json.silent }}' },
         extra: { onError: 'continueRegularOutput' },
       }),
       telegram('W5', 'Send letter: robot', [2860, -100], {
@@ -2223,7 +2361,7 @@ const workflows = {
           replyMarkup: 'inlineKeyboard',
           inlineKeyboard: keyboard(robotLetterButtons('$json')),
         },
-        fields: { reply_to_message_id: '={{ $json.replyTo }}' },
+        fields: { reply_to_message_id: '={{ $json.replyTo }}', disable_notification: '={{ $json.silent }}' },
         extra: { onError: 'continueRegularOutput' },
       }),
       code('W5', 'Letter sent', 'n8n/w5-letter/letter-sent.js', [3080, 0]),
@@ -2235,6 +2373,9 @@ const workflows = {
         columns: AUTO_MAP,
         options: {},
       }),
+      // Автоотклик (6.1c): новое письмо записано — в очередь робота (W9 enqueue, запуск на вакансию)
+      code('W5', 'Auto jobs', 'n8n/w5-letter/auto-jobs.js', [3520, 200]),
+      runWorkflow('W5', 'Robot queue', [3740, 200], IDS.robot, { each: true }),
       // Новое письмо отправлено и записано — прошлое письмо (и ответ с пожеланием) удалить: в ленте только актуальное
       code('W5', 'Old letters', 'n8n/w5-letter/old-letters.js', [3520, 0]),
       node(
@@ -2272,13 +2413,14 @@ const workflows = {
       ['Jobs', 'Vacancy'],
       ['Vacancy', 'Settings'],
       ['Settings', 'Build letter'],
-      ['Build letter', 'Claude?'],
-      ['Claude?', 'Claude', 0],
-      ['Claude?', 'Gemini', 1],
-      ['Claude', 'Parse letter'],
-      ['Gemini', 'Parse letter'],
+      ...llmLinks('Build letter', 'Parse letter'),
       ['Parse letter', 'Format letter'],
-      ['Format letter', 'Robot letter?'],
+      ['Format letter', 'Auto failed?'],
+      ['Auto failed?', 'Auto fail', 0],
+      ['Auto failed?', 'Quiet?', 1],
+      ['Quiet?', 'Quiet letter', 0],
+      ['Quiet letter', 'Auto jobs'],
+      ['Quiet?', 'Robot letter?', 1],
       ['Robot letter?', 'Send letter: robot', 0],
       ['Robot letter?', 'Send letter', 1],
       ['Send letter', 'Letter sent'],
@@ -2286,6 +2428,8 @@ const workflows = {
       ['Letter sent', 'Save letter'],
       ['Save letter', 'Old letters'],
       ['Old letters', 'Delete old letter'],
+      ['Save letter', 'Auto jobs'],
+      ['Auto jobs', 'Robot queue'],
     ],
     { errorWorkflow: IDS.errors },
   ),
@@ -2622,9 +2766,10 @@ const workflows = {
         },
         { executeOnce: true, alwaysOutputData: true },
       ),
-      // Состояние робота — только для ⚙️ (корень и 🚀 Робот): остальным панелям лишний запрос не нужен
+      // Состояние робота — только для ⚙️ (корень и 🚀 Робот) и панели 🤖 (sync — после отклика робота: панель 🤖
+      // могла быть текущей): остальным панелям лишний запрос не нужен
       node('W7', 'Robot health?', 'if', 2.3, [1870, 150], ifTrue('W7',
-        "={{ $('Job').first().json.view === 'settings' && ['root', 'apply', undefined, ''].includes($('Job').first().json.section) }}")),
+        "={{ ['auto', 'sync'].includes($('Job').first().json.view) || ($('Job').first().json.view === 'settings' && ['root', 'apply', undefined, ''].includes($('Job').first().json.section)) }}")),
       applierNode('W7', 'Robot health', [1980, 250], { path: '/health', timeout: 3000 }, { executeOnce: true }),
       code('W7', 'Render', 'n8n/w7-menu/render.js', [1980, 0]),
       // Выход = $json.route (render.js): раскладка × новое сообщение (чётный) / правка панели (нечётный), 10 — приветствие
@@ -2765,7 +2910,7 @@ const workflows = {
         node('W9', 'Manual', 'manualTrigger', 1, [0, 200], {}),
         code('W9', 'Job', 'n8n/w9-robot/job.js', [220, 0]),
         settingsNode('W9', [440, 0]),
-        // 0 — 🚀 / ⛔, 1 — очередь, 2 — ▶️ / /go, 3 — ответ на капчу, 4 — робот выключен.
+        // 0 — 🚀 / ⛔, 1 — очередь, 2 — ▶️ / /go, 3 — ответ на капчу, 4 — робот выключен, 5 — автоотклик выключили.
         // Один раз: «Settings» отдаёт по item на настройку — иначе каждая ветка шла бы столько же раз
         node(
           'W9',
@@ -2775,8 +2920,8 @@ const workflows = {
           [660, 0],
           {
             mode: 'expression',
-            numberOutputs: 5,
-            output: `={{ ({ enqueue: 0, stop: 0, tick: 1, resume: 2, captcha: 3, dequeue: 4 })[${JOB}.op] ?? 1 }}`,
+            numberOutputs: 6,
+            output: `={{ ({ enqueue: 0, stop: 0, tick: 1, resume: 2, captcha: 3, dequeue: 4, autostop: 5 })[${JOB}.op] ?? 1 }}`,
             options: {},
           },
           { executeOnce: true },
@@ -2817,11 +2962,14 @@ const workflows = {
                 { keyName: 'apply_state', condition: 'isEmpty' },
               ],
             },
+            // apply_mode — кто поставил: '' (🚀) | auto (автоотклик, 6.1c); у автоотклика попытки письма не в счёт сбоев
             columns: setColumns({
               apply_state: 'queued',
               apply_queued_at: '={{ new Date().toISOString() }}',
               apply_result: '',
               apply_note: '',
+              apply_mode: '={{ $json.mode }}',
+              apply_tries: '={{ $json.tries }}',
             }),
             options: {},
           },
@@ -2844,12 +2992,15 @@ const workflows = {
                 { keyName: 'apply_state', keyValue: 'queued' },
               ],
             },
-            columns: setColumns({ apply_state: '' }),
+            // ⛔: stopped — автоотклик (6.1c) эту вакансию больше не возьмёт; 🚀 вернёт её в очередь
+            columns: setColumns({ apply_state: '', apply_result: 'stopped', apply_at: '={{ new Date().toISOString() }}' }),
             options: {},
           },
           { alwaysOutputData: true },
         ),
         code('W9', 'Done', 'n8n/w9-robot/done.js', [1760, -1100]),
+        // Автоотклик ставит в очередь без нажатия — отвечать некому
+        node('W9', 'Answer?', 'if', 2.3, [1870, -1200], ifTrue('W9', '={{ Boolean($json.queryId) }}')),
         answerQuery('W9', 'Answer', [1980, -1200], '={{ $json.queryId }}', '={{ $json.toast }}', {
           onError: 'continueRegularOutput',
         }),
@@ -2857,17 +3008,39 @@ const workflows = {
         node('W9', 'Tick?', 'if', 2.3, [1980, -950], ifTrue('W9', '={{ $json.tick }}')),
 
         // ---- Очередь: починка, ворота, захват, отклик, итог
-        node('W9', 'Queue', 'dataTable', 1.1, [880, 0], {
-          resource: 'row',
-          operation: 'get',
-          dataTableId: VACANCIES,
-          matchType: 'allConditions',
-          filters: { conditions: [{ keyName: 'apply_state', condition: 'isNotEmpty' }] },
-          returnAll: true,
-          orderBy: true,
-          orderByColumn: 'apply_queued_at',
-          orderByDirection: 'ASC',
-        }),
+        // Пустая очередь — пустой item: при автооткликe «Gate» и «Feed» нужны и тогда (6.1c)
+        node(
+          'W9',
+          'Queue',
+          'dataTable',
+          1.1,
+          [880, 0],
+          {
+            resource: 'row',
+            operation: 'get',
+            dataTableId: VACANCIES,
+            matchType: 'allConditions',
+            filters: { conditions: [{ keyName: 'apply_state', condition: 'isNotEmpty' }] },
+            returnAll: true,
+            orderBy: true,
+            orderByColumn: 'apply_queued_at',
+            orderByDirection: 'ASC',
+          },
+          { alwaysOutputData: true },
+        ),
+        // Работа есть: очередь не пуста или автоотклик включён — иначе тик ничего не спрашивает у робота
+        node(
+          'W9',
+          'Work?',
+          'if',
+          2.3,
+          [990, 100],
+          ifTrue(
+            'W9',
+            "={{ $('Queue').all().some((i) => i.json.id) || ['apply.enabled', 'apply.auto'].every((n) => $('Settings').all().some((i) => i.json.name === n && i.json.value_json === 'true')) }}",
+          ),
+          { executeOnce: true },
+        ),
         // Живые отклики робота за двое суток: «день» робота (с 09:00 по местному) отсчитывает «Gate» (robotToday)
         node(
           'W9',
@@ -2995,7 +3168,8 @@ const workflows = {
           method: 'POST',
           path: '/apply',
           // resume — каким резюме hh откликаться (резюме вакансии, связанное с hh; пусто — по умолчанию)
-          body: `={{ JSON.stringify({ vacancyId: ${GATE}.next.external_id, letter: ${GATE}.next.letter, requestId: ${GATE}.next.id + '-' + Date.now(), resume: ${GATE}.next.resume || undefined }) }}`,
+          // pace — темп из ⚙️ (пауза и лимит часа держит сам робот, 6.1c)
+          body: `={{ JSON.stringify({ vacancyId: ${GATE}.next.external_id, letter: ${GATE}.next.letter, requestId: ${GATE}.next.id + '-' + Date.now(), resume: ${GATE}.next.resume || undefined, pace: ${GATE}.pace }) }}`,
           timeout: 240000,
           full: true,
         }),
@@ -3016,6 +3190,7 @@ const workflows = {
             apply_tries: '={{ $json.row.apply_tries }}',
             has_test: '={{ $json.row.has_test }}',
             apply_type: '={{ $json.row.apply_type }}',
+            apply_at: '={{ $json.row.apply_at }}',
           }),
           options: {},
         }),
@@ -3042,10 +3217,80 @@ const workflows = {
         }),
         code('W9', 'Sync job', 'n8n/w9-robot/sync-job.js', [2640, 400]),
         runWorkflow('W9', 'Panel sync', [2860, 400], IDS.menu),
-        // Очередь не пуста — сразу следующий (новый запуск W9); после ошибки — ждём расписания
+        // Очередь не пуста — следующий (новый запуск W9), когда кончится пауза робота между откликами (≤ 60 с, 6.1c);
+        // после ошибки — ждём расписания
         node('W9', 'More?', 'if', 2.3, [2640, 500], ifTrue('W9', `={{ ${RESULT}.more }}`)),
-        code('W9', 'Next job', 'n8n/w9-robot/next-job.js', [2860, 500]),
-        runWorkflow('W9', 'Next tick', [3080, 500], IDS.robot),
+        node('W9', 'Pace wait', 'wait', 1.1, [2860, 500], { amount: `={{ ${RESULT}.delay }}`, unit: 'seconds' }),
+        code('W9', 'Next job', 'n8n/w9-robot/next-job.js', [3080, 500]),
+        runWorkflow('W9', 'Next tick', [3300, 500], IDS.robot),
+
+        // ---- Автоотклик (6.1c): ветка выше «Next?» — письма к следующим вакансиям пишутся, пока робот откликается
+        node('W9', 'Auto on?', 'if', 2.3, [1760, 0], ifTrue('W9', '={{ $json.auto }}')),
+        node('W9', 'Auto rows', 'dataTable', 1.1, [3520, 0], {
+          resource: 'row',
+          operation: 'get',
+          dataTableId: VACANCIES,
+          matchType: 'anyCondition',
+          filters: {
+            conditions: [
+              { keyName: 'status', keyValue: 'approved' },
+              { keyName: 'status', keyValue: 'waiting' },
+            ],
+          },
+          returnAll: true,
+        }),
+        code('W9', 'Feed', 'n8n/w9-robot/feed.js', [3740, 0]),
+        node('W9', 'Feed kind', 'switch', 3.4, [3960, 0], {
+          mode: 'expression',
+          numberOutputs: 4,
+          output: '={{ ({ claim: 0, enqueue: 1, unclaim: 2 })[$json.kind] ?? 3 }}',
+          options: {},
+        }),
+        // Захват с условием: карточку никто не тронул (❌, ✅ пользователя, второй W9) — иначе Update ничего не отдаст
+        node('W9', 'Auto claim', 'dataTable', 1.1, [4180, -100], {
+          resource: 'row',
+          operation: 'update',
+          dataTableId: VACANCIES,
+          matchType: 'allConditions',
+          filters: {
+            conditions: [
+              { keyName: 'id', keyValue: '={{ $json.id }}' },
+              { keyName: 'status', keyValue: 'waiting' },
+              { keyName: 'my_decision', condition: 'isEmpty' },
+              { keyName: 'letter_lock', condition: 'isEmpty' },
+              { keyName: 'apply_state', condition: 'isEmpty' },
+            ],
+          },
+          columns: setColumns({
+            status: 'approved',
+            apply_mode: 'auto',
+            letter_lock: '={{ new Date().toISOString() }}',
+            apply_queued_at: '={{ new Date().toISOString() }}',
+          }),
+          options: {},
+        }),
+        code('W9', 'Auto letter', 'n8n/w9-robot/auto-letter.js', [4400, -100]),
+        runWorkflow('W9', 'Write letter', [4620, -100], IDS.letter),
+        // ✅ с письмом — той же дорогой, что 🚀: Plan → Enqueue (по запуску W9 на вакансию)
+        runWorkflow('W9', 'Auto enqueue', [4180, 0], IDS.robot, { each: true }),
+        // W5 упал, не сняв захват: вакансия — снова «ждёт решения» (Feed возьмёт её ещё раз)
+        node('W9', 'Auto unclaim', 'dataTable', 1.1, [4180, 100], {
+          resource: 'row',
+          operation: 'update',
+          dataTableId: VACANCIES,
+          matchType: 'allConditions',
+          filters: {
+            conditions: [
+              { keyName: 'id', keyValue: '={{ $json.id }}' },
+              { keyName: 'status', keyValue: 'approved' },
+              { keyName: 'apply_mode', keyValue: 'auto' },
+              { keyName: 'letter', condition: 'isEmpty' },
+              { keyName: 'apply_state', condition: 'isEmpty' },
+            ],
+          },
+          columns: setColumns({ status: 'waiting', letter_lock: '' }),
+          options: {},
+        }),
 
         // ---- ▶️ / /go: робот перепроверяет вход и капчу, потом очередь
         applierNode('W9', 'Resume', [880, 1000], { method: 'POST', path: '/resume', timeout: 60000, full: true }),
@@ -3120,8 +3365,23 @@ const workflows = {
               { keyName: 'apply_state', keyValue: 'queued' },
             ],
           },
-          columns: setColumns({ apply_state: '', apply_result: 'disabled' }),
+          // disabled — робот выключен; stopped — выключили автоотклик (6.1c): письма снова с 🚀
+          columns: setColumns({ apply_state: '', apply_result: '={{ $json.result }}' }),
           options: {},
+        }),
+        // ---- Автоотклик выключили (6.1c): его очередь — назад в ✅; поставленное 🚀 остаётся
+        node('W9', 'Auto queued', 'dataTable', 1.1, [880, 1850], {
+          resource: 'row',
+          operation: 'get',
+          dataTableId: VACANCIES,
+          matchType: 'allConditions',
+          filters: {
+            conditions: [
+              { keyName: 'apply_state', keyValue: 'queued' },
+              { keyName: 'apply_mode', keyValue: 'auto' },
+            ],
+          },
+          returnAll: true,
         }),
 
         // ---- Вид письма — общий для всех веток
@@ -3138,6 +3398,7 @@ const workflows = {
         ['Op', 'Resume', 2],
         ['Op', 'Captcha', 3],
         ['Op', 'Queued', 4],
+        ['Op', 'Auto queued', 5],
         // 🚀 / ⛔
         ['Row', 'Plan'],
         ['Plan', 'Save?'],
@@ -3147,11 +3408,13 @@ const workflows = {
         ['Enqueue', 'Done'],
         ['Unqueue', 'Done'],
         ['Done', 'View'],
-        ['Done', 'Answer'],
+        ['Done', 'Answer?'],
+        ['Answer?', 'Answer', 0],
         ['Done', 'Tick?'],
         ['Tick?', 'Queue', 0],
         // Очередь
-        ['Queue', 'Today'],
+        ['Queue', 'Work?'],
+        ['Work?', 'Today', 0],
         ['Today', 'Health'],
         ['Health', 'Gate'],
         ['Gate', 'Heal?'],
@@ -3178,6 +3441,15 @@ const workflows = {
         ['Notice kind', 'Info', 2],
         ['Gate', 'Gate views'],
         ['Gate views', 'View'],
+        ['Gate', 'Auto on?'],
+        ['Auto on?', 'Auto rows', 0],
+        ['Auto rows', 'Feed'],
+        ['Feed', 'Feed kind'],
+        ['Feed kind', 'Auto claim', 0],
+        ['Auto claim', 'Auto letter'],
+        ['Auto letter', 'Write letter'],
+        ['Feed kind', 'Auto enqueue', 1],
+        ['Feed kind', 'Auto unclaim', 2],
         ['Gate', 'Next?'],
         ['Next?', 'Claim', 0],
         ['Claim', 'Apply'],
@@ -3194,7 +3466,8 @@ const workflows = {
         ['Result', 'Sync job'],
         ['Sync job', 'Panel sync'],
         ['Result', 'More?'],
-        ['More?', 'Next job', 0],
+        ['More?', 'Pace wait', 0],
+        ['Pace wait', 'Next job'],
         ['Next job', 'Next tick'],
         // ▶️ / /go
         ['Resume', 'Resume plan'],
@@ -3217,6 +3490,7 @@ const workflows = {
         ['New captcha?', 'Captcha fail', 1],
         // Робот выключен
         ['Queued', 'Dequeue'],
+        ['Auto queued', 'Dequeue'],
         ['Dequeue', 'Unqueue all'],
         ['Dequeue', 'View'],
         ...view.links,
@@ -3294,34 +3568,7 @@ const workflows = {
       node('W11', 'To LLM?', 'if', 2.3, [1980, -400], ifTrue('W11', '={{ $json.toLlm }}')),
       // Нейросеть: разбор резюме или правка профиля по пожеланию — тот же провайдер, что для оценки
       code('W11', 'Build extract', 'n8n/w11-profile/build-extract.js', [2200, -200]),
-      node('W11', 'Claude?', 'if', 2.3, [2420, -200], ifTrue('W11', "={{ $json.provider === 'claude' }}")),
-      node(
-        'W11',
-        'Claude',
-        'httpRequest',
-        4.5,
-        [2640, -300],
-        llmRequest({
-          url: 'https://api.anthropic.com/v1/messages',
-          credential: 'anthropicApi',
-          headers: [['anthropic-version', '2023-06-01']],
-          interval: 1000,
-        }),
-        { credentials: { anthropicApi: { id: IDS.claudeCredential, name: 'Claude' } }, onError: 'continueRegularOutput' },
-      ),
-      node(
-        'W11',
-        'Gemini',
-        'httpRequest',
-        4.5,
-        [2640, -100],
-        llmRequest({
-          url: '=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.model }}:generateContent',
-          credential: 'googlePalmApi',
-          interval: 1000,
-        }),
-        { credentials: { googlePalmApi: { id: IDS.geminiCredential, name: 'Gemini' } }, onError: 'continueRegularOutput' },
-      ),
+      ...llmBranch('W11', [2420, -200], { gemini: 1000 }),
       code('W11', 'Parse profile', 'n8n/w11-profile/parse-profile.js', [2860, -200]),
       node('W11', 'Parsed?', 'if', 2.3, [3080, -200], ifTrue('W11', '={{ $json.ok }}')),
       // Офис или гибрид — город из резюме → регион hh (автоподсказка hh.ru)
@@ -3467,11 +3714,7 @@ const workflows = {
       ['PDF text', 'To LLM?'],
       ['To LLM?', 'Build extract', 0],
       ['To LLM?', 'Step', 1],
-      ['Build extract', 'Claude?'],
-      ['Claude?', 'Claude', 0],
-      ['Claude?', 'Gemini', 1],
-      ['Claude', 'Parse profile'],
-      ['Gemini', 'Parse profile'],
+      ...llmLinks('Build extract', 'Parse profile'),
       ['Parse profile', 'Parsed?'],
       ['Parsed?', 'Area?', 0],
       ['Parsed?', 'Step', 1],
@@ -3608,34 +3851,8 @@ const workflows = {
         { onError: 'continueRegularOutput' },
       ),
       code('W13', 'Build', 'n8n/w13-resume/build.js', [1980, -300]),
-      node('W13', 'Claude?', 'if', 2.3, [2200, -300], ifTrue('W13', "={{ $json.provider === 'claude' }}")),
-      node(
-        'W13',
-        'Claude',
-        'httpRequest',
-        4.5,
-        [2420, -400],
-        llmRequest({
-          url: 'https://api.anthropic.com/v1/messages',
-          credential: 'anthropicApi',
-          headers: [['anthropic-version', '2023-06-01']],
-          interval: 1000,
-        }),
-        { credentials: { anthropicApi: { id: IDS.claudeCredential, name: 'Claude' } }, onError: 'continueRegularOutput' },
-      ),
-      node(
-        'W13',
-        'Gemini',
-        'httpRequest',
-        4.5,
-        [2420, -200],
-        llmRequest({
-          url: '=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.model }}:generateContent',
-          credential: 'googlePalmApi',
-          interval: 1000,
-        }),
-        { credentials: { googlePalmApi: { id: IDS.geminiCredential, name: 'Gemini' } }, onError: 'continueRegularOutput' },
-      ),
+      // Правка резюме на Sonnet с мышлением — до 3–4 минут
+      ...llmBranch('W13', [2200, -300], { gemini: 1000, cliTimeout: 300000 }),
       code('W13', 'Parse', 'n8n/w13-resume/parse.js', [2640, -300]),
       // Резюме файлом: сообщение Telegram — до 4096 знаков, резюме — до 30 000
       code('W13', 'Resume file', 'n8n/w13-resume/resume-file.js', [1760, 300]),
@@ -3737,11 +3954,7 @@ const workflows = {
       ['Photos', 'Get shot'],
       ['Get shot', 'Send shot'],
       ['Wait', 'Build'],
-      ['Build', 'Claude?'],
-      ['Claude?', 'Claude', 0],
-      ['Claude?', 'Gemini', 1],
-      ['Claude', 'Parse'],
-      ['Gemini', 'Parse'],
+      ...llmLinks('Build', 'Parse'),
       ['Parse', 'Step'],
       ['Resume file', 'To file'],
       ['To file', 'Send file'],

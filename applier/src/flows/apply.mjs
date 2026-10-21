@@ -21,7 +21,7 @@ import { ensure, guardAllow, guardReset, setGuard, shot, shotOf } from '../brows
 import { log } from '../log.mjs';
 import { store } from '../store.mjs';
 import { CHAT_FRAME, HH_PAGE, SEL, TEXT, resumeOptionSel, vacancyUrl } from '../hh/selectors.mjs';
-import { GROUP, initialState, isCaptchaPage, isLoginUrl, resumeChoice, vacancyFacts, vacancyResumes } from '../hh/state.mjs';
+import { GROUP, initialState, isCaptchaPage, isForbiddenVacancy, isLoginUrl, resumeChoice, vacancyFacts, vacancyResumes } from '../hh/state.mjs';
 import { chatResult, letterResult, respondResult, sameText, screenText } from '../hh/xhr.mjs';
 import { pause, sleep } from '../util.mjs';
 import {
@@ -82,6 +82,12 @@ async function captchaBlock(page, kind, tag) {
   return name;
 }
 
+// Капча в окне отклика после «Откликнуться» (блок smart): решает человек в окне робота — и его «Отправить» уходит
+// вместе с откликом (POST …/vacancy_response/popup). Предохранитель после такой попытки оставляет открытым только
+// отклик (20.10.2026: иначе он рвал ответ человека и hh писал «не удалось откликнуться»); закрывает его ▶️
+// (server.mjs → POST /resume) или следующая попытка (guardReset в начале applyFlow)
+let handOver = false;
+
 async function closeExtraPages(page) {
   for (const p of page.context().pages()) if (p !== page) await p.close().catch(() => {});
 }
@@ -100,7 +106,7 @@ async function recheck(page, id) {
 // Откликнулись ли выбранным резюме (hh — истина: usedResumeIds). Резюме не выбрано — любым
 const appliedBy = (after, choice) => (choice ? Boolean(after.resumeList?.find((r) => r.hash === choice.hash)?.used) : Boolean(after.applied));
 
-export async function applyFlow({ vacancyId, letter = '', dry = false, resume = null }) {
+export async function applyFlow({ vacancyId, letter = '', dry = false, resume = null, requestId = null }) {
   const id = String(vacancyId).replace(/\D/g, '');
   const live = config.live && !dry;
   const t0 = Date.now();
@@ -111,6 +117,8 @@ export async function applyFlow({ vacancyId, letter = '', dry = false, resume = 
     tally(outcome, live, fields.note);
     log('apply', {
       vacancyId: id,
+      // Сверка с таблицей n8n: W9 шлёт <id строки>-<время>
+      requestId,
       outcome,
       live,
       via: fields.via,
@@ -153,6 +161,7 @@ export async function applyFlow({ vacancyId, letter = '', dry = false, resume = 
   const facts = vacancyFacts(state, id);
   step('facts', { loggedIn: facts.loggedIn, applied: facts.applied, tests: facts.hasTests, archived: facts.archived });
 
+  if (!facts.found && isForbiddenVacancy(status, html)) return done('archived', { note: 'вакансия в закрытом режиме — соискателям недоступна' });
   if (!facts.found) return done(status === 404 ? 'archived' : 'error', { note: `вакансии нет на hh (HTTP ${status})` });
   if (!facts.loggedIn) {
     store.block('login');
@@ -239,6 +248,11 @@ export async function applyFlow({ vacancyId, letter = '', dry = false, resume = 
   } finally {
     net.stop();
     guardReset();
+    if (handOver) {
+      handOver = false;
+      guardAllow('respond');
+      log('guard.handover', { vacancyId: id, names: ['respond'] });
+    }
     await closeExtraPages(page);
   }
 }
@@ -291,6 +305,8 @@ async function liveApply({ page, id, letter, facts, prediction, choice, net, ste
         await closeExtraPages(page);
         return done('external', { note: 'отклик на сайте работодателя' });
       case 'captcha':
+        // Окно отклика с письмом остаётся на экране: человек решит капчу и отправит отклик сам
+        handOver = true;
         return done('captcha', { shot: await captchaBlock(page, screen.captcha, `captcha-${id}`) });
       case 'confirm':
         // «Вакансия в другой стране», «Скорее всего, будет отказ», «Разрешите работодателям из … видеть профиль» —
@@ -365,10 +381,15 @@ async function liveApply({ page, id, letter, facts, prediction, choice, net, ste
     respond = { ok: true, letter: sentWithLetter ? 'attached' : 'none', confirmed: true };
   }
 
-  // Отклик ушёл. Письмо не ушло вместе с ним (один клик, окно без поля) — прикладываем, иначе в чат отклика
+  // Отклик ушёл. Письмо не ушло вместе с ним (один клик, окно без поля) — прикладываем, иначе в чат отклика.
+  // Сбой на письме — не сбой отклика: отклик уже на hh (19.10.2026 клик по «Приложить» завис, и отправленный отклик
+  // записался ошибкой — бот звал нажать 🚀 ещё раз)
   let how = respond.letter === 'attached' ? 'attached' : 'none';
   if (how !== 'attached' && letter.trim()) {
-    const added = await addLetter(page, letter, net, step);
+    const added = await addLetter(page, letter, net, step).catch((e) => {
+      step('letter-crash', { error: firstLine(e) });
+      return { how: 'none', note: `сбой: ${firstLine(e)}` };
+    });
     how = added.how;
     if (how === 'none') warnings.add(`письмо не приложилось (${added.note}) — добавьте его в чате отклика на hh`);
   }
@@ -447,11 +468,15 @@ async function fillModal(page, letter, facts, warnings, step, choice) {
   const reject = (await bodyText(page)).match(TEXT.rejectWarning)?.[0];
   if (reject) warnings.add(reject);
   const input = page.locator(SEL.letterInput).first();
+  // Письмо необязательное — поле свёрнуто под «Добавить сопроводительное»: раскрываем (19.10.2026 hh сменил кнопку,
+  // и два отклика ушли без письма)
+  let toggled = false;
   if (letter.trim() && !(await visible(input))) {
     const toggle = page.locator(SEL.letterToggle).first();
     if (await visible(toggle)) {
+      await pause(500, 1200);
       await toggle.click({ timeout: 5000 });
-      await visibleWithin(input, 5000);
+      toggled = await visibleWithin(input, 5000);
     }
   }
   let withLetter = false;
@@ -464,7 +489,7 @@ async function fillModal(page, letter, facts, warnings, step, choice) {
   } else if (facts.letterRequired) {
     return { error: 'письмо обязательно, а поля для него в окне нет' };
   }
-  step('modal', { resume: Boolean(title), letter: withLetter });
+  step('modal', { resume: Boolean(title), letter: withLetter, ...(toggled && { toggled }) });
   return { withLetter };
 }
 
@@ -540,17 +565,21 @@ async function textOutcome(page, id, screen, facts, done) {
   return done('error', { note: `hh: ${screen.text}`, shot: name });
 }
 
-// Письмо к уже отправленному отклику: «Приложить сопроводительное письмо» → не вышло — чат отклика. → { how, note }
+// Первая строка ошибки Playwright (дальше — лог вызова на десятки строк)
+const firstLine = (e) => String(e?.message ?? e).split('\n')[0].slice(0, 160);
+
+// Письмо к уже отправленному отклику: «Приложить сопроводительное письмо» → не вышло (в том числе клик завис) — чат
+// отклика. → { how, note }
 async function addLetter(page, letter, net, step) {
   const notes = [];
   const attach = page.locator(SEL.attachLetter).first();
   if (await visibleWithin(attach, 8000)) {
-    const r = await attachLetter(page, attach, letter, net, step);
+    const r = await attachLetter(page, attach, letter, net, step).catch((e) => ({ ok: false, note: `сбой: ${firstLine(e)}` }));
     if (r.ok) return { how: 'attached', note: '' };
     notes.push(`«Приложить»: ${r.note}`);
     await closeDialogs(page);
   } else notes.push('нет «Приложить письмо»');
-  const c = await chatLetter(page, letter, net, step);
+  const c = await chatLetter(page, letter, net, step).catch((e) => ({ ok: false, note: `сбой: ${firstLine(e)}` }));
   if (c.ok) return { how: 'chat', note: '' };
   notes.push(`чат: ${c.note}`);
   return { how: 'none', note: notes.join('; ') };

@@ -54,18 +54,27 @@ export const TABLES = {
     ['prompt_v', 'string'],
     // этап 6 (робот-отклик, docs/stages/stage-6.md): очередь W9 и исход отклика — статус вакансии они не меняют
     ['apply_state', 'string'], // '' | queued (в очереди, можно ⛔) | applying (робот отправляет)
-    ['apply_queued_at', 'string'], // когда нажали 🚀 — порядок очереди
-    ['apply_tries', 'number'], // неудачные попытки робота подряд; с 3-й — только вручную
-    ['apply_result', 'string'], // исход робота: applied | already | test | external | hidden | archived | error | dry_run
+    ['apply_queued_at', 'string'], // когда нажали 🚀 (или автоотклик захватил вакансию) — порядок очереди
+    ['apply_tries', 'number'], // неудачные попытки робота подряд; с 3-й — только вручную (автоотклик: письма — с 2-й)
+    // исход робота: applied | already | test | external | hidden | archived | error | dry_run; 6.1c: stopped (⛔),
+    // no_letter (автоотклик не смог написать письмо)
+    ['apply_result', 'string'],
     ['apply_letter', 'string'], // как ушло письмо: attached | chat | none
     ['apply_note', 'string'], // пометка: предупреждения hh, причина сбоя
     ['apply_by', 'string'], // кто отправил отклик: robot | me («📨 Отправил») | hh (нашёлся на hh, 6.2)
+    ['apply_mode', 'string'], // 6.1c: кто поставил в очередь робота — '' (🚀) | auto (автоотклик)
+    ['apply_at', 'string'], // 6.1c: когда робот закончил последнюю попытку (журнал панели 🤖, сводка W6)
     ['hh_state', 'string'], // 6.2, W10: sent | viewed | invited | rejected
     ['hh_state_at', 'string'],
     ['hh_chat_id', 'string'],
     // несколько резюме (16.10.2026, docs/resumes.md): чьим поиском найдена вакансия; '' — основное (r1)
     ['resume_id', 'string'],
     ['resume_name', 'string'], // название резюме на момент сбора — для строки «📄» в карточке
+    // Claude по подписке (19.10.2026, docs/claude-cli.md): какая модель написала письмо — подпись в шапке письма
+    ['letter_model', 'string'],
+    // подборка hh «по резюме» (21.10.2026): откуда вакансия — '' (обычный поиск) | resume (только подборка: её читает
+    // робот, обычный поиск вакансию не нашёл)
+    ['via', 'string'],
   ],
   // Чёрный список компаний — заполняет пользователь в UI n8n.
   // company: кусок названия компании или её id на hh (только цифры)

@@ -229,6 +229,14 @@
               "type": "string"
             },
             {
+              "name": "apply_mode",
+              "type": "string"
+            },
+            {
+              "name": "apply_at",
+              "type": "string"
+            },
+            {
               "name": "hh_state",
               "type": "string"
             },
@@ -246,6 +254,14 @@
             },
             {
               "name": "resume_name",
+              "type": "string"
+            },
+            {
+              "name": "letter_model",
+              "type": "string"
+            },
+            {
+              "name": "via",
               "type": "string"
             }
           ]
