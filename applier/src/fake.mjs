@@ -197,6 +197,12 @@ export function fakeResumeRead() {
   return { ok: true, resumes: [{ hash, title: resume.title, access: 'clients', status: 'published', updated }], resume, backup: '' };
 }
 
+// POST /search в фейке (21.10.2026): пустая выдача по каждому адресу — W1 на фейковом роботе проходит без hh
+export function fakeSearch(urls) {
+  log('fake.search', { pages: urls.length });
+  return { ok: true, results: urls.map((url) => ({ url, ok: true, total: 0, vacancies: [] })) };
+}
+
 // POST /resume/write в фейке: всегда сухой прогон, по снимку на раздел — W13 проверяет выгрузку без hh
 export function fakeResumeWrite(changes) {
   const results = changes.map((c, i) => ({

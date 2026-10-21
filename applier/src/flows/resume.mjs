@@ -20,12 +20,13 @@ import { watchActions } from './net.mjs';
 
 export const RESUME_DIR = join(config.dataDir, 'resume');
 
-// Страница hh → { state } или { error: captcha | login | layout }. Капча — блок, как у отклика: дальше решает человек
-async function openState(page, url) {
+// Страница hh → { state } или { error: captcha | login | layout }. Капча — блок, как у отклика: дальше решает человек.
+// Общая с подборкой по резюме (flows/search.mjs); tag — имя снимка капчи
+export async function openState(page, url, tag = 'captcha-resume') {
   const res = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
   const html = (await res?.text().catch(() => '')) ?? '';
   if (isCaptchaPage(page.url(), html) || (await captchaShown(page))) {
-    store.block('captcha', { shot: await shot('captcha-resume') });
+    store.block('captcha', { shot: await shot(tag) });
     return { error: 'captcha' };
   }
   const state = initialState(html);

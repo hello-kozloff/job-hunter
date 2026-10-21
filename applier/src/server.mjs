@@ -18,6 +18,8 @@
 //                                                       листанием, maxPages — не больше N страниц, docs/hh-applied.md)
 //   POST /resume/read {hash?}      резюме hh: поля из страницы резюме, только GET (часть D, S2); бэкап — /data/resume
 //   POST /resume/write {hash, changes, dry}  записать разделы резюме формами hh; RESUME_LIVE=0 или dry — сухой прогон
+//   POST /search {urls, wait?}     подборка hh «по резюме» для W1 (21.10.2026): адреса /search/vacancy?resume=<хеш>,
+//                                                       только GET → выдача каждого; занят — ждёт до wait мс (≤ 60 000), потом 409
 //   POST /record {on}              запись: пользователь откликается сам в окне робота
 //   POST /record/paste {text}      во время записи: вставить текст (письмо с Mac) туда, где курсор
 //   POST /shot                     скриншот окна сейчас
@@ -54,9 +56,21 @@ import { applyFlow } from './flows/apply.mjs';
 import { captchaKind, captchaShown, visible } from './flows/dom.mjs';
 import { readNegotiations, reconChooser, reconInbox, reconResume, reconVacancies } from './flows/recon.mjs';
 import { readResume, writeResume } from './flows/resume.mjs';
+import { readSearch } from './flows/search.mjs';
 import { cleanChanges } from './hh/resume.mjs';
+import { cleanSearchUrls } from './hh/search.mjs';
 import { recordStart, recordStop, recording } from './flows/record.mjs';
-import { FAKE_OUTCOMES, fakeApply, fakeCaptcha, fakePush, fakeQueue, fakeResume, fakeResumeRead, fakeResumeWrite } from './fake.mjs';
+import {
+  FAKE_OUTCOMES,
+  fakeApply,
+  fakeCaptcha,
+  fakePush,
+  fakeQueue,
+  fakeResume,
+  fakeResumeRead,
+  fakeResumeWrite,
+  fakeSearch,
+} from './fake.mjs';
 
 if (config.token.length < 16) {
   console.error('APPLIER_TOKEN не задан или короче 16 символов — без него API робота открыт, не стартую');
@@ -321,6 +335,16 @@ const routes = {
     return lock.run('resume-write', () => writeResume({ hash, changes: c.changes, dry }));
   },
 
+  // Подборка hh по резюме для W1 (21.10.2026). Робот занят откликом — W1 ждёт до wait, иначе 409 и пропуск до
+  // следующего сбора (период «за сутки» перекрывает пропуск)
+  'POST /search': async (body) => {
+    assertNotBlocked();
+    const c = cleanSearchUrls(body.urls);
+    if (c.error) throw new HttpError(400, { error: c.error });
+    const wait = Math.min(Math.max(Number(body.wait) || 0, 0), 60000);
+    return lock.run('search', () => readSearch({ urls: c.urls }), { wait });
+  },
+
   'POST /record': async (body) => {
     if (body.on) {
       if (recording()) return { ok: true, recording: recording() };
@@ -432,6 +456,11 @@ async function fakeRoute(key, req) {
       if (store.blocked) return { status: 423, body: { blocked: store.blocked } };
       const c = cleanChanges(body.changes);
       return c.error ? { status: 400, body: { error: c.error } } : { status: 200, body: fakeResumeWrite(c.changes) };
+    }
+    case 'POST /search': {
+      if (store.blocked) return { status: 423, body: { blocked: store.blocked } };
+      const c = cleanSearchUrls(body.urls);
+      return c.error ? { status: 400, body: { error: c.error } } : { status: 200, body: fakeSearch(c.urls) };
     }
     case 'POST /notice':
       return { status: 200, body: noticeAck(body) };
