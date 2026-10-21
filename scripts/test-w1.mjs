@@ -54,7 +54,7 @@ const VACANCY = {
   publicationTime: { $: '2026-10-17T10:00:00+0300' },
 };
 const parse = (planItem) =>
-  runNode('n8n/w1-collector/parse-search.js', { input: [page([VACANCY])], nodes: { Plan: [planItem] } }).then(([out]) => out.vacancies[0]);
+  runNode('n8n/w1-collector/parse-search.js', { nodes: { Plan: [planItem], 'Search hh': [page([VACANCY])] } }).then(([out]) => out.vacancies[0]);
 
 test('Parse search: колонки резюме — только когда они есть', async () => {
   const one = await parse({ label: 'удалёнка', page: 0, resumeId: '', resumeName: '' });
@@ -193,6 +193,124 @@ test('Score job: хвост очереди — отдельной строкой
   assert.deepEqual(out.run, { found: 2, uniq: 2, fresh: 2, rejected: 2, scoring: 2, pages: 3 });
 });
 
+// Подборка hh «по резюме» (21.10.2026): адреса для робота — у резюме с хешем hh и удалёнкой
+const HASH = 'ad21daa1ff10d9b4ac0039ed1f395547644163';
+const HASH2 = 'fa4e00000000000000000000000000000000001';
+const linked = (extra = {}) => rows({ resumes: [{ id: 'r1', name: 'Fullstack AI Engineer', active: true, hh: { hash: HASH, title: 'Fullstack AI Engineer' } }], ...extra });
+
+test('Plan: подборка по резюме — только у резюме с хешем hh и удалёнкой; адрес как у поиска', async () => {
+  assert.deepEqual((await plan(rows({})))[0].robot, [], 'без связи с hh подборки нет');
+  const [first, ...rest] = await plan(linked());
+  assert.equal(first.robot.length, 1);
+  assert.ok(rest.every((i) => !('robot' in i)), 'список — только у первого item');
+  const q = first.robot[0];
+  assert.deepEqual([q.label, q.page, q.resumeId, q.resumeName], ['по резюме hh', 0, '', '']);
+  const u = new URL(q.url);
+  assert.equal(`${u.origin}${u.pathname}`, 'https://hh.ru/search/vacancy');
+  assert.deepEqual(
+    ['resume', 'work_format', 'education', 'search_period', 'order_by', 'page'].map((k) => u.searchParams.get(k)),
+    [HASH, 'REMOTE', 'not_required_or_not_specified', '1', 'publication_time', '0'],
+  );
+  assert.ok(!u.searchParams.has('text') && !u.searchParams.has('professional_role'), 'слова и роли подбирает hh');
+  const office = await plan(linked({ 'search.formats': ['ON_SITE'], 'search.area': { id: 2, name: 'Санкт-Петербург' } }));
+  assert.deepEqual(office[0].robot, [], 'без удалёнки подборку не читаем');
+});
+
+test('Plan: догон — те же страницы и у подборки, не больше 6 адресов, сначала страница 0 каждого резюме', async () => {
+  const items = await runNode('n8n/w1-collector/plan.js', { nodes: { Settings: linked(), 'Last ok': lastOk(240) } });
+  assert.deepEqual(items[0].robot.map((q) => [q.page, param(q.url, 'search_period')]), [[0, '7'], [1, '7'], [2, '7']]);
+  const three = rows({
+    resumes: [
+      { id: 'r1', name: 'A', active: true, hh: { hash: HASH, title: 'A' } },
+      { id: 'r2', name: 'B', active: true, hh: { hash: HASH2, title: 'B' } },
+      { id: 'r3', name: 'C', active: true, hh: { hash: `${HASH2.slice(0, -1)}2`, title: 'C' } },
+    ],
+    'resume.r2': { resume: 'x', in_name: ['b'] },
+    'resume.r3': { resume: 'x', in_name: ['c'] },
+  });
+  const many = await runNode('n8n/w1-collector/plan.js', { nodes: { Settings: three, 'Last ok': lastOk(240) } });
+  assert.deepEqual(many[0].robot.map((q) => [q.resumeName, q.page]), [['A', 0], ['B', 0], ['C', 0], ['A', 1], ['B', 1], ['C', 1]]);
+  assert.equal(many[0].robot[1].label, 'B: по резюме hh');
+});
+
+// Ответ робота «Search resume» (applier POST /search): полный ответ HTTP Request
+const robotOk = (results) => ({ statusCode: 200, body: { ok: true, results } });
+const ROBOT_PLAN = [{ url: 'https://hh.ru/search/vacancy?resume=x&page=0', label: 'по резюме hh', page: 0, resumeId: '', resumeName: '' }];
+const vacancy = (id, extra = {}) => ({ ...VACANCY, vacancyId: id, ...extra });
+const parseAll = (robot, hh = [VACANCY]) =>
+  runNode('n8n/w1-collector/parse-search.js', {
+    nodes: { Plan: [{ label: 'удалёнка', page: 0, robot: ROBOT_PLAN }], 'Search hh': [page(hh)], ...(robot && { 'Search resume': robot }) },
+  }).then(([out]) => out);
+
+test('Parse search: подборка — новые с via = resume, найденные обычным поиском остаются своими', async () => {
+  const out = await parseAll(
+    robotOk([
+      {
+        url: ROBOT_PLAN[0].url,
+        ok: true,
+        total: 47,
+        vacancies: [
+          vacancy(VACANCY.vacancyId), // тот же id — уже из обычного поиска
+          vacancy(138000002, { area: { name: 'Минск' } }), // та же компания и название — копия в другом регионе
+          vacancy(138000003, { name: 'AI-инженер' }),
+          { vacancyId: 0 }, // битая — пропускаем, сбор не роняем
+        ],
+      },
+    ]),
+  );
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.vacancies.map((v) => [v.external_id, v.via ?? '', v.areas]), [
+    ['138000001', '', 'Москва, Минск'],
+    ['138000003', 'resume', 'Москва'],
+  ]);
+  assert.deepEqual(out.requests.at(-1), { label: 'по резюме hh', page: 0, status: 200, total: 47, count: 3, robot: true });
+});
+
+test('Parse search: робот занят, выключен, капча — сбор идёт, причина в requests', async () => {
+  const status = async (robot) => (await parseAll(robot)).requests.filter((r) => r.robot).map((r) => r.status);
+  assert.deepEqual(await status({ statusCode: 409, body: { busy: true } }), ['робот занят']);
+  assert.deepEqual(await status({ statusCode: 423, body: { blocked: { kind: 'captcha' } } }), ['робот на паузе']);
+  assert.deepEqual(await status({ error: { message: 'ECONNREFUSED' } }), ['робот не отвечает']);
+  assert.deepEqual(await status(robotOk([{ url: ROBOT_PLAN[0].url, ok: false, error: 'captcha' }])), ['капча — робот на паузе']);
+  assert.deepEqual(await status(robotOk([])), ['нет ответа']);
+  const out = await parseAll({ statusCode: 409, body: {} });
+  assert.deepEqual([out.ok, out.vacancies.length], [true, 1]);
+  assert.deepEqual((await parseAll(null)).requests.filter((r) => r.robot), [], 'узел не запускался — подборки нет');
+});
+
+test('Parse search: обычный поиск «найдено 0», подборка что-то нашла — не поломка', async () => {
+  const out = await parseAll(robotOk([{ url: ROBOT_PLAN[0].url, ok: true, total: 1, vacancies: [vacancy(138000009)] }]), []);
+  assert.deepEqual([out.ok, out.vacancies.map((v) => v.via)], [true, ['resume']]);
+});
+
+test('Score job: подборка — отдельной строкой, «hh нашёл» и found — только обычный поиск; ссылка на подборку', async () => {
+  const out = await scoreJob({
+    Plan: [planItem(0, { robot: ROBOT_PLAN })],
+    'Parse search': {
+      ok: true,
+      vacancies: [{}, {}],
+      requests: [
+        { label: 'удалёнка', page: 0, status: 200, total: 40, count: 40 },
+        { label: 'по резюме hh', page: 0, status: 200, total: 47, count: 47, robot: true },
+      ],
+    },
+    'Filter search': [
+      { external_id: '1', status: 'new', via: 'resume' },
+      { external_id: '2', status: 'new' },
+    ],
+  });
+  assert.match(out.report, /1 запрос к hh: поиск, стр\. 1 → 200/);
+  assert.match(out.report, /hh нашёл за сутки 40/);
+  assert.match(out.report, /📄 Подборка hh по резюме: hh нашёл 47, сверх обычного поиска новых 1/);
+  assert.match(out.report, /🔗 <a href="https:\/\/hh\.ru\/search\/vacancy\?resume=x&amp;page=0">Открыть подборку по резюме на hh<\/a>/);
+  assert.equal(out.run.found, 40);
+  const busy = await scoreJob({
+    Plan: [planItem(0, { robot: ROBOT_PLAN })],
+    'Parse search': { ok: true, vacancies: [], requests: [{ label: 'удалёнка', page: 0, status: 200, total: 0, count: 0 }, { label: 'по резюме hh', page: 0, status: 'робот занят', total: null, count: 0, robot: true }] },
+  });
+  assert.match(busy.report, /📄 Подборка hh по резюме: пропуск — робот занят/);
+});
+
 // Собранный W1: порядок веток «OK?» (n8n, execution order v1: сверху вниз, каждая целиком) и очередь вместо «Is candidate»
 test('сборка W1: сигнал стражу → вставка → очередь страниц → итог; «Last ok» перед «Plan»', () => {
   const wf = JSON.parse(readFileSync(fileURLToPath(new URL('../n8n/workflows/w1-collector.json', import.meta.url)), 'utf8'));
@@ -207,6 +325,12 @@ test('сборка W1: сигнал стражу → вставка → очер
   assert.deepEqual(children('Insert'), []);
   assert.ok(!byName.has('Is candidate'));
   assert.deepEqual(children('Score job').sort((a, b) => byName.get(a).position[1] - byName.get(b).position[1]), ['Finish run', 'Score']);
+  // Подборка по резюме: робот — между «Search hh» и «Parse search», только если «Plan» дал адреса; сбой не роняет
+  assert.deepEqual(children('Search hh'), ['Robot?']);
+  assert.deepEqual([children('Robot?', 0), children('Robot?', 1)], [['Search resume'], ['Parse search']]);
+  assert.deepEqual(children('Search resume'), ['Parse search']);
+  const robot = byName.get('Search resume');
+  assert.deepEqual([robot.executeOnce, robot.onError, robot.parameters.url], [true, 'continueRegularOutput', '=http://applier:3000/search']);
 });
 
 // Правила 19.10.2026 (решения пользователя): AI на любом языке, junior — целым словом, «только из РФ» без отрицаний

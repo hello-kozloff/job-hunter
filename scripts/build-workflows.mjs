@@ -1402,6 +1402,22 @@ const workflows = {
         // Готовый адрес запроса — из «Plan» (настройки и профиль): удалёнка и, если есть, офис в городе
         hhRequest({ url: '={{ $json.url }}', batching: true }),
       ),
+      // Подборка hh «по резюме» (21.10.2026): только у вошедшего соискателя — читает робот, все адреса одним запросом.
+      // Занят откликом — ждёт до 60 с; сбой — строка в сообщении о сборе, сбор идёт дальше (onError: continue)
+      node('W1', 'Robot?', 'if', 2.3, [1430, 220], ifTrue('W1', "={{ ($('Plan').first().json.robot ?? []).length > 0 }}")),
+      applierNode(
+        'W1',
+        'Search resume',
+        [1540, 380],
+        {
+          method: 'POST',
+          path: '/search',
+          body: "={{ JSON.stringify({ urls: $('Plan').first().json.robot.map((q) => q.url), wait: 60000 }) }}",
+          timeout: 400000,
+          full: true,
+        },
+        { executeOnce: true },
+      ),
       code('W1', 'Parse search', 'n8n/w1-collector/parse-search.js', [1540, 0]),
       node('W1', 'OK?', 'if', 2.3, [1760, 0], ifTrue('W1', '={{ $json.ok }}')),
       // Ветки «OK?» n8n (execution order v1) выполняет сверху вниз, каждую целиком: сигнал стражу → вставка новых →
@@ -1563,7 +1579,10 @@ const workflows = {
       ['Settings', 'Last ok'],
       ['Last ok', 'Plan'],
       ['Plan', 'Search hh'],
-      ['Search hh', 'Parse search'],
+      ['Search hh', 'Robot?'],
+      ['Robot?', 'Search resume', 0],
+      ['Robot?', 'Parse search', 1],
+      ['Search resume', 'Parse search'],
       ['Parse search', 'OK?'],
       ['OK?', 'Split vacancies', 0],
       ['OK?', 'HC ping?', 0],

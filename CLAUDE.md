@@ -40,6 +40,7 @@
 | **Автоотклик** (кнопка «🤖 Автоотклик») | ✅ 6.1c (20.10.2026) | После сброса теневого режима apply нейросети совпал с пользователем в 16 из 18: робот сам берёт ✅ и карточки с apply, пишет письмо и откликается — сразу, без окна на отмену; темп «как руками» (20–60 с, ≤ 30/ч, ≤ 80/день), ночью ждёт; тест и сайт работодателя — человеку (`docs/stages/stage-6.md` → 6.1c) |
 | Письма автопоиска hh → Gmail Trigger | ⏸ запасной план | Не выбран, но легален и без риска бана |
 | **HTTP-запросы к сайту hh.ru + парсинг HTML** | ✅ **выбран, проверен** | 06.10.2026 с Mac (тайский домашний IP): поиск и страница вакансии отдаются без капчи |
+| **Подборка hh «по резюме»** (`/search/vacancy?resume=<хеш>`) | ✅ 21.10.2026, читает робот | В кабинете hh «886 подходящих», из них в базе было 248 (офис 323, чужие роли ~203, бэкенд без наших слов 86, образование 23). Анонимно hh параметр `resume` молча отбрасывает (вся база) → читает робот (`POST /search`), в W1 — ветка после «Search hh»; только удалёнка, образование — как у поиска (решения пользователя) |
 | n8n Cloud | ❌ не используем | Пользователь выбрал self-hosted: бесплатно, без лимита executions, домашний IP. Блокирует ли hh облачные IP — не проверяли, не нужно |
 | Кнопки Telegram на локальном n8n | ✅ ngrok + Telegram Trigger (перенесено на этап 3) | Контейнер ngrok в docker compose, бесплатный постоянный домен; наружу только `/webhook/*` с адресов Telegram, интерфейс n8n — только localhost |
 | Нейросеть для оценки | ✅ Gemini Flash-Lite, бесплатный тариф (07.10.2026) | Пользователь выбрал бесплатно; при исчерпании лимитов — переключение на Claude Haiku 4.5 кнопкой в боте (⚙️ → 🤖 Нейросеть, с 07.10.2026; нужен `ANTHROPIC_API_KEY`). В промпт уходит резюме целиком (бесплатный Gemini может учиться на запросах — пользователь согласен) |
@@ -86,13 +87,14 @@
 Рабочий запрос владельца (W0, W1; источник правды — `n8n/shared/search.js`, его же показывает сообщение о сборе), с 07.10.2026. С 13.10.2026 (часть C «Установки для всех», `docs/onboarding.md`) все параметры — из настроек и профиля: слова, `search.roles` (professional_role, справочник `n8n/shared/hh-roles.js`), `search.formats`, `search.area`, `search.education`, период. Удалёнка ищется по всем регионам, офис и гибрид — отдельным запросом в городе профиля (до двух запросов за сбор). У владельца — один запрос; с 19.10.2026 слова «везде в тексте» — frontend, typescript, javascript (`search.anywhere`):
 
 ```
-https://hh.ru/search/vacancy?text=frontend OR typescript OR javascript OR NAME:(react OR next.js OR nextjs OR vue OR vue.js OR vuejs OR nuxt OR nuxt.js OR nuxtjs OR typescript OR AI OR ИИ OR LLM OR GenAI OR GPT OR нейросети OR нейросетей)&professional_role=96&work_format=REMOTE&education=not_required_or_not_specified&search_period=1&order_by=publication_time&items_on_page=100&enable_snippets=true&ored_clusters=true&page=0
+https://hh.ru/search/vacancy?text=frontend OR typescript OR javascript OR NAME:(react OR next.js OR nextjs OR vue OR vue.js OR vuejs OR nuxt OR nuxt.js OR nuxtjs OR typescript OR AI OR ИИ OR LLM OR GenAI OR GPT OR нейросети OR нейросетей)&professional_role=96&professional_role=165&professional_role=40&work_format=REMOTE&education=not_required_or_not_specified&search_period=1&order_by=publication_time&items_on_page=100&enable_snippets=true&ored_clusters=true&page=0
 ```
 
 - `frontend` — по всему тексту вакансии (название, описание, навыки): находит «JavaScript-разработчик», fullstack и AI-вакансии с фронтендом в описании. Синонимы (Frontend ↔ Фронтенд, front-end) hh подставляет сам.
 - `NAME:(…)` — язык запросов hh: искать только в названии. Стек и AI — только в названии: по всему тексту они приносят чужой бэкенд («React будет плюсом»).
 - `search_period=1` — только за сутки (решение пользователя 07.10.2026). `ored_clusters=true` — как в выдаче на сайте, с одиночными фильтрами на результат не влияет.
-- `professional_role=96` — «Программист, разработчик». AI-инженеры из роли «Дата-сайентист» — это ML, их не берём (решение пользователя 07.10.2026).
+- `professional_role=96` — «Программист, разработчик». AI-инженеры из роли «Дата-сайентист» — это ML, их не берём (решение пользователя 07.10.2026). С 21.10.2026 — роли 96 + 165 «Дата-сайентист» + 40 «Другое» (`search.roles`): там сидят AI Engineer, AI Agent Developer (в подборке hh по резюме за 30 дней — 30 и 12 с AI в названии), а AI-разработка с 19.10.2026 — apply; чистый ML нейросеть по-прежнему skip. 104 «Руководитель группы» и 160 DevOps пользователь не взял.
+- **Подборка hh «по резюме»** (21.10.2026): `resume=<хеш>&work_format=REMOTE&education=…&search_period=…&order_by=publication_time` — hh сам подбирает вакансии к резюме, без наших слов и ролей (`n8n/shared/search.js` → `resumeSearchUrl`). Только у вошедшего соискателя → читает робот (W1 «Search resume»), у резюме с хешем hh. Замер 21.10.2026: 47–49 за сутки, ~28 из них новые для базы; за 7 дней — 231. Вакансии, которые нашла только подборка, — `via = resume`.
 - `education=not_required_or_not_specified` важен: у пользователя среднее образование.
 - Регионы — все (параметра `area` нет): РФ, Казахстан, Узбекистан, Беларусь, Грузия, Сербия, Израиль…
 - Замер 07.10.2026 за сутки: прежний запрос (всё в названии) — 16 вакансий; `frontend` по всему тексту — 34; текущий — 39, из них фильтр по названию пропускает 16. Выдача за сутки умещается на одной странице (100).
@@ -116,7 +118,10 @@ https://hh.ru/search/vacancy?text=frontend OR typescript OR javascript OR NAME:(
                  → Busy + Start: журнал runs (идёт другой сбор — запись running моложе 10 мин — этот пропускаем)
                  → Start run (запись running) → Last ok (последний успешный сбор) → Plan (1–2 запроса: удалёнка, офис
                  в городе; успешного сбора не было дольше суток — догон за 3 или 7 дней, до 3 страниц, 19.10.2026)
-                 → поиск hh → разбор InitialState (пусто при «найдено 0» — не поломка) → склейка дублей
+                 → поиск hh → подборка hh по резюме (21.10.2026: Robot? → Search resume — робот POST /search, у резюме
+                 с хешем hh и удалёнкой; занят, выключен, капча — строка в «🔎 Сбор», сбор идёт дальше)
+                 → разбор InitialState (пусто при «найдено 0» — не поломка) → склейка дублей (найденная обычным
+                 поиском остаётся своей, только из подборки — via = resume)
                  → только новые (нет ни external_id, ни dup_key) → Blacklist + Filter search (правила по выдаче)
                  → Insert (new | rejected) → очередь страниц (19.10.2026): Pending new (все строки new в таблице) →
                  Candidates (этого сбора — все, хвост прошлых — до 25 за сбор) → страница вакансии → Parse vacancy
@@ -157,7 +162,8 @@ https://hh.ru/search/vacancy?text=frontend OR typescript OR javascript OR NAME:(
                  127.0.0.1:5901 для «Общего экрана»), постоянный профиль и сессия hh в томе applier_data, HTTP API
                  http://applier:3000 (CLI — 127.0.0.1:5682, scripts/applier.mjs); предохранитель APPLY_LIVE=0 — не нажимает
                  «Откликнуться»; живой отклик (6.1b): окно с письмом или «в один клик» → письмо «Приложить» / в сообщение
-                 отклика в чате; сетевой фильтр открывает по одному действию; 6.0 — вход, разведка, запись; 6.1 — W9 Robot
+                 отклика в чате; сетевой фильтр открывает по одному действию; POST /search — подборка hh по резюме для W1
+                 (21.10.2026, только GET); 6.0 — вход, разведка, запись; 6.1 — W9 Robot
                  (🚀), 6.2 — W10 Inbox
 [W9 + авто]    автоотклик (6.1c, 20.10.2026, docs/stages/stage-6.md → 6.1c): «🤖 Автоотклик» → W7 панель (▶️ au:on / ⏹ au:off,
                  журнал 8 попыток по apply_at); тик W9 → Gate (+ hour, pace по /health робота, night) → Feed (n8n/shared/auto.js):
@@ -217,6 +223,7 @@ https://hh.ru/search/vacancy?text=frontend OR typescript OR javascript OR NAME:(
 - таблица `runs` — журнал сборов W1: `started_at, finished_at, kind` (schedule | catchup | bot | manual), `status` (running | ok | error), `found, uniq, fresh, rejected, scoring, pages, cards, error`;
 - таблица `settings` — настройки из бота: `name, value_json` (только изменения; значения по умолчанию — в коде); с 13.10.2026 там же профиль человека: `profile.*` (резюме, факты, подпись, контакт, пресет), `llm.rules`, `letters.*` (`docs/onboarding.md`); с 15.10.2026 — `resume.history` (версии резюме для отката, W13) и `cv` (разделы резюме: разметка поверх `profile.resume`, W13); с 19.10.2026 — `llm.shadow_since` (с какой минуты считать теневой режим);
 - 16.10.2026 (несколько резюме, `docs/resumes.md`): таблица `settings` — `resumes` (список резюме) и `resume.r2` … `resume.r5` (данные резюме: текст, факты, правила, поиск, фильтр, письма), `resume.r2.cv` … `resume.r5.cv` и `resume.r2.history` … `resume.r5.history` (разметка и версии отката W13); `vacancies` — `resume_id` (пусто у основного резюме), `resume_name` (подпись «📄 Резюме»: с 17.10.2026 при 2+ резюме — у всех вакансий, у основного тоже; W11 обновляет при переименовании и удалении резюме);
+- 21.10.2026 (подборка hh по резюме): `vacancies` — `via` (`''` — обычный поиск | `resume` — нашла только подборка; W1 «Score job» и сводка W6 считают по нему, что она даёт);
 - таблица `alerts` — тревоги W4: `alert_key, workflow, message, first_at, last_at, hits, is_open, tg_message_id`;
 - имена колонок обходят служебные слова SQL (key, value, trigger, count, unique, open);
 - `id, createdAt, updatedAt` — встроенные.
@@ -371,7 +378,7 @@ https://hh.ru/search/vacancy?text=frontend OR typescript OR javascript OR NAME:(
 - В живом n8n: `node scripts/n8n-api.mjs run jobHunterW1Colle` (сводка по нодам), `node scripts/n8n-api.mjs rows vacancies 5`.
 - Проверка ветки поломки: временно импортировать W1 с битым URL под тем же id → run → вернуть `scripts/deploy.sh`.
 - Pin data: 10–15 реальных вакансий разных типов, включая «ловушки» (Angular под видом Frontend, React Native, .NET + React, «только из РФ»).
-- Робот-отклик: `cd applier && npm test` (чистые функции на фикстурах и записи откликов), `node scripts/applier.mjs status | recon | record | apply <id> --letter-file f` (всегда сухой прогон, `dry: true`), `recon --resume` — разведка резюме на hh (часть D), `cv` — чтение резюме hh (только GET), `cv-dry <файл.json>` — сухой прогон записи резюме (формы hh, снимки, без сохранения); `recon --negotiations [--pages N]` — все «Отклики» hh листанием, как человек (клик по кнопкам пейджера, 6–15 с между страницами) → `topics.json` для `n8n-api.mjs hh-applied` (`docs/hh-applied.md`); `applier/sim/run.sh` — живой сценарий на поддельном hh в контейнере без сети (26 сценариев, перед каждым изменением `apply.mjs`), `recon --chooser <id>` — окно отклика и выбор резюме (без отправки), `apply <id> --letter-file f --resume <хеш>` — сухой прогон с выбором резюме, `applier/sim/run.sh resume` — разведка, чтение и запись резюме (8 сценариев); предохранитель резюме `RESUME_LIVE` (0 — только сухой прогон) — в `.env`, через `scripts/deploy.sh --applier`; предохранитель `APPLY_LIVE` — в `.env`, меняется через `scripts/deploy.sh --applier`; шаги живого отклика — `docker compose logs -f applier`.
+- Робот-отклик: `cd applier && npm test` (чистые функции на фикстурах и записи откликов), `node scripts/applier.mjs status | recon | record | apply <id> --letter-file f` (всегда сухой прогон, `dry: true`), `recon --resume` — разведка резюме на hh (часть D), `cv` — чтение резюме hh (только GET), `cv-dry <файл.json>` — сухой прогон записи резюме (формы hh, снимки, без сохранения); `recon --negotiations [--pages N]` — все «Отклики» hh листанием, как человек (клик по кнопкам пейджера, 6–15 с между страницами) → `topics.json` для `n8n-api.mjs hh-applied` (`docs/hh-applied.md`); `applier/sim/run.sh` — живой сценарий на поддельном hh в контейнере без сети (26 сценариев, перед каждым изменением `apply.mjs`), `recon --chooser <id>` — окно отклика и выбор резюме (без отправки), `apply <id> --letter-file f --resume <хеш>` — сухой прогон с выбором резюме, `applier/sim/run.sh resume` — разведка, чтение и запись резюме, подборка по резюме (12 сценариев); `search <адрес>` — подборка hh по резюме (только GET, как W1); предохранитель резюме `RESUME_LIVE` (0 — только сухой прогон) — в `.env`, через `scripts/deploy.sh --applier`; предохранитель `APPLY_LIVE` — в `.env`, меняется через `scripts/deploy.sh --applier`; шаги живого отклика — `docker compose logs -f applier`.
 - Тест веб-форм — на своих тестовых формах, не на работодателях.
 - Запуск: 3–5 откликов в день с подтверждением, потом больше.
 
@@ -440,7 +447,8 @@ scripts/deploy.sh                   обёртка deploy.mjs с проверк�
 scripts/lib/env.mjs                 .env: чтение, запись, имя проекта и порты (COMPOSE_PROJECT_NAME, N8N_PORT, …)
 scripts/n8n-api.mjs                 владелец, запуск/публикация workflow, строки таблиц, migrate, blacklist-seed,
                                     tunnel-env, sweep (разовый догон: поиск hh за 30 дней, отсеянные — снова через
-                                    нынешние правила, бэкфилл seen — удалить; 19.10.2026, заменил requeue и recheck),
+                                    нынешние правила, бэкфилл seen — удалить; 19.10.2026, заменил requeue и recheck;
+                                    --resume — подборка hh по резюме за 7 дней через робота, только новые, 21.10.2026),
                                     api-key, resume-labels (подписи резюме у вакансий, собранных раньше), hh-applied
                                     (сверка с «Откликами» hh: вакансии без отклика, на которые он есть, → applied,
                                     карточки — из чата; 20.10.2026, docs/hh-applied.md); строки таблиц REST отдаёт

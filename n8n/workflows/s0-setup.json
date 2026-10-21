@@ -259,6 +259,10 @@
             {
               "name": "letter_model",
               "type": "string"
+            },
+            {
+              "name": "via",
+              "type": "string"
             }
           ]
         },

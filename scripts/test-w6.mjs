@@ -57,3 +57,16 @@ test('W6 Archive status: 403 со страницей «Вам недоступн
   assert.deepEqual(out.map((o) => o.id), [1]);
   assert.match(out[0].cardText, /🔒/);
 });
+
+test('подборка hh по резюме: строка, пока она хоть раз что-то дала; новые и оценённые за сутки', async () => {
+  const now = Date.now();
+  const fresh = (id, extra) => ({ id, status: 'waiting', createdAt: iso(now - HOUR), updatedAt: iso(now - HOUR), ...extra });
+  assert.doesNotMatch(await summary([fresh(1, {})]), /подборки hh/);
+  const rows = [
+    fresh(1, {}),
+    fresh(2, { via: 'resume', decision: 'apply', card_at: iso(now - HOUR) }),
+    fresh(3, { via: 'resume', status: 'rejected' }),
+    { id: 4, status: 'applied', via: 'resume', createdAt: iso(now - 72 * HOUR), updatedAt: iso(now - 72 * HOUR) },
+  ];
+  assert.match(await summary(rows), /📄 Из них только из подборки hh по резюме: 2 → оценено 1 \(🟢 1\)/);
+});

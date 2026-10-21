@@ -49,6 +49,14 @@ const topReasons = Object.entries(reasons)
 // Время оценки — card_at (пишет W2); у строк до этапа 5 его нет — берём время создания
 const scored = rows.filter((r) => r.decision && at(r.card_at || r.createdAt) >= since);
 const count = (list, f) => list.filter(f).length;
+// Подборка hh «по резюме» (21.10.2026): что она дала сверх обычного поиска (via = resume) — строка, пока подборка хоть
+// раз что-то принесла
+const viaResume = (r) => r.via === 'resume';
+const resumeFresh = fresh.filter(viaResume);
+const resumeScored = scored.filter(viaResume);
+const resumeLine = rows.some(viaResume)
+  ? `📄 Из них только из подборки hh по резюме: ${resumeFresh.length} → оценено ${resumeScored.length}${resumeScored.length ? ` (🟢 ${count(resumeScored, (r) => r.decision === 'apply')})` : ''}`
+  : '';
 
 // Решения пользователя за сутки (по времени последнего изменения строки) и отправленные отклики
 const mine = rows.filter((r) => r.my_decision && at(r.updatedAt) >= since);
@@ -150,6 +158,7 @@ const date = localDM(now);
 const lines = [
   `☀️ <b>Сводка за сутки</b> · ${date}`,
   `🔎 Новых вакансий: ${fresh.length} → фильтр отсеял ${rejected.length}${topReasons ? ` (${topReasons})` : ''}`,
+  resumeLine,
   `🤖 Оценено: ${scored.length}${scored.length ? ` — 🟢 ${count(scored, (r) => r.decision === 'apply')} · 🟡 ${count(scored, (r) => r.decision === 'maybe')} · 🔴 ${count(scored, (r) => r.decision === 'skip')}` : ''}${count(scored, (r) => r.decision === 'error') ? ` · ⚠️ ${count(scored, (r) => r.decision === 'error')}` : ''}`,
   `👤 Твои решения: ✅ ${count(mine, (r) => r.my_decision === 'apply')} · 🤔 ${count(mine, (r) => r.my_decision === 'maybe')} · ❌ ${count(mine, (r) => r.my_decision === 'skip')} · 📨 отправлено ${sent}${count(mine, (r) => r.my_decision === 'earlier') ? ` · 📨 раньше ${count(mine, (r) => r.my_decision === 'earlier')}` : ''}`,
   robotLineText,
