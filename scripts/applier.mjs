@@ -33,11 +33,16 @@
 //   node scripts/applier.mjs apply <id> --letter-file <файл> [--resume <хеш>]   сухой прогон отклика: до кнопки, без
 //                                                    клика (всегда — и при APPLY_LIVE=1: живой отклик только из W9, он
 //                                                    ведёт таблицу); --resume — каким резюме hh откликнулся бы
+//   node scripts/applier.mjs remind <id> [--text "…"]   сухой прогон напоминания (6.3): страница вакансии → можно ли
+//                                                    напоминать → «Чат» → поле сообщения; текст не вводится, ничего не
+//                                                    отправляется (всегда — и при REMIND_LIVE=1: живое только из W9)
 //   node scripts/applier.mjs resume                  перепроверить вход и капчу, снять блок
 //   node scripts/applier.mjs shot                    скриншот окна робота → fixtures/applier/
 //   node scripts/applier.mjs fake <исход> […]        фейковый режим (APPLIER_FAKE=1): следующие исходы /apply по порядку
 //                                                    (applied, applied_chat, already, test, external, hidden, archived,
-//                                                    error, dry_run, captcha, smart, login, limit, busy, down, slow)
+//                                                    error, dry_run, captcha, smart, login, limit, busy, down, slow);
+//                                                    /remind — с приставкой remind: (remind:sent, remind:viewed,
+//                                                    remind:closed, remind:spam, remind:captcha, remind:busy …)
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { readEnv, local } from './lib/env.mjs';
@@ -353,6 +358,26 @@ const commands = {
     if (!text.trim()) throw new Error('буфер обмена пуст — скопируйте письмо в Telegram');
     const r = await api('POST', '/record/paste', { text: text.trim() });
     console.log(`Вставлено ${r.length} знаков туда, где курсор в окне робота`);
+  },
+
+  async remind(args) {
+    const id = args.find((a) => /^\d+$/.test(a));
+    if (!id) throw new Error('remind <id вакансии hh> [--text "…"]');
+    const at = args.indexOf('--text');
+    const text = at >= 0 ? String(args[at + 1] ?? '') : 'Здравствуйте! Напоминаю про свой отклик.';
+    console.log(`Сухой прогон напоминания ${id}: страница вакансии → чат → поле (текст не вводится)…`);
+    const r = await api('POST', '/remind', { vacancyId: id, text, dry: true, requestId: `cli-${Date.now()}` });
+    const hh = r.hh ? `${r.hh.lastState ?? '—'}${r.hh.viewed === true ? ' · просмотрен' : r.hh.viewed === false ? ' · не просмотрен' : ''} · вакансия ${r.hh.chatWrite || '—'}${r.hh.inbox ? ` · ${r.hh.inbox}` : ''}` : '—';
+    console.log(`исход: ${r.outcome} (${r.group})${r.cached ? ' · из кэша' : ''}${r.note ? ` — ${r.note}` : ''}`);
+    console.log(`hh: ${hh}${r.chatId ? ` · чат ${r.chatId}` : ''}`);
+    if (r.shot) {
+      const dir = new URL('../fixtures/applier/', import.meta.url);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(new URL(r.shot, dir), await api('GET', `/shots/${r.shot}`));
+      console.log(`снимок: fixtures/applier/${r.shot}`);
+    }
+    console.log(`шаги: ${r.trace.map((t) => `${t.s}@${(t.ms / 1000).toFixed(1)}`).join(' → ')}`);
+    if (r.pace?.nextAt) console.log(`пауза робота до ${r.pace.nextAt}`);
   },
 
   async resume() {

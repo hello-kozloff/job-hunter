@@ -129,8 +129,15 @@ test('предохранитель: каждое действие открыва
   assert.ok(allows('respond', popup) && !allows('respond', edit) && !allows('respond', save));
   assert.ok(allows('letter', edit) && !allows('letter', popup));
   assert.ok(allows('chat', save) && allows('chat', opened) && !allows('chat', 'https://chatik.hh.ru/chatik/api/mark_read'));
+  // Напоминание (6.3): отправка, «чат открыт», «печатает…» — и только они: ни правки письма, ни «прочитано»
+  const send = 'https://chatik.hh.ru/chatik/api/send?hhtmSourceLabel=chat&hhtmSource=chat';
+  const typing = 'https://chatik.hh.ru/chatik/api/participant_action';
+  assert.ok(allows('remind', send) && allows('remind', opened) && allows('remind', typing));
+  assert.ok(!allows('remind', save) && !allows('remind', popup) && !allows('remind', 'https://chatik.hh.ru/chatik/api/mark_read'));
+  assert.ok(!allows('chat', send), 'письмо в чат не открывает отправку сообщений');
+  assert.ok(!ACTION_URL.chatSend.test('https://chatik.hh.ru/chatik/api/sendx') && !ACTION_URL.chatSend.test(save));
   // всё, что открывают действия, предохранитель вообще перехватывает
-  for (const url of [popup, edit, save, opened]) assert.ok(GUARD_URL.test(url), url);
+  for (const url of [popup, edit, save, opened, send, typing]) assert.ok(GUARD_URL.test(url), url);
   assert.ok(!ACTION_URL.respond.test('https://hh.ru/applicant/vacancy_response/popupx'));
   assert.ok(CHAT_FRAME.test('https://chatik.hh.ru/chat/702?without_list=1'));
   assert.ok(HH_PAGE.test('https://hh.ru/vacancy/1') && HH_PAGE.test('https://spb.hh.ru') && !HH_PAGE.test('https://evilhh.ru/'));

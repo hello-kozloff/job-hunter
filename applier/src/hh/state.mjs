@@ -1,5 +1,6 @@
 // Знание о данных hh без браузера: разбор InitialState, факты вакансии для отклика, прогноз исхода, вырезание
 // личных полей для разведки. Чистые функции — их проверяют тесты (applier/test) на сохранённых страницах.
+import { sameText } from './xhr.mjs';
 
 // HTML-сущности раскодируем за один проход: иначе &amp;quot; станет кавычкой и сломает JSON.
 // Копия декодера из n8n/shared/hh.js (Code-ноды n8n и этот сервис не делят модули)
@@ -350,6 +351,77 @@ export function chatTranslations(html) {
     }
   }
   return out;
+}
+
+// ---------- Напоминание об отклике (этап 6.3) ----------
+
+// Группа исхода напоминания — по ней n8n (W9) решает, что делать со строкой: done и skip — итог, больше не напоминать;
+// later — отклик молод, снова кандидат; dry — сухой прогон; block — капча, вход, «спам» (тревога, ждём человека)
+export const REMIND_GROUP = {
+  sent: 'done',
+  already: 'done',
+  viewed: 'skip',
+  invited: 'skip',
+  rejected: 'skip',
+  wrote: 'skip',
+  closed: 'skip',
+  archived: 'skip',
+  no_topic: 'skip',
+  too_early: 'later',
+  dry_run: 'dry',
+  captcha: 'block',
+  login: 'block',
+  blocked: 'block',
+  error: 'error',
+};
+
+// Текст напоминания: непустой, ≤ 500 знаков, без ссылок → '' или причина отказа
+export function remindTextError(text) {
+  const t = String(text ?? '').trim();
+  if (!t) return 'нужен text — текст напоминания';
+  if (t.length > 500) return 'текст напоминания длиннее 500 знаков';
+  if (/https?:\/\/|www\./i.test(t)) return 'ссылки в напоминании не отправляем';
+  return '';
+}
+
+// Можно ли напоминать — по странице вакансии, до открытия чата: открытие шлёт hh «чат открыт». null — открывать чат.
+// Порядок важен: статус раньше просмотра (INTERVIEW бывает при viewedByOpponent = false, 138505603). Число сообщений и
+// hasNewMessages не мешают: автоответ бота работодателя приходит без просмотра отклика — такому напомнить можно
+const REMIND_AGE_MS = 3 * 24 * 3600 * 1000;
+export function remindFromTopic(facts, topic, now = Date.now()) {
+  if (facts.archived || facts.closed || topic?.archived) return { outcome: 'archived', note: 'вакансия закрыта' };
+  if (!topic) return { outcome: 'no_topic', note: 'отклика на hh нет' };
+  if (topic.declined) return { outcome: 'rejected', note: 'вы отказались от отклика' };
+  if (topic.lastState === 'DISCARD') return { outcome: 'rejected', note: 'отказ работодателя' };
+  if (topic.lastState !== 'RESPONSE') return { outcome: 'invited', note: `статус на hh: ${topic.lastState || 'неизвестен'}` };
+  if (topic.viewed) return { outcome: 'viewed', note: 'работодатель уже открыл отклик' };
+  const at = Date.parse(topic.creationTime);
+  if (at && now - at < REMIND_AGE_MS) return { outcome: 'too_early', note: `отклику меньше 3 дней (${String(topic.creationTime).slice(0, 10)})` };
+  if (facts.chatWrite === 'DISABLED' || topic.inbox === 'DISABLED_BY_EMPLOYER') return { outcome: 'closed', note: 'работодатель отключил переписку' };
+  if (topic.chatArchived) return { outcome: 'closed', note: 'чат отклика в архиве' };
+  if (!topic.chatId) return { outcome: 'error', note: 'у отклика нет чата' };
+  return null;
+}
+
+// Можно ли напоминать — по chat_data, которые грузит сам кадр чата. null — отправлять. Сообщения после сообщения
+// отклика (у него workflowTransition): наше с этим текстом — уже напомнили (повтор после сбоя), наше другое — человек
+// уже писал сам, не бота работодателя — работодатель на связи. Бот работодателя (автоответ, вопросы) не мешает
+export function remindFromChat(body, text) {
+  const chat = body?.chat;
+  if (!chat?.id) return null;
+  const me = String(chat.currentParticipantId ?? '');
+  const items = Array.isArray(chat.messages?.items) ? chat.messages.items : [];
+  const mine = (m) => me !== '' && String(m.participantId ?? '') === me;
+  const later = items.filter((m) => !m.workflowTransition);
+  if (later.some((m) => mine(m) && sameText(m.text, text))) return { outcome: 'already', note: 'напоминание уже в чате' };
+  if (later.some(mine)) return { outcome: 'wrote', note: 'в чат уже писали после отклика' };
+  if (later.some((m) => !mine(m) && m.participantDisplay?.isBot !== true)) return { outcome: 'viewed', note: 'работодатель уже писал в чат' };
+  const write = body.chatStates?.writeMessageState;
+  if (write?.allowed === false) {
+    const why = [...(write.reasons ?? []), ...(chat.writePossibility?.writeDisabledReasons ?? [])];
+    return { outcome: 'closed', note: `писать нельзя: ${[...new Set(why)].join(', ') || chat.writePossibility?.name || 'hh не даёт'}` };
+  }
+  return null;
 }
 
 // Группа исхода отклика — по ней n8n (W9) решает, что делать со строкой, не зная тонкостей hh

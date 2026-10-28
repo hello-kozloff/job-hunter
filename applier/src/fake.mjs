@@ -1,5 +1,6 @@
 // Фейковый режим (этап 6.1a, APPLIER_FAKE=1): браузер не запускается, к hh ни одного запроса. Исходы POST /apply —
 // из очереди сценариев (POST /fake {outcomes}, CLI `node scripts/applier.mjs fake …`), по умолчанию applied.
+// Напоминания (6.3) — своя очередь: исходы с приставкой remind: (remind:sent, remind:spam…); без очереди — по id вакансии.
 // Так проверяются все ветки n8n (W3 → W9 → Telegram) без риска для аккаунта. Блоки — через store, как у боевого:
 // /health показывает их, /captcha «ok» и /resume снимают.
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -9,7 +10,7 @@ import { config } from './config.mjs';
 import { log } from './log.mjs';
 import { store } from './store.mjs';
 import { RESUME_LIMITS } from './hh/resume.mjs';
-import { GROUP } from './hh/state.mjs';
+import { GROUP, REMIND_GROUP } from './hh/state.mjs';
 import { sleep, stamp } from './util.mjs';
 
 export const FAKE_OUTCOMES = [
@@ -30,16 +31,39 @@ export const FAKE_OUTCOMES = [
   'down', // HTTP 503 — робот «упал»
   'slow', // 20 с, потом applied — проверить ⛔ во время отправки
 ];
+// Исходы POST /remind (6.3): итоги hh, блоки и сбои связи — как у отклика
+export const FAKE_REMIND_OUTCOMES = [
+  'sent',
+  'already',
+  'wrote',
+  'viewed',
+  'invited',
+  'rejected',
+  'closed',
+  'archived',
+  'no_topic',
+  'too_early',
+  'error',
+  'dry_run',
+  'captcha',
+  'login',
+  'spam', // блок: hh «Недопустимое сообщение»
+  'busy',
+  'down',
+  'slow', // 20 с, потом sent
+];
 const queue = [];
+const remindQueue = [];
 
 export function fakePush(outcomes) {
-  const bad = outcomes.filter((o) => !FAKE_OUTCOMES.includes(o));
-  if (bad.length) return { ok: false, error: `неизвестные исходы: ${bad.join(', ')}`, known: FAKE_OUTCOMES };
-  queue.push(...outcomes);
+  const known = [...FAKE_OUTCOMES, ...FAKE_REMIND_OUTCOMES.map((o) => `remind:${o}`)];
+  const bad = outcomes.filter((o) => !known.includes(o));
+  if (bad.length) return { ok: false, error: `неизвестные исходы: ${bad.join(', ')}`, known };
+  for (const o of outcomes) (o.startsWith('remind:') ? remindQueue : queue).push(o.replace(/^remind:/, ''));
   log('fake.push', { outcomes });
-  return { ok: true, queue: [...queue] };
+  return { ok: true, queue: fakeQueue() };
 }
-export const fakeQueue = () => [...queue];
+export const fakeQueue = () => [...queue, ...remindQueue.map((o) => `remind:${o}`)];
 
 // Картинка-заглушка для Telegram (PNG 480×270): скриншоты и «капча» в фейковом режиме
 const CRC = new Int32Array(256).map((_, n) => {
@@ -157,6 +181,67 @@ export async function fakeApply({ vacancyId }) {
       return { status: 200, body: result('limit') };
     default:
       return { status: 200, body: result('error', { note: `фейк: нет сценария ${outcome}` }) };
+  }
+}
+
+// POST /remind в фейковом режиме → { status, body }. Без очереди исход — по последней цифре id вакансии: журнал панели
+// выглядит как настоящий (больше всего — отправлено, просмотрен, чат закрыт)
+const REMIND_BY_DIGIT = ['sent', 'viewed', 'closed', 'sent', 'rejected', 'viewed', 'sent', 'invited', 'closed', 'viewed'];
+const REMIND_NOTE = {
+  viewed: 'работодатель уже открыл отклик',
+  invited: 'статус на hh: INTERVIEW',
+  rejected: 'отказ работодателя',
+  wrote: 'в чат уже писали после отклика',
+  closed: 'работодатель отключил переписку',
+  archived: 'вакансия закрыта',
+  no_topic: 'отклика на hh нет',
+  too_early: 'отклику меньше 3 дней',
+};
+const remindResult = (outcome, fields = {}) => ({
+  outcome,
+  group: REMIND_GROUP[outcome],
+  live: true,
+  visited: true,
+  ms: 0,
+  trace: [{ s: 'fake', ms: 0 }],
+  chatId: '555',
+  ...fields,
+});
+export async function fakeRemind({ vacancyId }) {
+  const outcome = remindQueue.shift() ?? REMIND_BY_DIGIT[Number(String(vacancyId).slice(-1)) || 0];
+  log('fake.remind', { vacancyId, outcome });
+  const sent = () => {
+    store.countReminded();
+    return { status: 200, body: remindResult('sent', { confirmed: true, messageId: String(Date.now()) }) };
+  };
+  switch (outcome) {
+    case 'busy':
+      return { status: 409, body: { busy: true, by: 'fake' } };
+    case 'down':
+      return { status: 503, body: { error: 'фейк: робот недоступен' } };
+    case 'slow':
+      await sleep(20000);
+      return sent();
+    case 'sent':
+      return sent();
+    case 'already':
+      return { status: 200, body: remindResult('already', { note: 'напоминание уже в чате' }) };
+    case 'error':
+      store.countError();
+      return { status: 200, body: remindResult('error', { note: 'фейк: в чате нет поля сообщения', shot: fakeShot('remind-error', [229, 57, 53]) }) };
+    case 'dry_run':
+      return { status: 200, body: remindResult('dry_run', { live: false, note: 'фейк: поле сообщения найдено, текст не вводил', shot: fakeShot('remind-dry', [30, 136, 229]) }) };
+    case 'captcha':
+      store.block('captcha', { shot: fakeShot('captcha', [255, 193, 7]) });
+      return { status: 200, body: remindResult('captcha') };
+    case 'login':
+      store.block('login');
+      return { status: 200, body: remindResult('login') };
+    case 'spam':
+      store.block('blocked', { note: 'Недопустимое сообщение', source: 'remind', shot: fakeShot('remind-stop', [229, 57, 53]) });
+      return { status: 200, body: remindResult('blocked', { note: 'Недопустимое сообщение' }) };
+    default:
+      return { status: 200, body: remindResult(outcome, { note: REMIND_NOTE[outcome] ?? '' }) };
   }
 }
 

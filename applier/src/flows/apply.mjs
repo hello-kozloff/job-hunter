@@ -72,7 +72,7 @@ function tally(outcome, live, note) {
 
 // Капча: картинка с текстом на странице /account/captcha — крупным снимком в Telegram (ответ текстом → POST /captcha).
 // Остальное («Я не робот», капча внутри окна отклика) — человеку в окне робота: ответ на фото отправил бы и отклик
-async function captchaBlock(page, kind, tag) {
+export async function captchaBlock(page, kind, tag) {
   if (kind === 'captcha' && /\/account\/captcha/.test(page.url())) {
     const name = await shotOf(page.locator(SEL.captchaForm), tag);
     store.block('captcha', { shot: name });

@@ -8,7 +8,7 @@ import { config } from '../config.mjs';
 import { browserContext, cookies, ensure, guardReset, setGuard, shot, strictGuard } from '../browser.mjs';
 import { log } from '../log.mjs';
 import { store } from '../store.mjs';
-import { CHATIK, NEGOTIATIONS_URL, SEL, WATCH, resumeOptionSel, vacancyUrl } from '../hh/selectors.mjs';
+import { CHATIK, CHAT_DATA_URL, NEGOTIATIONS_URL, SEL, WATCH, resumeOptionSel, vacancyUrl } from '../hh/selectors.mjs';
 import { RESUMES_URL, editLinks, limitsOf, resumeHashes, resumeUrl } from '../hh/resume.mjs';
 import {
   chatFacts,
@@ -330,7 +330,6 @@ export async function readNegotiations({ maxPages = 0 } = {}, progress = () => {
 // работодателю «печатает…». Файлы: page.html, state.json, topic.json, chat.html (кадр чата с переводами), chat.json
 // (chat_data без текстов и имён), chat-trl.json (переводы chatik.*), dom.json, ws.json (кадры WebSocket), shot.jpg
 const MAX_CHATS = 6;
-const CHAT_DATA = /^https:\/\/chatik\.hh\.ru\/chatik\/api\/chat_data(?:[?#]|$)/;
 const CHAT_UNREAD = /^https:\/\/chatik\.hh\.ru\/chatik\/api\/unread(?:[?#]|$)/;
 const firstLine = (e) => String(e?.message ?? e).split('\n')[0].slice(0, 160);
 const hostPath = (url) => {
@@ -353,7 +352,7 @@ async function reconChat(page, id, dir) {
   const onResponse = async (res) => {
     try {
       if (CHAT_UNREAD.test(res.url())) item.unread.push(await res.json());
-      else if (CHAT_DATA.test(res.url()) && !item.chat) {
+      else if (CHAT_DATA_URL.test(res.url()) && !item.chat) {
         const body = await res.json();
         item.chat = chatFacts(body);
         writeJsonAtomic(join(dir, 'chat.json'), { facts: item.chat, shape: shape(body, 4) });

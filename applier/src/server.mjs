@@ -12,6 +12,8 @@
 //   POST /apply {vacancyId, letter, requestId, dry, resume?, pace?}   отклик; APPLY_LIVE=0 или dry: true — сухой прогон до
 //                                                       кнопки; resume { hash, title? } — каким резюме hh откликаться (этап 5);
 //                                                       pace { min, max, hour } — темп (6.1c): рано или час исчерпан → 429
+//   POST /remind {vacancyId, text, requestId, dry, pace?}   напоминание в чат отклика (6.3): REMIND_LIVE=0 или dry: true —
+//                                                       сухой прогон до поля, текст не вводится; рано, час или день исчерпаны → 429
 //   POST /recon {vacancyIds?, inbox?, resume?, chooser?, negotiations?, maxPages?, chats?}   разведка без кликов — фоновое
 //                                                       задание, 202 (resume — резюме, E0; chooser — id вакансии: окно
 //                                                       отклика и выбор резюме, этап 5; negotiations — все «Отклики»
@@ -35,7 +37,7 @@ import { config } from './config.mjs';
 import { log } from './log.mjs';
 import { Busy, lock } from './lock.mjs';
 import { recallResult, rememberResult, store } from './store.mjs';
-import { paceCheck, paceLimits, paceView } from './pace.mjs';
+import { paceCheck, paceLimits, paceView, remindHourCheck } from './pace.mjs';
 import { pause, prune, sleep } from './util.mjs';
 import {
   SHOTS,
@@ -54,19 +56,23 @@ import {
 } from './browser.mjs';
 import { LOGIN_URL, SEL } from './hh/selectors.mjs';
 import { applyFlow } from './flows/apply.mjs';
+import { remindFlow } from './flows/remind.mjs';
 import { captchaKind, captchaShown, visible } from './flows/dom.mjs';
 import { readNegotiations, reconChats, reconChooser, reconInbox, reconResume, reconVacancies } from './flows/recon.mjs';
 import { readResume, writeResume } from './flows/resume.mjs';
 import { readSearch } from './flows/search.mjs';
 import { cleanChanges } from './hh/resume.mjs';
+import { remindTextError } from './hh/state.mjs';
 import { cleanSearchUrls } from './hh/search.mjs';
 import { recordStart, recordStop, recording } from './flows/record.mjs';
 import {
   FAKE_OUTCOMES,
+  FAKE_REMIND_OUTCOMES,
   fakeApply,
   fakeCaptcha,
   fakePush,
   fakeQueue,
+  fakeRemind,
   fakeResume,
   fakeResumeRead,
   fakeResumeWrite,
@@ -140,6 +146,20 @@ function assertPace(limits) {
   }
 }
 
+// Темп живых напоминаний (6.3): потолок дня, пауза после прошлой попытки (общая с откликами), лимит часа напоминаний →
+// 429 с reason и retryAt. Лимит часа откликов напоминание не тратит
+function assertRemindPace(limits) {
+  const today = store.today().reminded;
+  if (today >= config.remindDailyCap) {
+    throw new HttpError(429, { error: `потолок напоминаний на день: ${today} из ${config.remindDailyCap}`, reason: 'remind_day', today, cap: config.remindDailyCap });
+  }
+  const wait = paceCheck(store.pace, { ...limits, hour: Infinity }) ?? remindHourCheck(store.pace, config.remindHourlyCap);
+  if (wait) {
+    const what = wait.reason === 'gap' ? 'пауза между действиями' : `лимит напоминаний в час: ${config.remindHourlyCap}`;
+    throw new HttpError(429, { error: `${what}, можно с ${wait.retryAt}`, ...wait, pace: paceView(store.pace) });
+  }
+}
+
 // Фоновое задание (разведка): держит замок, прогресс — в GET /job
 let job = null;
 async function startJob(kind, run) {
@@ -173,6 +193,7 @@ async function health() {
     version: config.version,
     live: config.live,
     resumeLive: config.resumeLive,
+    remindLive: config.remindLive,
     fake: config.fake,
     browser: browserStatus(),
     role: r,
@@ -184,9 +205,11 @@ async function health() {
     blocked: store.blocked,
     today: store.today(),
     cap: config.dailyCap,
-    // Темп живых откликов: следующая попытка не раньше nextAt, откликов за час (src/pace.mjs)
-    pace: { ...paceView(store.pace), hourCap: config.hourlyCap, minGap: config.minGap },
+    remindCap: config.remindDailyCap,
+    // Темп живых откликов и напоминаний: следующая попытка не раньше nextAt, откликов и напоминаний за час (src/pace.mjs)
+    pace: { ...paceView(store.pace), hourCap: config.hourlyCap, remindHourCap: config.remindHourlyCap, minGap: config.minGap },
     lastApplyAt: store.lastApplyAt,
+    lastRemindAt: store.lastRemindAt,
     lastInboxAt: store.lastInboxAt,
   };
 }
@@ -298,6 +321,29 @@ const routes = {
     const result = await lock.run('apply', () => applyFlow({ vacancyId, letter, dry, resume, requestId }));
     rememberResult(vacancyId, result);
     const pace = live ? store.markAttempt({ applied: result.outcome === 'applied', limits }) : paceView(store.pace);
+    return { ...result, requestId, pace };
+  },
+
+  'POST /remind': async (body) => {
+    const vacancyId = String(body.vacancyId ?? '').replace(/\D/g, '');
+    if (!vacancyId) throw new HttpError(400, { error: 'нужен vacancyId' });
+    const text = String(body.text ?? '').trim();
+    const bad = remindTextError(text);
+    if (bad) throw new HttpError(400, { error: bad });
+    // CLI просит только сухой прогон — даже при REMIND_LIVE=1 (живое напоминание — только из W9: он ведёт таблицу)
+    const dry = body.dry === true;
+    // Повтор после обрыва связи: исход уже известен — второй раз не пишем
+    const cached = recallResult(`remind:${vacancyId}`);
+    if (cached && ['done', 'skip'].includes(cached.group)) return { ...cached, cached: true };
+    assertNotBlocked();
+    const live = config.remindLive && !dry;
+    const limits = paceLimits(body.pace, config);
+    if (live) assertRemindPace(limits);
+    const requestId = body.requestId ?? null;
+    const result = await lock.run('remind', () => remindFlow({ vacancyId, text, dry, requestId }));
+    rememberResult(`remind:${vacancyId}`, result);
+    // Пауза после любой попытки, открывшей hh, и сухой тоже: страницы смотрит тот же «человек», что откликается
+    const pace = result.visited ? store.markAttempt({ applied: false, reminded: live && result.outcome === 'sent', limits }) : paceView(store.pace);
     return { ...result, requestId, pace };
   },
 
@@ -448,6 +494,20 @@ async function fakeRoute(key, req) {
       const pace = store.markAttempt({ applied: out.body.outcome === 'applied', limits });
       return { status: 200, body: { ...out.body, requestId: body.requestId ?? null, pace } };
     }
+    case 'POST /remind': {
+      if (store.blocked) return { status: 423, body: { blocked: store.blocked } };
+      const bad = remindTextError(body.text);
+      if (bad) return { status: 400, body: { error: bad } };
+      // Темп — как у живого: пауза общая с откликами, свой лимит часа и дня
+      const limits = paceLimits(body.pace, config);
+      const wait = paceCheck(store.pace, { ...limits, hour: Infinity }) ?? remindHourCheck(store.pace, config.remindHourlyCap);
+      if (wait) return { status: 429, body: { error: `фейк: ${wait.reason}`, ...wait, pace: paceView(store.pace) } };
+      if (store.today().reminded >= config.remindDailyCap) return { status: 429, body: { error: 'фейк: потолок дня', reason: 'remind_day' } };
+      const out = await lock.run('remind', () => fakeRemind(body));
+      if (out.status !== 200) return out;
+      const pace = store.markAttempt({ applied: false, reminded: out.body.outcome === 'sent', limits });
+      return { status: 200, body: { ...out.body, requestId: body.requestId ?? null, pace } };
+    }
     case 'POST /captcha':
       return fakeCaptcha(body.text ?? '');
     case 'POST /resume':
@@ -470,7 +530,7 @@ async function fakeRoute(key, req) {
     case 'POST /fake': {
       const outcomes = Array.isArray(body.outcomes) ? body.outcomes.map(String) : [];
       const out = fakePush(outcomes);
-      return { status: out.ok ? 200 : 400, body: { ...out, known: FAKE_OUTCOMES } };
+      return { status: out.ok ? 200 : 400, body: { ...out, known: [...FAKE_OUTCOMES, ...FAKE_REMIND_OUTCOMES.map((o) => `remind:${o}`)] } };
     }
     default:
       return { status: 501, body: { error: 'в фейковом режиме этого адреса нет', known: FAKE_OUTCOMES } };

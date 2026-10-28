@@ -96,6 +96,7 @@ cookie и токена; разведка вырезает токены и дан
 | `POST /resume/read {hash?}` | резюме hh для W13 и импорта резюме: должность, навыки, «О себе», опыт, роли hh, формат работы, зарплата, стаж; список всех резюме — в `resumes`; только GET, бэкап в `/data/resume` (`docs/recommendations.md` → «Разделы резюме», `docs/resumes.md`) |
 | `POST /resume/write {hash, changes, dry}` | записать разделы резюме формами hh (должность, навыки, «О себе», место работы); без `RESUME_LIVE=1` или с `dry` — сухой прогон: заполнить, снимок, без сохранения |
 | `POST /search {urls, wait?}` | подборка hh «по резюме» для W1 (21.10.2026): 1–6 адресов `https://hh.ru/search/vacancy?resume=<хеш>&…` (адреса строит W1, `n8n/shared/search.js`), только GET со строгим предохранителем, пауза 3–6 с между страницами → `{ results: [{ url, ok, total, vacancies } \| { url, ok: false, error }] }` — `vacancySearchResult` как есть, разбирает W1. `error`: `captcha` (блок робота, как у отклика), `login`, `layout`, `resume` (hh отбросил резюме — выдача была бы всей базой), `skipped` (после капчи или выхода из hh остальные адреса не открываются). Занят откликом — ждёт до `wait` мс (≤ 60 000), потом 409; CLI — `scripts/applier.mjs search <адрес>` |
+| `POST /remind {vacancyId, text, requestId, dry?, pace?}` | напоминание в чат отклика (6.3, ниже) → `{outcome, group, live, chatId, hh, confirmed, messageId, note, shot, trace}`; без `REMIND_LIVE=1` или с `dry` — сухой прогон до поля; рано / час / день → 429 `gap` / `remind_hour` / `remind_day`; блок → 423 |
 | `POST /record {on}` | запись: пользователь откликается сам в окне робота |
 | `GET /shots/:name`, `POST /shot` | скриншот |
 | `POST /fake {outcomes}` | 6.1a, только при `APPLIER_FAKE=1` |
@@ -128,7 +129,8 @@ cookie и токена; разведка вырезает токены и дан
 | 6.1a ✅ | 🚀 и очередь W9 на фейковом роботе (`feature/robot-queue`) | все исходы и блоки проходят W3 → W9 → Telegram на `APPLIER_FAKE=1` |
 | 6.1b ✅ | боевой сценарий: сухой → 3–5 живых под присмотром (`feature/robot-apply`) | на hh в «Откликах» — то резюме и письмо; строка робота в сводке |
 | 6.1c | автоотклик: «🤖 Автоотклик» в меню, темп и лимиты, журнал (`feature/auto-apply`, 20.10.2026) | первый запуск под присмотром с лимитом 10: отклики на hh с письмами, темп и журнал сходятся |
-| **6.2** ← сейчас | статусы откликов и чаты HR, 🎉, воронка (`feature/robot-inbox`) | непрочитанные на hh не меняются; 🎉 и воронка сходятся |
+| **6.2** | статусы откликов и чаты HR, 🎉, воронка (`feature/robot-inbox`) | непрочитанные на hh не меняются; 🎉 и воронка сходятся |
+| **6.3** ← сейчас | 🔔 напоминания: свой текст в чат непросмотренного отклика (28.10.2026): 6.3a разведка ✅, 6.3b робот, 6.3c n8n, 6.3d живой | напоминания уходят только непросмотренным откликам старше 3 дней, один раз, ≤ 20 в день; в Telegram — только журнал и тревоги |
 
 ## 6.0: запуск, вход, разведка, запись
 
@@ -410,6 +412,64 @@ W9 Claim → POST /apply {…, pace: {min, max, hour}} → Result (apply_at) →
 **Проверка:** `node --test scripts/test-auto.mjs` (Feed, Gate, Plan, Result, W5, W7, W6, сборка), `cd applier && npm test`
 (`pace.test.mjs`), `applier/sim/run.sh`. Живая проверка — на фейковом роботе и тестовых строках (хвост выключен, сбор на
 паузе), потом первый живой запуск под присмотром с лимитом 10.
+
+## 6.3: напоминания об откликах (28.10.2026)
+
+**Зачем.** Большинство откликов работодатели даже не открывают. Пользователь попросил кнопку: робот пишет в чат отклика
+«Здравствуйте! Напоминаю про свой отклик.»
+
+| Тема | Решение пользователя |
+|---|---|
+| Где кнопка | карточка `/v<id>` отправленной вакансии + своя панель «🔔 Напоминания» (вход — из вкладки «📨 Отправлено»), там же журнал |
+| Кому | только «не просмотрен», через 3 дня после отклика, один раз; все старше 3 дней, без верхней границы |
+| Текст | свой, фиксированный, одинаковый у всех; в настройках `remind.text`, в боте не правится. Встроенная кнопка hh «Напомнить об отклике» есть (6.3a), её не жмём |
+| Лимит и время | 20 в день, пауза как у откликов, когда угодно (тихих часов нет); отклики важнее напоминаний |
+| Telegram | ничего, кроме тревог, где нужен человек: журнал на панели, строка в карточке, подсказка на нажатие, строка утренней сводки |
+
+**6.3a — разведка (`recon --negotiations`, `recon --chats <id…>`, запись).**
+- Перепись «Откликов» (`negotiations-20261028-110847`): 178 откликов; не просмотрен 65, просмотрен 48, приглашение 15,
+  отказ 50. Кандидатов (`RESPONSE`, не просмотрен, 3+ дня) — 58: у 53 вакансия `ENABLED_AFTER_INVITATION` и топик
+  `AVAILABLE`, у 5 — `DISABLED` (работодатель отключил переписку). Встроенный флаг hh `responseReminderState.allowed` —
+  у 56 из 58.
+- Чаты (`chats-20261028-111316`): несмотря на `ENABLED_AFTER_INVITATION`, у непросмотренного отклика
+  `chatStates.writeMessageState.allowed = true`, `writePossibility = ENABLED_FOR_ALL` — **писать до приглашения можно**.
+  Поле — `textarea[data-qa=text-input]` в `[data-qa=chatik-message-input]`; при `DISABLED` поля нет, вместо него «The employer
+  has turned off the chat for this vacancy». Под сообщением отклика — кнопка hh «Напомнить об отклике» (без data-qa и
+  перевода) во всех чатах, куда можно писать. WebSocket на странице не появляется. Непрочитанные не меняются; обычный
+  предохранитель рвёт только `notify_chat_opened` и аналитику chatik.
+- Запись (`record-20261028-112135`, пользователь сам в окне робота): `POST chatik.hh.ru/chatik/api/send?hhtmSourceLabel=chat&hhtmSource=chat`
+  `{chatId, idempotencyKey (uuid), text}` → 200 и само сообщение `{id, chatId, creationTime, text, participantId, …}`;
+  при наборе — `POST chatik/api/participant_action {chatId, actionType: TYPING | NONE}` («печатает…»); после отправки
+  `«Отправить»` (`chatik-do-send-message`) пропадает, в чате пузырь `chatik-chat-message-<id>`.
+- Урок записи: окно робота осталось на последнем чате разведки — напоминание ушло ИП Назаренко (138755984, отклик уже
+  просмотрен; пользователь решил оставить). Отсюда сверка в сценарии: открылся чат именно этого отклика.
+
+**6.3b — робот (`applier/src/flows/remind.mjs`, `POST /remind`).**
+```
+/vacancy/<id> → капча / вход / архив → топик отклика (state.mjs → vacancyTopic, remindFromTopic — без открытия чата):
+  архив или закрыта → archived · нет отклика → no_topic · отказ (DISCARD, отказался сам) → rejected
+  · не RESPONSE (статус раньше просмотра: INTERVIEW бывает при viewed = false) → invited · просмотрен → viewed
+  · моложе 72 ч (creationTime hh) → too_early · вакансия DISABLED / топик DISABLED_BY_EMPLOYER / чат в архиве → closed
+→ «Чат» (live: guardAllow('remind') — send, notify_chat_opened, participant_action) → кадр chatik.hh.ru/chat/<id>:
+  чужой chatId → error · chat_data кадра (remindFromChat): наше с этим текстом → already · наше другое → wrote
+  · не бота работодателя → viewed · writeMessageState.allowed = false → closed; бот работодателя не мешает
+→ поле: нет — предупреждение (TEXT.chatClosed) → closed, иначе error · REMIND_LIVE=0 / dry → обвести, снимок → dry_run
+  (текст не вводится: набор шлёт «печатает…»)
+→ live: fill → «Отправить» (или Enter) → chatik/api/send → chatSendResult: id → sent (+ пузырь с id → confirmed);
+  спам / правила (TEXT.stop) → блок blocked {source: remind}; ответа нет, а пузырь с текстом появился → sent; иначе error
+```
+- Группы (`REMIND_GROUP`): done — sent, already; skip — viewed, invited, rejected, wrote, closed, archived, no_topic;
+  later — too_early; dry — dry_run; block — captcha, login, blocked; error — error. n8n по ним ведёт строку (6.3c).
+- **Темп** (`src/pace.mjs`): пауза после любой попытки, открывшей hh (и сухой), — общая с откликами; свой счёт часа
+  `remind[]`. Потолки `.env`: `APPLIER_REMIND_HOURLY_CAP=10` (429 `remind_hour`), `APPLIER_REMIND_DAILY_CAP=30` за «день»
+  робота (429 `remind_day`); лимит часа откликов напоминания не тратят. Живой сбой — в общую серию (3 подряд → блок `errors`).
+- **Предохранители:** `REMIND_LIVE` (по умолчанию 0); текст — 1–500 знаков без ссылок; повтор после обрыва — кэш исхода
+  `remind:<id>` на сутки + проверка «уже в чате». CLI `scripts/applier.mjs remind <id>` — всегда сухой.
+- Фейк: исходы `remind:sent | already | wrote | viewed | invited | rejected | closed | archived | no_topic | too_early |
+  error | dry_run | captcha | login | spam | busy | down | slow`; без очереди — по последней цифре id вакансии.
+- Проверка: `cd applier && npm test` (`remind.test.mjs` — решения на записях 6.3a и записи отправки, `pace.test.mjs`,
+  `xhr.test.mjs`), `applier/sim/run.sh remind` (22 сценария: отправка, бот, все пропуски, чужой чат, спам, 500, потерянный
+  ответ, сухой прогон с пустым полем, капча, вход).
 
 ## Риски
 
