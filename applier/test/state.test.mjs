@@ -4,10 +4,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import {
+  chatFacts,
+  chatTranslations,
   decodeEntities,
   initialState,
   isCaptchaPage,
   isLoginUrl,
+  negotiationCensus,
   negotiationTopics,
   negotiationsSummary,
   popupPrediction,
@@ -17,6 +20,7 @@ import {
   resumeChoice,
   vacancyFacts,
   vacancyResumes,
+  vacancyTopic,
   GROUP,
 } from '../src/hh/state.mjs';
 import { robotDayStart, stamp } from '../src/util.mjs';
@@ -232,10 +236,134 @@ test('negotiationTopics: InitialState «Откликов» → id ваканси
   assert.equal(r.pageCount, 7);
   assert.equal(r.total, 136);
   assert.deepEqual(r.counters.new, { all: 0 });
-  assert.deepEqual(r.topics, [
+  // Поля сверки hh-applied; статусы для напоминаний (6.3) — тест ниже
+  const base = ({ topicId, vacancyId, creationTime, lastModified, name, companyId, company }) => ({ topicId, vacancyId, creationTime, lastModified, name, companyId, company });
+  assert.deepEqual(r.topics.map(base), [
     { topicId: '11', vacancyId: '501', creationTime: '2026-10-08T16:36:39.383+03:00', lastModified: '2026-10-09T10:00:00.000+03:00', name: 'Senior Frontend', companyId: '9736425', company: 'Рога и копыта' },
     { topicId: '12', vacancyId: '502', creationTime: '2026-10-07T12:00:00.000+03:00', lastModified: null, name: '', companyId: '', company: '' },
   ]);
+  assert.deepEqual(r.topics.map((t) => t.lastState), ['RESPONSE', 'DISCARD']);
+});
+
+test('negotiationTopics: статус отклика и переписка для напоминаний (6.3)', () => {
+  const r = negotiationTopics({
+    applicantNegotiations: {
+      topicList: [
+        {
+          id: 21,
+          vacancyId: 601,
+          chatId: 5687620779,
+          lastState: 'RESPONSE',
+          viewedByOpponent: false,
+          hasNewMessages: false,
+          conversationMessagesCount: 1,
+          conversationUnreadByEmployerCount: 1,
+          inboxAvailabilityState: 'AVAILABLE',
+          responseReminderState: { allowed: true },
+          chatIsArchived: false,
+        },
+        { id: 22, vacancyId: 602, communicationContext: { chatData: { id: 77 } }, lastState: 'DISCARD', viewedByOpponent: true, declinedByApplicant: true, archived: true },
+      ],
+    },
+    vacanciesShort: { vacanciesList: [{ vacancyId: 601, chatWritePossibility: 'ENABLED_AFTER_INVITATION', closedForApplicants: false }, { vacancyId: 602, chatWritePossibility: 'DISABLED', closedForApplicants: true }] },
+  });
+  const [a, b] = r.topics;
+  assert.deepEqual(
+    [a.chatId, a.lastState, a.viewed, a.messages, a.unreadByEmployer, a.inbox, a.reminderAllowed, a.chatWrite, a.closed],
+    ['5687620779', 'RESPONSE', false, 1, 1, 'AVAILABLE', true, 'ENABLED_AFTER_INVITATION', false],
+  );
+  assert.deepEqual([b.chatId, b.viewed, b.declined, b.archived, b.chatWrite, b.closed, b.reminderAllowed], ['77', true, true, true, 'DISABLED', true, false]);
+});
+
+test('vacancyTopic: отклик на странице вакансии — тот же топик; нет отклика — null', () => {
+  const state = {
+    applicantVacancyResponseStatuses: {
+      700: { negotiations: { topicList: [{ id: 5, vacancyId: 700, lastState: 'INTERVIEW', viewedByOpponent: false, creationTime: '2026-10-14T14:02:29.830+03:00' }] } },
+    },
+    vacancyChatInfo: { 700: { data: { chatId: 99 } } },
+  };
+  const t = vacancyTopic(state, 700);
+  assert.deepEqual([t.topicId, t.lastState, t.viewed, t.chatId, t.creationTime], ['5', 'INTERVIEW', false, '99', '2026-10-14T14:02:29.830+03:00']);
+  assert.equal(vacancyTopic(state, 701), null);
+  assert.equal(vacancyTopic(null, 700), null);
+});
+
+test('vacancyTopic: сохранённые страницы вакансий (fixtures, если есть)', { skip: !existsSync(fixture('applier/recon-20261019-092315/138505603/state.json')) }, () => {
+  const read = (dir, id) => vacancyTopic(JSON.parse(readFileSync(fixture(`applier/${dir}/${id}/state.json`), 'utf8')), id);
+  // Приглашение, хотя работодатель «не просматривал» отклик: статус важнее признака просмотра
+  const invited = read('recon-20261019-092315', '138505603');
+  assert.deepEqual([invited.lastState, invited.viewed], ['INTERVIEW', false]);
+  const waiting = read('recon-20261019-092315', '138476552');
+  assert.deepEqual([waiting.lastState, waiting.viewed, waiting.reminderAllowed, waiting.chatId], ['RESPONSE', false, true, '5710398353']);
+});
+
+test('negotiationCensus: кандидаты в напоминание — ждёт ответа, не просмотрен, старше 3 дней', () => {
+  const now = Date.parse('2026-10-28T12:00:00+03:00');
+  const day = (n) => new Date(now - n * 86400000).toISOString();
+  const c = negotiationCensus(
+    [
+      { lastState: 'RESPONSE', viewed: false, creationTime: day(4), chatWrite: 'ENABLED_AFTER_INVITATION', inbox: 'AVAILABLE', reminderAllowed: true },
+      { lastState: 'RESPONSE', viewed: false, creationTime: day(20), chatWrite: 'ENABLED_AFTER_INVITATION', inbox: 'AVAILABLE', closed: true },
+      { lastState: 'RESPONSE', viewed: false, creationTime: day(1), chatWrite: 'DISABLED', inbox: 'AVAILABLE' },
+      { lastState: 'RESPONSE', viewed: true, creationTime: day(10), chatWrite: 'DISABLED', inbox: 'AVAILABLE' },
+      { lastState: 'DISCARD', viewed: true, creationTime: day(10), inbox: 'WITHOUT_INVITATION' },
+      { lastState: '', creationTime: null },
+    ],
+    now,
+  );
+  assert.equal(c.total, 6);
+  assert.deepEqual(c.state, { 'RESPONSE не просмотрен': 3, 'RESPONSE просмотрен': 1, DISCARD: 1, '—': 1 });
+  assert.equal(c.candidates.total, 2);
+  assert.deepEqual(c.candidates.age, { '3–6 дн.': 1, '14–29 дн.': 1 });
+  assert.deepEqual(c.candidates.chat, { 'ENABLED_AFTER_INVITATION · AVAILABLE': 2 });
+  assert.deepEqual([c.candidates.reminderAllowed, c.candidates.closed], [1, 1]);
+});
+
+test('chatFacts: можно ли писать и кто писал — без текстов и имён', () => {
+  const f = chatFacts({
+    chat: {
+      id: 5700103809,
+      type: 'NEGOTIATION',
+      currentParticipantId: 'me',
+      unreadCount: 0,
+      writePossibility: { name: 'DISABLED_FOR_APPLICANT_BY_VACANCY_SETTINGS', writeDisabledReasons: ['DISABLED_BY_EMPLOYER'] },
+      operations: { allowed: ['LEAVE_CHAT'] },
+      messages: {
+        items: [
+          { id: 1, participantId: 'me', text: 'Здравствуйте, письмо', type: 'SIMPLE', workflowTransition: { applicantState: 'RESPONSE' }, canEdit: true, participantDisplay: { name: 'Никита', isBot: false } },
+          { id: 2, participantId: 'hr', text: 'Спасибо за отклик', type: 'SIMPLE', participantDisplay: { name: 'Анна', isBot: true } },
+        ],
+        hasMore: false,
+      },
+    },
+    chatStates: { writeMessageState: { allowed: false, reasons: ['DISABLED_BY_EMPLOYER'] }, responseReminderState: { allowed: false }, sendFileState: { allowed: true } },
+  });
+  assert.deepEqual([f.found, f.chatId, f.write.allowed, f.write.reasons, f.write.possibility, f.reminderAllowed], [true, '5700103809', false, ['DISABLED_BY_EMPLOYER'], 'DISABLED_FOR_APPLICANT_BY_VACANCY_SETTINGS', false]);
+  assert.deepEqual(f.messages.map((m) => [m.mine, m.bot, m.state, m.length]), [[true, false, 'RESPONSE', 20], [false, true, null, 17]]);
+  assert.ok(!JSON.stringify(f).includes('Никита') && !JSON.stringify(f).includes('Спасибо'), 'имён и текстов нет');
+  assert.equal(chatFacts(null).found, false);
+});
+
+test('chatFacts: записанный chat_data (fixtures, если есть)', { skip: !existsSync(fixture('applier/record-20261010-181350/049-xhr-GET-chatik-api-chat-data-chatId-5700103809-applicantId-12143166.txt')) }, () => {
+  const text = readFileSync(fixture('applier/record-20261010-181350/049-xhr-GET-chatik-api-chat-data-chatId-5700103809-applicantId-12143166.txt'), 'utf8');
+  const f = chatFacts(JSON.parse(text.slice(text.indexOf('\n{') + 1)));
+  assert.deepEqual([f.found, f.write.allowed, f.write.reasons], [true, false, ['DISABLED_BY_EMPLOYER']]);
+  assert.ok(f.messages.some((m) => m.mine && m.state === 'RESPONSE'), 'сообщение отклика — моё');
+});
+
+test('chatTranslations: переводы chatik.* из HTML кадра чата', () => {
+  const html = '<script>{&quot;chatik.warning.withoutInvitation.applicant&quot;:&quot;Переписка будет доступна после приглашения&quot;,&quot;other.key&quot;:&quot;x&quot;,&quot;chatik.a\\u0022b&quot;:&quot;1&quot;}</script>';
+  const t = chatTranslations(html);
+  assert.equal(t['chatik.warning.withoutInvitation.applicant'], 'Переписка будет доступна после приглашения');
+  assert.equal(t['other.key'], undefined);
+  assert.deepEqual(chatTranslations(''), {});
+});
+
+test('chatTranslations: записанный кадр чата (fixtures, если есть)', { skip: !existsSync(fixture('applier/record-20261010-181350/043-xhr-GET-chat-5700103809-without-list-1-platform-xhh-theme-hh-day-de.txt')) }, () => {
+  const t = chatTranslations(readFileSync(fixture('applier/record-20261010-181350/043-xhr-GET-chat-5700103809-without-list-1-platform-xhh-theme-hh-day-de.txt'), 'utf8'));
+  assert.ok(Object.keys(t).length > 200);
+  // В переводах hh неразрывные пробелы — сравниваем по словам
+  assert.equal(t['chatik.warning.disabledByEmployer.applicant'].replace(/\s+/g, ' '), 'Работодатель отключил переписку по данной вакансии');
 });
 
 test('negotiationTopics: JSON-ответ при листании — список глубже в объекте; без списка — found false', () => {

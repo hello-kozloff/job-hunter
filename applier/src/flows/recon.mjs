@@ -1,7 +1,7 @@
 // Разведка (этап 6.0): вакансии и «Отклики» глазами вошедшего соискателя — без единого клика и без записи в hh.
 // Сетевой предохранитель включён. Всё сохраняется в /data/recon (= fixtures/applier на Mac, не в git):
 // page.html (как есть), state.json (без токенов и личных полей), facts.json, dom.json, popup.json, shot.jpg.
-// Резюме (часть D, E0 15.10.2026) — reconResume ниже, со строгим предохранителем.
+// Резюме (часть D, E0 15.10.2026) — reconResume ниже, со строгим предохранителем. Чаты откликов (6.3a) — reconChats.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { config } from '../config.mjs';
@@ -11,18 +11,24 @@ import { store } from '../store.mjs';
 import { CHATIK, NEGOTIATIONS_URL, SEL, WATCH, resumeOptionSel, vacancyUrl } from '../hh/selectors.mjs';
 import { RESUMES_URL, editLinks, limitsOf, resumeHashes, resumeUrl } from '../hh/resume.mjs';
 import {
+  chatFacts,
+  chatTranslations,
   initialState,
   isCaptchaPage,
   isLoginUrl,
+  negotiationCensus,
   negotiationTopics,
   negotiationsSummary,
   redactState,
   shape,
   vacancyFacts,
+  vacancyTopic,
 } from '../hh/state.mjs';
 import { pause, stamp, writeJsonAtomic } from '../util.mjs';
 import {
   captchaShown,
+  chatFrame,
+  chatInputArea,
   closeDialogs,
   formFields,
   humanRead,
@@ -306,10 +312,157 @@ export async function readNegotiations({ maxPages = 0 } = {}, progress = () => {
     page.off('response', onResponse);
     out.read = byVacancy.size;
     out.dated = [...byVacancy.values()].filter((t) => t.creationTime).length;
+    // Перепись для напоминаний (6.3a): статусы у работодателя, кандидаты по возрасту и переписке
+    out.census = negotiationCensus([...byVacancy.values()]);
     writeJsonAtomic(join(dir, 'topics.json'), [...byVacancy.values()]);
     writeJsonAtomic(join(dir, 'summary.json'), out);
-    log('negotiations.done', { pages: out.pages.length, read: out.read, total: out.total, stop: out.stop });
+    log('negotiations.done', { pages: out.pages.length, read: out.read, total: out.total, stop: out.stop, candidates: out.census.candidates.total });
     progress({ step: 'готово' });
+  }
+}
+
+// ---------- Чаты откликов (6.3a, напоминания) ----------
+
+// Что видно в чате отклика глазами соискателя: можно ли писать (поле, предупреждение вместо него, chatStates), кто и
+// когда писал, как чат связан с WebSocket. Чат открывается, как у человека, кликом «Чат» на странице вакансии — только у
+// отклика без новых сообщений работодателя: иначе они стали бы прочитанными. Обычный предохранитель: «чат открыт»
+// (notify_chat_opened) и любая запись в chatik рвутся — порванное в итог. Ничего не вводим: набор текста шлёт
+// работодателю «печатает…». Файлы: page.html, state.json, topic.json, chat.html (кадр чата с переводами), chat.json
+// (chat_data без текстов и имён), chat-trl.json (переводы chatik.*), dom.json, ws.json (кадры WebSocket), shot.jpg
+const MAX_CHATS = 6;
+const CHAT_DATA = /^https:\/\/chatik\.hh\.ru\/chatik\/api\/chat_data(?:[?#]|$)/;
+const CHAT_UNREAD = /^https:\/\/chatik\.hh\.ru\/chatik\/api\/unread(?:[?#]|$)/;
+const firstLine = (e) => String(e?.message ?? e).split('\n')[0].slice(0, 160);
+const hostPath = (url) => {
+  const u = new URL(url);
+  return `${u.hostname === 'hh.ru' ? '' : u.hostname}${u.pathname}`;
+};
+
+async function reconChat(page, id, dir) {
+  mkdirSync(dir, { recursive: true });
+  const item = { id, posts: [], blocked: [], unread: [], ws: [] };
+  const frames = { sent: [], received: [] };
+  const onRequest = (req) => {
+    if (req.method() !== 'GET' && item.posts.length < 50) item.posts.push(`${req.method()} ${hostPath(req.url())}`);
+  };
+  const onFailed = (req) => {
+    if (req.method() !== 'GET' && /BLOCKED_BY_CLIENT/i.test(req.failure()?.errorText ?? '') && item.blocked.length < 50) {
+      item.blocked.push(`${req.method()} ${hostPath(req.url())}`);
+    }
+  };
+  const onResponse = async (res) => {
+    try {
+      if (CHAT_UNREAD.test(res.url())) item.unread.push(await res.json());
+      else if (CHAT_DATA.test(res.url()) && !item.chat) {
+        const body = await res.json();
+        item.chat = chatFacts(body);
+        writeJsonAtomic(join(dir, 'chat.json'), { facts: item.chat, shape: shape(body, 4) });
+      }
+    } catch {
+      // не JSON или ответ уже недоступен
+    }
+  };
+  // Кадры WebSocket: сколько и первые по 5 в каждую сторону (до 500 знаков) — понять, не шлёт ли чат сообщения по нему
+  const onSocket = (ws) => {
+    const entry = { url: ws.url().replace(/\?.*$/, ''), sent: 0, received: 0 };
+    item.ws.push(entry);
+    ws.on('framesent', (f) => {
+      entry.sent++;
+      if (frames.sent.length < 5) frames.sent.push(String(f.payload).slice(0, 500));
+    });
+    ws.on('framereceived', (f) => {
+      entry.received++;
+      if (frames.received.length < 5) frames.received.push(String(f.payload).slice(0, 500));
+    });
+  };
+  page.on('request', onRequest);
+  page.on('requestfailed', onFailed);
+  page.on('response', onResponse);
+  page.on('websocket', onSocket);
+  try {
+    const res = await page.goto(vacancyUrl(id), { waitUntil: 'domcontentloaded', timeout: 45000 });
+    item.status = res?.status() ?? 0;
+    const html = (await res?.text().catch(() => '')) ?? '';
+    writeFileSync(join(dir, 'page.html'), html, { mode: 0o600 });
+    if (isCaptchaPage(page.url(), html) || (await captchaShown(page))) {
+      store.block('captcha', { shot: await shot(`captcha-${id}`) });
+      return { ...item, stop: 'captcha' };
+    }
+    if (isLoginUrl(page.url())) return { ...item, stop: 'login' };
+    const state = initialState(html);
+    if (state) writeJsonAtomic(join(dir, 'state.json'), redactState(state));
+    const facts = vacancyFacts(state, id);
+    item.facts = { loggedIn: facts.loggedIn, title: facts.title, archived: facts.archived || facts.closed, chatWrite: facts.chatWrite };
+    item.topic = vacancyTopic(state, id);
+    writeJsonAtomic(join(dir, 'topic.json'), { facts: item.facts, topic: item.topic });
+    if (!facts.loggedIn) return { ...item, stop: 'login' };
+    if (!item.topic) return { ...item, skipped: 'отклика на hh нет' };
+    if (item.topic.hasNewMessages) return { ...item, skipped: 'в чате новые сообщения работодателя — не открываю' };
+    await humanRead(page);
+    const link = page.locator(SEL.viewTopic).first();
+    if (!(await visibleWithin(link, 8000))) {
+      await shot('no-chat-button', dir).catch(() => {});
+      return { ...item, skipped: 'нет кнопки «Чат»' };
+    }
+    await pause(800, 1800);
+    await link.click({ timeout: 5000 });
+    const frame = await chatFrame(page, 15000);
+    if (!frame) {
+      await shot('no-chat', dir).catch(() => {});
+      return { ...item, error: 'чат не открылся' };
+    }
+    item.frame = frame.url().replace(/\?.*$/, '');
+    // Кадр дорисовывается скриптом: поле ввода или предупреждение вместо него
+    await frame.waitForLoadState('domcontentloaded').catch(() => {});
+    await pause(3000, 5000);
+    const chatHtml = await frame.content().catch(() => '');
+    writeFileSync(join(dir, 'chat.html'), chatHtml, { mode: 0o600 });
+    const trl = chatTranslations(chatHtml);
+    writeJsonAtomic(join(dir, 'chat-trl.json'), trl);
+    item.translations = Object.keys(trl).length;
+    item.input = await chatInputArea(frame).catch((e) => ({ error: firstLine(e) }));
+    writeJsonAtomic(join(dir, 'dom.json'), { frame: item.frame, dataQa: await visibleDataQa(frame).catch(() => []), input: item.input });
+    await shot('chat', dir);
+    return item;
+  } finally {
+    page.off('request', onRequest);
+    page.off('requestfailed', onFailed);
+    page.off('response', onResponse);
+    page.off('websocket', onSocket);
+    writeJsonAtomic(join(dir, 'ws.json'), { sockets: item.ws, frames });
+    await page.keyboard.press('Escape').catch(() => {});
+  }
+}
+
+// Чаты откликов по списку id вакансий: 20–40 с между ними, не больше 6 за раз
+export async function reconChats(ids, progress = () => {}) {
+  const list = [...new Set(ids.map((x) => String(x).replace(/\D/g, '')).filter(Boolean))].slice(0, MAX_CHATS);
+  const name = `chats-${stamp()}`;
+  const root = join(RECON_DIR, name);
+  const page = await ensure();
+  setGuard(true);
+  guardReset();
+  const items = [];
+  try {
+    for (const p of page.context().pages()) if (p !== page) await p.close().catch(() => {});
+    for (const [i, id] of list.entries()) {
+      progress({ done: i, total: list.length, current: id });
+      try {
+        items.push(await reconChat(page, id, join(root, id)));
+      } catch (e) {
+        items.push({ id, error: firstLine(e) });
+      }
+      const it = items.at(-1);
+      log('recon.chat', { id, write: it.chat?.write?.allowed ?? null, skipped: it.skipped, error: it.error, stop: it.stop });
+      if (it.stop) break;
+      if (i < list.length - 1) await pause(20000, 40000);
+    }
+    return { dir: `fixtures/applier/${name}`, items };
+  } finally {
+    // Чат — в новой вкладке (если hh открыл его так): закрыть
+    for (const p of page.context().pages()) if (p !== page) await p.close().catch(() => {});
+    writeJsonAtomic(join(root, 'summary.json'), items);
+    progress({ done: list.length, total: list.length });
   }
 }
 

@@ -3,7 +3,8 @@
 // разведка без клика не увидит. Предохранитель выключен (отклик человека должен уйти), замок держится до stop.
 // Каждая смена набора видимых data-qa → снимок: html, dom.json, shot.jpg; ответы XHR hh по отклику и чатам → .txt.
 // С 15.10.2026 (часть D «Экспорт на hh», E0) так же записываются правки резюме: что пишем — hh/resume.mjs → recordWanted.
-import { mkdirSync, writeFileSync } from 'node:fs';
+// С 28.10.2026 (6.3a, напоминания) — и кадры WebSocket (ws.txt): сообщение в чат hh может уйти не по HTTP.
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { browserContext, ensure, setGuard, shot } from '../browser.mjs';
 import { log } from '../log.mjs';
@@ -18,7 +19,7 @@ let rec = null;
 const slug = (s) => String(s).replace(/^https?:\/\/[^/]+/, '').replace(/[^a-z0-9]+/gi, '-').slice(0, 60);
 
 export const recording = () =>
-  rec ? { dir: rec.dir, since: rec.since, snapshots: rec.snapshots, xhr: rec.xhr } : null;
+  rec ? { dir: rec.dir, since: rec.since, snapshots: rec.snapshots, xhr: rec.xhr, ws: rec.wsFrames ?? 0 } : null;
 
 export async function recordStart(release) {
   if (rec) return recording();
@@ -51,13 +52,29 @@ export async function recordStart(release) {
     writeFileSync(join(rec.path, `${next()}-xhr-${req.method()}${slug(response.url())}.txt`), text);
     rec.xhr++;
   };
+  // Кадры WebSocket (чат hh): отправленные — до 4000 знаков, полученные — до 1000; не больше 500 кадров за запись.
+  // Сокет, открытый до старта записи, не виден — страницу с чатом открыть уже во время записи
+  rec.wsFrames = 0;
+  rec.onSocket = (ws) => {
+    const url = ws.url().replace(/\?.*$/, '');
+    if (rec) writeFileSync(join(rec.path, `${next()}-ws-open.txt`), url);
+    const frame = (dir, max) => (f) => {
+      if (!rec || rec.wsFrames >= 500) return;
+      rec.wsFrames++;
+      appendFileSync(join(rec.path, 'ws.txt'), `${new Date().toISOString()} ${dir} ${url}\n${String(f.payload).slice(0, max)}\n\n`);
+    };
+    ws.on('framesent', frame('→', 4000));
+    ws.on('framereceived', frame('←', 1000));
+  };
   rec.onPage = (p) => {
     log('record.page', { url: p.url() });
+    p.on('websocket', rec.onSocket);
     if (rec) writeFileSync(join(rec.path, `${next()}-new-window.txt`), p.url());
   };
   const ctx = browserContext();
   ctx.on('response', rec.onResponse);
   ctx.on('page', rec.onPage);
+  for (const p of ctx.pages()) p.on('websocket', rec.onSocket);
 
   // Раз в секунду: сменился набор видимых data-qa (по всем кадрам — чат hh в iframe) → снимок экрана
   rec.timer = setInterval(async () => {
@@ -95,6 +112,7 @@ export async function recordStop() {
   const ctx = browserContext();
   ctx?.off('response', rec.onResponse);
   ctx?.off('page', rec.onPage);
+  for (const p of ctx?.pages() ?? []) p.off('websocket', rec.onSocket);
   const info = recording();
   setGuard(true);
   rec.release?.();

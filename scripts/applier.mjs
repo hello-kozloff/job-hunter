@@ -9,6 +9,10 @@
 //   node scripts/applier.mjs recon --negotiations [--pages N]   все «Отклики» листанием, как человек (6–15 с между
 //                                                    страницами): id вакансий и даты откликов → fixtures/applier/
 //                                                    negotiations-…/topics.json для n8n-api.mjs hh-applied (docs/hh-applied.md)
+//   node scripts/applier.mjs recon --chats <id> […]  чаты откликов (6.3a, напоминания): кликает «Чат» на странице
+//                                                    вакансии и снимает, можно ли писать (поле, предупреждение,
+//                                                    chat_data без текстов); ничего не вводит, «чат открыт» рвётся;
+//                                                    чат с новыми сообщениями работодателя не открывает → fixtures/applier/chats-…
 //   node scripts/applier.mjs recon --chooser <id>    окно отклика и выбор резюме (этап 5): открывает окно, нажимает на
 //                                                    ячейку резюме и выбирает другое; «Откликнуться» не нажимает, ничего
 //                                                    не отправляется (только вакансия, где hh покажет окно, не «в один
@@ -133,22 +137,47 @@ const commands = {
     const chooser = chooserAt >= 0 ? String(args[chooserAt + 1] ?? '').replace(/\D/g, '') : '';
     if (chooserAt >= 0 && !chooser) throw new Error('после --chooser нужен id вакансии hh');
     const negotiations = args.includes('--negotiations');
+    const chatsMode = args.includes('--chats');
     const pagesAt = args.indexOf('--pages');
     const maxPages = pagesAt >= 0 ? Number(args[pagesAt + 1]) : 0;
     if (pagesAt >= 0 && !(maxPages > 0)) throw new Error('после --pages нужно число страниц');
     // Значения флагов — не id вакансий (без флага indexOf = -1: первый аргумент — id)
     const flagValue = new Set([chooserAt, pagesAt].filter((at) => at >= 0).map((at) => at + 1));
     const ids = args.filter((a, i) => /^\d+$/.test(a) && !flagValue.has(i));
+    if (chatsMode && !ids.length) throw new Error('после --chats нужны id вакансий hh');
     if (!ids.length && !inbox && !resume && !chooser && !negotiations) {
-      throw new Error('нужны id вакансий hh, --inbox, --resume, --negotiations или --chooser <id>');
+      throw new Error('нужны id вакансий hh, --inbox, --resume, --negotiations, --chats <id…> или --chooser <id>');
     }
-    await api('POST', '/recon', { vacancyIds: ids, inbox, resume, chooser, negotiations, maxPages });
+    // --chats: id — вакансии, чьи чаты открыть; без него — вакансии для разведки страниц
+    await api('POST', '/recon', { vacancyIds: chatsMode ? [] : ids, chats: chatsMode ? ids : [], inbox, resume, chooser, negotiations, maxPages });
     console.log(
-      `Разведка: ${[ids.length ? `${ids.length} вакансий (20–40 с между ними)` : '', inbox ? 'отклики и чаты' : '', resume ? 'резюме (4–9 с между страницами)' : '', chooser ? `окно отклика вакансии ${chooser}` : '', negotiations ? `все отклики листанием${maxPages ? `, не больше ${maxPages} стр.` : ''} (6–15 с между страницами)` : ''].filter(Boolean).join(' + ')}…`,
+      `Разведка: ${[ids.length ? `${ids.length} ${chatsMode ? 'чатов откликов' : 'вакансий'} (20–40 с между ними)` : '', inbox ? 'отклики и чаты' : '', resume ? 'резюме (4–9 с между страницами)' : '', chooser ? `окно отклика вакансии ${chooser}` : '', negotiations ? `все отклики листанием${maxPages ? `, не больше ${maxPages} стр.` : ''} (6–15 с между страницами)` : ''].filter(Boolean).join(' + ')}…`,
     );
     const job = await waitJob();
     if (job.state === 'error') throw new Error(`разведка упала: ${job.error}`);
-    const { vacancies, inbox: box, resume: cv, chooser: choice, negotiations: list } = job.result;
+    const { vacancies, inbox: box, resume: cv, chooser: choice, negotiations: list, chats } = job.result;
+    if (chats) {
+      console.log(`→ ${chats.dir}`);
+      for (const it of chats.items) {
+        const t = it.topic;
+        const head = `  ${it.id} ${it.facts?.title ? `«${it.facts.title}»` : ''}`;
+        const topic = t ? `${t.lastState}${t.lastState === 'RESPONSE' ? (t.viewed ? ' · просмотрен' : ' · не просмотрен') : ''} · сообщений ${t.messages} · inbox ${t.inbox || '—'} · напомнить hh: ${t.reminderAllowed ? 'да' : 'нет'}` : 'отклика нет';
+        console.log(`${head}\n     hh: ${topic} · вакансия: ${it.facts?.chatWrite || '—'}${it.facts?.archived ? ' · закрыта' : ''}`);
+        if (it.stop || it.error || it.skipped) console.log(`     ${it.stop ? `⛔ ${it.stop}` : it.error ? `❌ ${it.error}` : `⏭ ${it.skipped}`}`);
+        if (it.chat) {
+          const w = it.chat.write;
+          const mine = it.chat.messages.filter((m) => m.mine).length;
+          const bots = it.chat.messages.filter((m) => m.bot).length;
+          console.log(`     чат: писать ${w.allowed === true ? '✅ можно' : w.allowed === false ? `❌ нельзя (${[...w.reasons, ...w.disabledReasons].join(', ') || w.possibility})` : '?'} · сообщений ${it.chat.messages.length} (моих ${mine}, бота ${bots}) · напомнить hh: ${it.chat.reminderAllowed ?? '?'}`);
+        } else if (it.frame) console.log('     чат: chat_data не поймал');
+        if (it.input && !it.input.error) {
+          const field = it.input.inputs.filter((x) => x.visible);
+          console.log(`     поле ввода: ${field.length ? field.map((x) => `${x.tag}[${x.dataQa || '—'}]${x.disabled || x.readOnly ? ' неактивно' : ''}`).join(', ') : 'нет'}${it.input.warnings.length ? ` · предупреждения: ${it.input.warnings.map((x) => `«${x.label.slice(0, 80)}»`).join('; ')}` : ''}`);
+        }
+        if (it.ws?.length) console.log(`     WebSocket: ${it.ws.map((w) => `${w.url} (→${w.sent} ←${w.received})`).join(', ')}`);
+        console.log(`     не-GET: ${it.posts?.length ?? 0}, порвано: ${it.blocked?.length ? [...new Set(it.blocked)].join(', ') : 0}${it.unread?.length > 1 ? ` · непрочитанные: ${JSON.stringify(it.unread[0])} → ${JSON.stringify(it.unread.at(-1))}` : ''}`);
+      }
+    }
     if (list) {
       console.log(`→ ${list.dir}/topics.json`);
       console.log(`  откликов на hh: ${list.total ?? '?'} (страниц ${list.pageCount ?? '?'}) · прочитано вакансий: ${list.read}, с датой: ${list.dated}`);
@@ -157,6 +186,14 @@ const commands = {
       const changed = list.countersAfter && JSON.stringify(list.countersBefore?.new) !== JSON.stringify(list.countersAfter?.new);
       console.log(`  счётчики «новых» до/после: ${JSON.stringify(list.countersBefore?.new ?? null)} / ${JSON.stringify(list.countersAfter?.new ?? null)}${changed ? ' ⚠️ ИЗМЕНИЛИСЬ' : ''}`);
       console.log(`  не-GET запросы страниц: ${list.requests.length}${list.requests.length ? `\n    ${[...new Set(list.requests)].join('\n    ')}` : ''}`);
+      const c = list.census;
+      if (c) {
+        console.log(`  перепись: ${c.total} откликов — ${Object.entries(c.state).map(([k, n]) => `${k} ${n}`).join(', ')}`);
+        const k = c.candidates;
+        console.log(`  кандидаты в напоминание (ждёт ответа, не просмотрен, 3+ дня): ${k.total} — ${Object.entries(k.age).map(([a, n]) => `${a} ${n}`).join(', ')}`);
+        for (const [chat, n] of Object.entries(k.chat).sort((a, b) => b[1] - a[1])) console.log(`    чат вакансии · топика: ${chat} — ${n}`);
+        console.log(`    встроенное «напомнить» hh разрешено: ${k.reminderAllowed} · чат в архиве: ${k.chatArchived} · вакансия закрыта: ${k.closed}`);
+      }
     }
     if (choice) {
       console.log(`→ ${choice.dir}`);
