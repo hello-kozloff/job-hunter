@@ -66,7 +66,14 @@ export const TABLES = {
     ['apply_at', 'string'], // 6.1c: когда робот закончил последнюю попытку (журнал панели 🤖, сводка W6)
     ['hh_state', 'string'], // 6.2, W10: sent | viewed | invited | rejected
     ['hh_state_at', 'string'],
-    ['hh_chat_id', 'string'],
+    ['hh_chat_id', 'string'], // 6.3: chatId отклика — его сообщает робот напоминаний
+    // 6.3 (напоминания, 28.10.2026, docs/stages/stage-6.md → 6.3): своя очередь W9 и исход — статус вакансии не меняют
+    ['remind_state', 'string'], // '' | queued (в очереди, ⏹ снимает) | sending (робот пишет)
+    // исход последней попытки: sent | already | viewed | invited | rejected | wrote | closed | archived | no_topic —
+    // итог, больше не напоминать; too_early | dry_run | error | stopped — снова кандидат
+    ['remind_result', 'string'],
+    ['remind_at', 'string'], // когда робот закончил попытку (журнал панели 🔔, счёт дня, сводка W6)
+    ['remind_note', 'string'], // причина пропуска или сбоя
     // несколько резюме (16.10.2026, docs/resumes.md): чьим поиском найдена вакансия; '' — основное (r1)
     ['resume_id', 'string'],
     ['resume_name', 'string'], // название резюме на момент сбора — для строки «📄» в карточке

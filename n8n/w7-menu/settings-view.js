@@ -311,6 +311,7 @@ function settingsApplyView() {
     `Сегодня: ${robotToday(rows, now)} из ${limit} (день — с 09:00 по местному) · в очереди: ${count(rows, (r) => r.apply_state)}`,
     `Темп: ${pace.name} — пауза ${paceGap(pace)} между откликами, не больше ${pace.hour} в час`,
     `🤖 Автоотклик: ${autoOn(settings) ? 'вкл' : 'выкл'} · хвост: ${settings['apply.backlog'] ? 'карточки за 3 дня' : 'только новые после включения'} — запуск и журнал: кнопка «${MENU.auto}»`,
+    `🔔 Напоминания: не больше ${settings['remind.daily_limit']} в день — панель: «📋 Вакансии» → «📨 Отправлено» → «🔔 Напоминания»`,
     '',
     `Окно робота — VNC ${VNC_URL} (на Mac — «Общий экран», режим «Управление»; на Windows и Linux — любой VNC-клиент). Капча и вход в hh — там; потом ▶️ или /go.`,
   ];
@@ -325,12 +326,14 @@ function settingsApplyView() {
       limit: { text: `Лимит: ${limit} в день ▸`, cb: 'sc:apply.daily_limit' },
       pace: { text: `Темп: ${pace.name} ▸`, cb: 'sc:apply.pace' },
       backlog: { text: `Хвост: ${settings['apply.backlog'] ? 'за 3 дня' : 'только новые'} ▸`, cb: 'sc:apply.backlog' },
+      rlimit: { text: `🔔 Напоминаний: ${settings['remind.daily_limit']} в день ▸`, cb: 'sc:remind.daily_limit' },
     },
   };
 }
 
 function settingsView(section) {
-  if (section === 'apply') return settingsApplyView();
+  // Лимит напоминаний (6.3, sc:remind.daily_limit) — на экране робота
+  if (section === 'apply' || section === 'remind') return settingsApplyView();
   if (section === 'llm') return settingsLlmView();
   if (section === 'collect') return settingsCollectView();
   if (section === 'search') return settingsSearchView();

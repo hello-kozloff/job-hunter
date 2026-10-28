@@ -344,15 +344,14 @@ const llmLinks = (build, parse) => [
 // W7: раскладки кнопок панели меню. Telegram-нода не умеет менять число кнопок на ходу, поэтому раскладки
 // фиксированные, а подписи и callback_data считает «Render» ($json.b). Порядок = номера выходов «Layout»
 const panelButton = (path) => `={{ $json.b.${path} }}`;
+// Список: вкладки и листание (у «📨 Отправлено» ниже — кнопка панели 🔔 Напоминания, 6.3)
+const LIST_ROWS = [
+  [0, 1, 2].map((i) => [panelButton(`tabs[${i}].text`), panelButton(`tabs[${i}].cb`)]),
+  [3, 4, 5].map((i) => [panelButton(`tabs[${i}].text`), panelButton(`tabs[${i}].cb`)]),
+  ['prev', 'mid', 'next'].map((k) => [panelButton(`${k}.text`), panelButton(`${k}.cb`)]),
+];
 const PANEL_LAYOUTS = [
-  [
-    'list',
-    [
-      [0, 1, 2].map((i) => [panelButton(`tabs[${i}].text`), panelButton(`tabs[${i}].cb`)]),
-      [3, 4, 5].map((i) => [panelButton(`tabs[${i}].text`), panelButton(`tabs[${i}].cb`)]),
-      ['prev', 'mid', 'next'].map((k) => [panelButton(`${k}.text`), panelButton(`${k}.cb`)]),
-    ],
-  ],
+  ['list', LIST_ROWS],
   [
     'open choose',
     [
@@ -527,7 +526,10 @@ const PANEL_LAYOUTS = [
         [panelButton('enabled.text'), panelButton('enabled.cb')],
         [panelButton('paused.text'), panelButton('paused.cb')],
       ],
-      [[panelButton('limit.text'), panelButton('limit.cb')]],
+      [
+        [panelButton('limit.text'), panelButton('limit.cb')],
+        [panelButton('rlimit.text'), panelButton('rlimit.cb')],
+      ],
       [
         [panelButton('pace.text'), panelButton('pace.cb')],
         [panelButton('backlog.text'), panelButton('backlog.cb')],
@@ -581,6 +583,42 @@ const PANEL_LAYOUTS = [
         ['⚙️ Темп и лимиты', 's:apply'],
         ['▶️ Продолжить', 'rb:go'],
       ],
+    ],
+  ],
+  // 🔔 Напоминания (6.3): «📨 Отправлено» с кнопкой панели; карточка отправленного отклика с 🔔; панель напоминаний
+  ['list sent', [...LIST_ROWS, [[panelButton('remind.text'), panelButton('remind.cb')]]]],
+  [
+    'open remind',
+    [
+      [['🔔 Напомнить', panelButton('remind')]],
+      [
+        ['🔗 На hh', { url: panelButton('url') }],
+        ['⬅️ К списку', panelButton('back')],
+      ],
+    ],
+  ],
+  [
+    'open decided remind',
+    [
+      [
+        ['🔔 Напомнить', panelButton('remind')],
+        ['↩️ Изменить', panelButton('edit')],
+      ],
+      [
+        ['🔗 На hh', { url: panelButton('url') }],
+        ['⬅️ К списку', panelButton('back')],
+      ],
+    ],
+  ],
+  [
+    'remind',
+    [
+      [[panelButton('all.text'), panelButton('all.cb')]],
+      [
+        ['⏹ Остановить', 'nr:stop'],
+        ['🔄 Обновить', 'nr:p'],
+      ],
+      [['⬅️ К списку', 'p:l:sent:1']],
     ],
   ],
 ];
@@ -2766,10 +2804,10 @@ const workflows = {
         },
         { executeOnce: true, alwaysOutputData: true },
       ),
-      // Состояние робота — только для ⚙️ (корень и 🚀 Робот) и панели 🤖 (sync — после отклика робота: панель 🤖
-      // могла быть текущей): остальным панелям лишний запрос не нужен
+      // Состояние робота — только для ⚙️ (корень и 🚀 Робот), панелей 🤖 и 🔔 (sync — после отклика или напоминания
+      // робота: панель могла быть текущей): остальным панелям лишний запрос не нужен
       node('W7', 'Robot health?', 'if', 2.3, [1870, 150], ifTrue('W7',
-        "={{ ['auto', 'sync'].includes($('Job').first().json.view) || ($('Job').first().json.view === 'settings' && ['root', 'apply', undefined, ''].includes($('Job').first().json.section)) }}")),
+        "={{ ['auto', 'remind', 'sync'].includes($('Job').first().json.view) || ($('Job').first().json.view === 'settings' && ['root', 'apply', 'remind', undefined, ''].includes($('Job').first().json.section)) }}")),
       applierNode('W7', 'Robot health', [1980, 250], { path: '/health', timeout: 3000 }, { executeOnce: true }),
       code('W7', 'Render', 'n8n/w7-menu/render.js', [1980, 0]),
       // Выход = $json.route (render.js): раскладка × новое сообщение (чётный) / правка панели (нечётный), 10 — приветствие
@@ -2896,6 +2934,7 @@ const workflows = {
     const NOTICE = "$('Notice item').first().json.notice";
     const RESULT = "$('Result').first().json";
     const JOB = "$('Job').first().json";
+    const REMIND = "$('Gate').first().json.remind";
     return workflow(
       IDS.robot,
       'W9 Robot',
@@ -2910,7 +2949,8 @@ const workflows = {
         node('W9', 'Manual', 'manualTrigger', 1, [0, 200], {}),
         code('W9', 'Job', 'n8n/w9-robot/job.js', [220, 0]),
         settingsNode('W9', [440, 0]),
-        // 0 — 🚀 / ⛔, 1 — очередь, 2 — ▶️ / /go, 3 — ответ на капчу, 4 — робот выключен, 5 — автоотклик выключили.
+        // 0 — 🚀 / ⛔, 1 — очередь, 2 — ▶️ / /go, 3 — ответ на капчу, 4 — робот выключен, 5 — автоотклик выключили;
+        // напоминания (6.3): 6 — 🔔 в карточке, 7 — «Напомнить всем», 8 — ⏹ очередь напоминаний.
         // Один раз: «Settings» отдаёт по item на настройку — иначе каждая ветка шла бы столько же раз
         node(
           'W9',
@@ -2920,8 +2960,8 @@ const workflows = {
           [660, 0],
           {
             mode: 'expression',
-            numberOutputs: 6,
-            output: `={{ ({ enqueue: 0, stop: 0, tick: 1, resume: 2, captcha: 3, dequeue: 4, autostop: 5 })[${JOB}.op] ?? 1 }}`,
+            numberOutputs: 9,
+            output: `={{ ({ enqueue: 0, stop: 0, tick: 1, resume: 2, captcha: 3, dequeue: 4, autostop: 5, remind: 6, remindall: 7, remindstop: 8 })[${JOB}.op] ?? 1 }}`,
             options: {},
           },
           { executeOnce: true },
@@ -3028,7 +3068,24 @@ const workflows = {
           },
           { alwaysOutputData: true },
         ),
-        // Работа есть: очередь не пуста или автоотклик включён — иначе тик ничего не спрашивает у робота
+        // Очередь напоминаний (6.3): своя колонка remind_state — вторая полоса «Gate»
+        node(
+          'W9',
+          'Remind queue',
+          'dataTable',
+          1.1,
+          [935, -100],
+          {
+            resource: 'row',
+            operation: 'get',
+            dataTableId: VACANCIES,
+            matchType: 'allConditions',
+            filters: { conditions: [{ keyName: 'remind_state', condition: 'isNotEmpty' }] },
+            returnAll: true,
+          },
+          { executeOnce: true, alwaysOutputData: true },
+        ),
+        // Работа есть: очередь откликов или напоминаний не пуста или автоотклик включён — иначе тик ничего не спрашивает
         node(
           'W9',
           'Work?',
@@ -3037,7 +3094,7 @@ const workflows = {
           [990, 100],
           ifTrue(
             'W9',
-            "={{ $('Queue').all().some((i) => i.json.id) || ['apply.enabled', 'apply.auto'].every((n) => $('Settings').all().some((i) => i.json.name === n && i.json.value_json === 'true')) }}",
+            "={{ $('Queue').all().some((i) => i.json.id) || $('Remind queue').all().some((i) => i.json.id) || ['apply.enabled', 'apply.auto'].every((n) => $('Settings').all().some((i) => i.json.name === n && i.json.value_json === 'true')) }}",
           ),
           { executeOnce: true },
         ),
@@ -3062,6 +3119,25 @@ const workflows = {
                   keyValue: '={{ new Date(Date.now() - 2 * 86400000).toISOString() }}',
                 },
               ],
+            },
+            returnAll: true,
+          },
+          { executeOnce: true, alwaysOutputData: true },
+        ),
+        // Попытки напоминаний за двое суток: «день» робота и лимит remind.daily_limit отсчитывает «Gate» (remindDay)
+        node(
+          'W9',
+          'Remind today',
+          'dataTable',
+          1.1,
+          [1210, -100],
+          {
+            resource: 'row',
+            operation: 'get',
+            dataTableId: VACANCIES,
+            matchType: 'allConditions',
+            filters: {
+              conditions: [{ keyName: 'remind_at', condition: 'gte', keyValue: '={{ new Date(Date.now() - 2 * 86400000).toISOString() }}' }],
             },
             returnAll: true,
           },
@@ -3384,6 +3460,154 @@ const workflows = {
           returnAll: true,
         }),
 
+        // ---- Напоминания (6.3, docs/stages/stage-6.md → 6.3): вторая полоса «Gate» — ниже «Next?»: отклики первыми
+        node('W9', 'Remind heal?', 'if', 2.3, [1760, 600], ifTrue('W9', '={{ $json.remindHeal.length > 0 }}')),
+        code('W9', 'Remind heal items', 'n8n/w9-robot/remind-heal-items.js', [1980, 600]),
+        node('W9', 'Remind heal', 'dataTable', 1.1, [2200, 600], {
+          resource: 'row',
+          operation: 'update',
+          dataTableId: VACANCIES,
+          ...byId('={{ $json.id }}'),
+          columns: setColumns({ remind_state: '={{ $json.to }}' }),
+          options: {},
+        }),
+        node('W9', 'Remind?', 'if', 2.3, [1760, 700], ifTrue('W9', '={{ Boolean($json.remind) }}')),
+        // Захват queued → sending: второй запуск W9 то же напоминание уже не возьмёт
+        node('W9', 'Remind claim', 'dataTable', 1.1, [1980, 700], {
+          resource: 'row',
+          operation: 'update',
+          dataTableId: VACANCIES,
+          matchType: 'allConditions',
+          filters: {
+            conditions: [
+              { keyName: 'id', keyValue: `={{ ${REMIND}.id }}` },
+              { keyName: 'remind_state', keyValue: 'queued' },
+              { keyName: 'status', keyValue: 'applied' },
+            ],
+          },
+          columns: setColumns({ remind_state: 'sending' }),
+          options: {},
+        }),
+        applierNode('W9', 'Remind', [2200, 700], {
+          method: 'POST',
+          path: '/remind',
+          // text — remind.text из ⚙️; pace — темп откликов: пауза у робота общая (6.1c)
+          body: `={{ JSON.stringify({ vacancyId: ${REMIND}.external_id, text: ${REMIND}.text, requestId: 'r' + ${REMIND}.id + '-' + Date.now(), pace: ${GATE}.pace }) }}`,
+          timeout: 180000,
+          full: true,
+        }),
+        code('W9', 'Remind result', 'n8n/w9-robot/remind-result.js', [2420, 700]),
+        node('W9', 'Save remind', 'dataTable', 1.1, [2640, 700], {
+          resource: 'row',
+          operation: 'update',
+          dataTableId: VACANCIES,
+          ...byId('={{ $json.id }}'),
+          columns: setColumns({
+            remind_state: '={{ $json.row.remind_state }}',
+            remind_result: '={{ $json.row.remind_result }}',
+            remind_at: '={{ $json.row.remind_at }}',
+            remind_note: '={{ $json.row.remind_note }}',
+            hh_chat_id: '={{ $json.row.hh_chat_id }}',
+          }),
+          options: {},
+        }),
+        code('W9', 'Remind sync', 'n8n/w9-robot/remind-sync.js', [2640, 800]),
+        node('W9', 'Remind more?', 'if', 2.3, [2640, 900], ifTrue('W9', '={{ $json.more }}')),
+        node('W9', 'Remind wait', 'wait', 1.1, [2860, 900], { amount: '={{ $json.delay }}', unit: 'seconds' }),
+
+        // ---- 🔔 в карточке, «Напомнить всем», ⏹: запись с условием (двойное нажатие и гонка с роботом ничего не ломают)
+        node(
+          'W9',
+          'Remind row',
+          'dataTable',
+          1.1,
+          [880, 2100],
+          { resource: 'row', operation: 'get', dataTableId: VACANCIES, ...byId(`={{ ${JOB}.id }}`), returnAll: false, limit: 1 },
+          { alwaysOutputData: true },
+        ),
+        code('W9', 'Remind plan', 'n8n/w9-robot/remind-plan.js', [1100, 2100]),
+        node('W9', 'Remind save?', 'if', 2.3, [1320, 2100], ifTrue('W9', "={{ $json.save === 'enqueue' }}")),
+        node(
+          'W9',
+          'Remind rows',
+          'dataTable',
+          1.1,
+          [880, 2250],
+          {
+            resource: 'row',
+            operation: 'get',
+            dataTableId: VACANCIES,
+            matchType: 'allConditions',
+            filters: { conditions: [{ keyName: 'status', keyValue: 'applied' }] },
+            returnAll: true,
+          },
+          { alwaysOutputData: true },
+        ),
+        code('W9', 'Remind all', 'n8n/w9-robot/remind-all.js', [1100, 2250]),
+        node(
+          'W9',
+          'Remind enqueue',
+          'dataTable',
+          1.1,
+          [1540, 2150],
+          {
+            resource: 'row',
+            operation: 'update',
+            dataTableId: VACANCIES,
+            matchType: 'allConditions',
+            filters: {
+              conditions: [
+                { keyName: 'id', keyValue: '={{ $json.id || 0 }}' },
+                { keyName: 'status', keyValue: 'applied' },
+                { keyName: 'remind_state', condition: 'isEmpty' },
+              ],
+            },
+            columns: setColumns({ remind_state: 'queued', remind_result: '', remind_note: '' }),
+            options: {},
+          },
+          { alwaysOutputData: true },
+        ),
+        // ⏹ на панели и робот выключен в ⚙️ (op dequeue): очередь напоминаний снять — строки снова кандидаты
+        node(
+          'W9',
+          'Remind queued',
+          'dataTable',
+          1.1,
+          [880, 2400],
+          {
+            resource: 'row',
+            operation: 'get',
+            dataTableId: VACANCIES,
+            matchType: 'allConditions',
+            filters: { conditions: [{ keyName: 'remind_state', keyValue: 'queued' }] },
+            returnAll: true,
+          },
+          { alwaysOutputData: true },
+        ),
+        node(
+          'W9',
+          'Remind unqueue',
+          'dataTable',
+          1.1,
+          [1320, 2400],
+          {
+            resource: 'row',
+            operation: 'update',
+            dataTableId: VACANCIES,
+            matchType: 'allConditions',
+            filters: {
+              conditions: [
+                { keyName: 'id', keyValue: '={{ $json.id || 0 }}' },
+                { keyName: 'remind_state', keyValue: 'queued' },
+              ],
+            },
+            columns: setColumns({ remind_state: '', remind_result: 'stopped' }),
+            options: {},
+          },
+          { alwaysOutputData: true },
+        ),
+        code('W9', 'Remind done', 'n8n/w9-robot/remind-done.js', [1760, 2200]),
+
         // ---- Вид письма — общий для всех веток
         ...view.nodes,
       ],
@@ -3399,6 +3623,10 @@ const workflows = {
         ['Op', 'Captcha', 3],
         ['Op', 'Queued', 4],
         ['Op', 'Auto queued', 5],
+        ['Op', 'Remind row', 6],
+        ['Op', 'Remind rows', 7],
+        ['Op', 'Remind queued', 8],
+        ['Op', 'Remind queued', 4],
         // 🚀 / ⛔
         ['Row', 'Plan'],
         ['Plan', 'Save?'],
@@ -3413,9 +3641,11 @@ const workflows = {
         ['Done', 'Tick?'],
         ['Tick?', 'Queue', 0],
         // Очередь
-        ['Queue', 'Work?'],
+        ['Queue', 'Remind queue'],
+        ['Remind queue', 'Work?'],
         ['Work?', 'Today', 0],
-        ['Today', 'Health'],
+        ['Today', 'Remind today'],
+        ['Remind today', 'Health'],
         ['Health', 'Gate'],
         ['Gate', 'Heal?'],
         ['Heal?', 'Heal items', 0],
@@ -3493,6 +3723,33 @@ const workflows = {
         ['Auto queued', 'Dequeue'],
         ['Dequeue', 'Unqueue all'],
         ['Dequeue', 'View'],
+        // Напоминания (6.3): вторая полоса очереди
+        ['Gate', 'Remind heal?'],
+        ['Remind heal?', 'Remind heal items', 0],
+        ['Remind heal items', 'Remind heal'],
+        ['Gate', 'Remind?'],
+        ['Remind?', 'Remind claim', 0],
+        ['Remind claim', 'Remind'],
+        ['Remind', 'Remind result'],
+        ['Remind result', 'Save remind'],
+        ['Remind result', 'Remind sync'],
+        ['Remind result', 'Remind more?'],
+        ['Remind more?', 'Remind wait', 0],
+        ['Remind wait', 'Next job'],
+        // 🔔 в карточке, «Напомнить всем», ⏹
+        ['Remind row', 'Remind plan'],
+        ['Remind plan', 'Remind save?'],
+        ['Remind save?', 'Remind enqueue', 0],
+        ['Remind save?', 'Remind done', 1],
+        ['Remind rows', 'Remind all'],
+        ['Remind all', 'Remind enqueue'],
+        ['Remind enqueue', 'Remind done'],
+        ['Remind queued', 'Remind unqueue'],
+        ['Remind unqueue', 'Remind done'],
+        ['Remind done', 'Answer?'],
+        ['Remind done', 'Tick?'],
+        ['Remind done', 'Remind sync'],
+        ['Remind sync', 'Panel sync'],
         ...view.links,
       ],
       // Тики без очереди не храним: 1440 запусков в сутки. Static data (тревоги) сохраняется и так

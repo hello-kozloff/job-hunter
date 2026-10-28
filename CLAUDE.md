@@ -170,6 +170,11 @@ https://hh.ru/search/vacancy?text=frontend OR typescript OR javascript OR NAME:(
                  ✅ с письмом → W9 enqueue (apply_mode = auto), waiting + apply → Auto claim → W5 письмо (в чат не шлём — Quiet letter) → W9 enqueue;
                  в работе ≤ 2, лимит дня с очередью, тихие часы — ждёт; темп (пауза, лимит часа) держит робот (applier/src/pace.mjs);
                  после отклика — Wait до паузы робота → следующий; ⛔ → stopped; ⏹ → autostop (очередь авто назад в ✅)
+[W9 + 🔔]      напоминания (6.3, 28.10.2026, docs/stages/stage-6.md → 6.3): «📨 Отправлено» → «🔔 Напоминания» (W7 панель remind:
+                 кандидаты, сегодня из remind.daily_limit, очередь, журнал 8 попыток) и 🔔 в /v<id>; W9 — вторая полоса очереди
+                 (remind_state '' → queued → sending), только когда отклик не выбран и робот свободен; POST /remind робота:
+                 страница вакансии (не просмотрен, RESPONSE, 3+ дня) → «Чат» → chat_data (писать можно, не писали) →
+                 remind.text в поле → chatik/api/send; REMIND_LIVE=0 — сухой прогон до поля; в чат — только тосты и тревоги
 [W9 Robot]     🚀 под письмом → W3 → W9: очередь в колонке apply_state ('' → queued → applying), лимит дня, отклик через
                  applier (POST /apply; при нескольких резюме — resume { hash, title }: резюме вакансии, связанное с hh), итог — правка письма и карточки; капча — фото в Telegram, ответ текстом; вход / сбои —
                  тревога с [▶️]; Schedule раз в минуту + вызов себя после успеха (docs/stages/stage-6.md → 6.1a)
@@ -224,6 +229,7 @@ https://hh.ru/search/vacancy?text=frontend OR typescript OR javascript OR NAME:(
 - таблица `settings` — настройки из бота: `name, value_json` (только изменения; значения по умолчанию — в коде); с 13.10.2026 там же профиль человека: `profile.*` (резюме, факты, подпись, контакт, пресет), `llm.rules`, `letters.*` (`docs/onboarding.md`); с 15.10.2026 — `resume.history` (версии резюме для отката, W13) и `cv` (разделы резюме: разметка поверх `profile.resume`, W13); с 19.10.2026 — `llm.shadow_since` (с какой минуты считать теневой режим);
 - 16.10.2026 (несколько резюме, `docs/resumes.md`): таблица `settings` — `resumes` (список резюме) и `resume.r2` … `resume.r5` (данные резюме: текст, факты, правила, поиск, фильтр, письма), `resume.r2.cv` … `resume.r5.cv` и `resume.r2.history` … `resume.r5.history` (разметка и версии отката W13); `vacancies` — `resume_id` (пусто у основного резюме), `resume_name` (подпись «📄 Резюме»: с 17.10.2026 при 2+ резюме — у всех вакансий, у основного тоже; W11 обновляет при переименовании и удалении резюме);
 - 21.10.2026 (подборка hh по резюме): `vacancies` — `via` (`''` — обычный поиск | `resume` — нашла только подборка; W1 «Score job» и сводка W6 считают по нему, что она даёт);
+- 28.10.2026 (напоминания 6.3): `vacancies` — `remind_state` ('' | queued | sending — вторая очередь W9), `remind_result` (sent | already | viewed | invited | rejected | wrote | closed | archived | no_topic — итог; error | dry_run | stopped | too_early — снова кандидат), `remind_at`, `remind_note`; `hh_chat_id` пишет робот напоминаний;
 - таблица `alerts` — тревоги W4: `alert_key, workflow, message, first_at, last_at, hits, is_open, tg_message_id`;
 - имена колонок обходят служебные слова SQL (key, value, trigger, count, unique, open);
 - `id, createdAt, updatedAt` — встроенные.
@@ -232,7 +238,7 @@ https://hh.ru/search/vacancy?text=frontend OR typescript OR javascript OR NAME:(
 - свой бот (токен в Credentials), один личный чат для всего;
 - chat_id — в `.env` как `TG_CHAT_ID`, в нодах `{{ $env.TG_CHAT_ID }}` (Variables в Community edition нет);
 - кнопки ловит W3 через Telegram Trigger (v1.5: проверяет секретный заголовок, Restrict to Chat IDs = TG_CHAT_ID). Публичный HTTPS → контейнер ngrok (`COMPOSE_PROFILES=tunnel`, `ngrok/policy.yml`), `WEBHOOK_URL=https://<NGROK_DOMAIN>/` (→ `N8N_WEBHOOK_URL`);
-- робот-отклик (этап 6): `l:<id>:robot` — 🚀, `l:<id>:stop` — ⛔, `rb:go` и `/go` — ▶️ после блока, ответ на фото капчи → W9; ⚙️ → 🚀 Робот (`s:apply`); автоотклик (6.1c): кнопка «🤖 Автоотклик» и `/auto` — панель W7, `au:on` / `au:off` / `au:r`;
+- робот-отклик (этап 6): `l:<id>:robot` — 🚀, `l:<id>:stop` — ⛔, `rb:go` и `/go` — ▶️ после блока, ответ на фото капчи → W9; ⚙️ → 🚀 Робот (`s:apply`); автоотклик (6.1c): кнопка «🤖 Автоотклик» и `/auto` — панель W7, `au:on` / `au:off` / `au:r`; напоминания (6.3): `nr:p` — панель «🔔 Напоминания» (W7), `nr:<id>` / `nr:all` / `nr:stop` — W9 (op remind / remindall / remindstop);
 - несколько резюме (W11, 16.10.2026): `rm:list`, `rm:o:<id>`, `rm:on|off:<id>[:l]`, `rm:new`, `rm:ren:<id>`, `rm:clone:<id>`, `rm:del:<id>[:y]`, `rm:txt:<id>`, `rm:imp`, `rm:i:<сессия>:<действие>`, `pf:new:add` (`docs/resumes.md`);
 - профиль (W11, 13.10.2026): `pf:view` (⚙️ → 👤), `pf:ok:<шаг>`, `pf:e:<поле>` (вопрос ForceReply), `pf:g:<m|f>`, `pf:tz:<IANA>`, `pf:new:<all|text|no>`, `pf:yes|no`; документ PDF в чате → W11; ответы на `PROFILE_PROMPTS` → W11;
 - callback_data кнопок: `v:<id строки>:<apply|maybe|skip|earlier|ban|edit>` — карточка (`ban` — «🚫 В ЧС»: компания в `blacklist`, вакансия — ❌ с причиной «чёрный список») (`earlier` — «📨 Уже откликался», 07.10.2026: status = applied без письма и `applied_at`, без «Почему?», вне теневого режима); `l:<id>:<redo|sent|unsent|cancel>` — письмо (`cancel` — «↩️ Отменить отклик», 14.10.2026); панель меню (W7): `p:l:<tab>:<page>`, `p:s`, `p:x`, `p:n` («📋 К вакансиям» под отправленным письмом), `pv:<id>:<choice>:<tab>:<page>` (`score` — «🤖 На оценку» у отсеянной фильтром, 08.10.2026);
@@ -430,7 +436,7 @@ n8n/w8-clock/*.js                   код Code-нод W8 («часы» сбор
 n8n/w9-robot/*.js                   код Code-нод W9 (робот-отклик: план 🚀/⛔, ворота очереди, исход, капча, блоки)
 n8n/w11-profile/*.js                код Code-нод W11 (онбординг: PDF → нейросеть → профиль; ⚙️ → 👤)
 n8n/w13-resume/*.js                 код Code-нод W13 (рекомендации по резюме: план, вопросы, правки, откат, файл)
-scripts/test-shared.mjs, test-w1.mjs, test-w11.mjs, test-w13.mjs, test-w2.mjs, test-w6.mjs, test-w7.mjs, test-w9.mjs, test-auto.mjs, test-sweep.mjs, test-hh-applied.mjs  тесты общего кода и сценариев W1, W2, W6, W7, W9, W11, W13, автоотклика, догона sweep, сверки hh-applied без n8n: node --test scripts/test-*.mjs
+scripts/test-shared.mjs, test-w1.mjs, test-w11.mjs, test-w13.mjs, test-w2.mjs, test-w6.mjs, test-w7.mjs, test-w9.mjs, test-auto.mjs, test-remind.mjs, test-sweep.mjs, test-hh-applied.mjs  тесты общего кода и сценариев W1, W2, W6, W7, W9, W11, W13, автоотклика, напоминаний, догона sweep, сверки hh-applied без n8n: node --test scripts/test-*.mjs
 n8n/shared/*.js                     общий код Code-нод (карточка, письмо, разбор страницы hh, меню, расписание W1, робот-отклик,
                                     поисковый запрос hh, признак AI-вакансии, время человека time.js, профиль profile.js,
                                     справочник ролей hh hh-roles.js, запрос к нейросети и разбор ответа llm.js,

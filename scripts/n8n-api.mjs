@@ -33,6 +33,12 @@
 //                                                      (apply_by = hh, как у робота), их карточки, письма и «Почему?» —
 //                                                      из чата. topics.json — scripts/applier.mjs recon --negotiations;
 //                                                      --dry — только показать; --dup — и совпадения по компании и названию
+//   node scripts/n8n-api.mjs remind-triage <topics.json> [--dry]  напоминания (6.3): перепись «Откликов» hh
+//                                                      (scripts/applier.mjs recon --negotiations) → просмотренные,
+//                                                      приглашения, отказы, закрытые и с отключённой перепиской —
+//                                                      итогом напоминания без визитов робота; у всех — hh_chat_id
+//   node scripts/n8n-api.mjs remind-reset [--all | --ids <id,…>] [--dry]  стереть итоги напоминаний (remind_*) — после
+//                                                      проверки на фейковом роботе; живые напоминания им не стирать
 //   node scripts/n8n-api.mjs resume-labels [--dry] [--move <id,…>]  резюме больше одного: подписи «📄 Резюме» у
 //                                                      вакансий, собранных раньше; вакансии удалённых резюме — основному;
 //                                                      --move — названные строки основному (docs/resumes.md)
@@ -44,6 +50,7 @@ import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { readCode } from './lib/code.mjs';
 import { appliedUpdate, cardRenderer, planHhApplied } from './lib/hh-applied.mjs';
+import { planRemindTriage, triageUpdate } from './lib/remind-triage.mjs';
 import { BACKLOG, MAX_PAGES, SEARCH_PERIOD, parsePages, parseRobot, planSweep, reasonKeys, searchPlan, sweepUrl } from './lib/sweep.mjs';
 
 import { readEnv, setEnv, local } from './lib/env.mjs';
@@ -742,6 +749,80 @@ async function hhApplied(...args) {
 }
 
 const [command, ...args] = process.argv.slice(2);
+// Напоминания (6.3): строка по id, только если с прошлого чтения её не взял робот (remind_state пуст)
+async function patchRemindRow({ cookie, base, table }, id, data) {
+  const { json } = await api(`${base}/${table.id}/rows`, {
+    method: 'PATCH',
+    cookie,
+    body: {
+      filter: {
+        type: 'and',
+        filters: [
+          { columnName: 'id', condition: 'eq', value: id },
+          { columnName: 'remind_state', condition: 'isEmpty', value: null },
+        ],
+      },
+      data,
+      returnData: true,
+    },
+  });
+  return Boolean((Array.isArray(json) ? json : (json?.data ?? []))[0]);
+}
+
+async function remindTriage(...args) {
+  const file = args.find((a) => !a.startsWith('--'));
+  if (!file) throw new Error('usage: remind-triage <topics.json> [--dry]');
+  const dry = args.includes('--dry');
+  const topics = JSON.parse(readFileSync(file, 'utf8'));
+  if (!topics.some((t) => t.lastState)) throw new Error('в topics.json нет статусов откликов — перепись старая: node scripts/applier.mjs recon --negotiations');
+  const vacancies = await dataTable('vacancies');
+  const rows = await allRows(vacancies);
+  const plan = planRemindTriage({ rows, topics });
+  const by = Object.entries(Object.groupBy(plan.mark, (h) => h.outcome)).map(([k, v]) => `${k} ${v.length}`).join(' · ');
+  console.log(`Откликов в переписи: ${topics.length} · отправленных строк без итога напоминания: ${plan.mark.length + plan.keep.length + plan.missing.length}`);
+  console.log(`Итог по hh (напоминать не нужно или нельзя): ${plan.mark.length}${by ? ` — ${by}` : ''}`);
+  console.log(`Кандидаты (не просмотрен, писать можно): ${plan.keep.length}`);
+  console.log(`Нет в «Откликах» (удалён на hh или перепись старше отклика) — решит робот: ${plan.missing.length}`);
+  for (const h of plan.mark.slice(0, 40)) console.log(`  /v${h.row.id} ${h.row.title} — ${h.row.company} → ${h.outcome} (${h.note})`);
+  if (plan.mark.length > 40) console.log(`  … и ещё ${plan.mark.length - 40}`);
+  if (dry) return console.log('--dry: ничего не записано');
+  let written = 0;
+  let skipped = 0;
+  for (const hit of [...plan.mark, ...plan.keep]) {
+    const data = triageUpdate(hit);
+    if (!Object.keys(data).length) continue;
+    if (await patchRemindRow(vacancies, hit.row.id, data)) written++;
+    else skipped++;
+  }
+  console.log(`Записано: ${written} · пропущено (робот взял строку за это время): ${skipped}`);
+}
+
+async function remindReset(...args) {
+  const dry = args.includes('--dry');
+  const at = args.indexOf('--ids');
+  const ids = at >= 0 ? String(args[at + 1] ?? '').split(',').map(Number).filter(Boolean) : [];
+  if (!args.includes('--all') && !ids.length) throw new Error('usage: remind-reset [--all | --ids <id,…>] [--dry]');
+  const vacancies = await dataTable('vacancies');
+  const touched = (await allRows(vacancies)).filter(
+    (r) => (r.remind_state || r.remind_result || r.remind_at || r.remind_note) && (!ids.length || ids.includes(r.id)),
+  );
+  console.log(`Строк со следами напоминаний: ${touched.length}`);
+  for (const r of touched.slice(0, 40)) console.log(`  /v${r.id} ${r.title} — ${r.remind_state || '—'} · ${r.remind_result || '—'} · ${r.remind_at || '—'}`);
+  if (dry) return console.log('--dry: ничего не стёрто');
+  const { cookie, base, table } = vacancies;
+  for (const r of touched) {
+    await api(`${base}/${table.id}/rows`, {
+      method: 'PATCH',
+      cookie,
+      body: {
+        filter: { type: 'and', filters: [{ columnName: 'id', condition: 'eq', value: r.id }] },
+        data: { remind_state: '', remind_result: '', remind_at: '', remind_note: '' },
+      },
+    });
+  }
+  console.log(`Стёрто: ${touched.length}`);
+}
+
 const commands = {
   'setup-owner': setupOwner,
   run,
@@ -758,6 +839,8 @@ const commands = {
   'profile-export': profileExport,
   'resume-labels': resumeLabels,
   'hh-applied': hhApplied,
+  'remind-triage': remindTriage,
+  'remind-reset': remindReset,
 };
 if (!commands[command]) {
   console.error(

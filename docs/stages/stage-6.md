@@ -443,6 +443,9 @@ W9 Claim → POST /apply {…, pace: {min, max, hour}} → Result (apply_at) →
   `«Отправить»` (`chatik-do-send-message`) пропадает, в чате пузырь `chatik-chat-message-<id>`.
 - Урок записи: окно робота осталось на последнем чате разведки — напоминание ушло ИП Назаренко (138755984, отклик уже
   просмотрен; пользователь решил оставить). Отсюда сверка в сценарии: открылся чат именно этого отклика.
+- `viewedByOpponent` — видел ли работодатель **последнее** сообщение: после нашего напоминания у Назаренко true → false.
+  `lastViewedByOpponentMessageId` пуст даже у просмотренного. Поэтому «уже напомнили» и «уже писали» решает только чат
+  (`remindFromChat`), а не флаг просмотра; сухой прогон 138755984 после записи — `already`.
 
 **6.3b — робот (`applier/src/flows/remind.mjs`, `POST /remind`).**
 ```
@@ -469,7 +472,38 @@ W9 Claim → POST /apply {…, pace: {min, max, hour}} → Result (apply_at) →
   error | dry_run | captcha | login | spam | busy | down | slow`; без очереди — по последней цифре id вакансии.
 - Проверка: `cd applier && npm test` (`remind.test.mjs` — решения на записях 6.3a и записи отправки, `pace.test.mjs`,
   `xhr.test.mjs`), `applier/sim/run.sh remind` (22 сценария: отправка, бот, все пропуски, чужой чат, спам, 500, потерянный
-  ответ, сухой прогон с пустым полем, капча, вход).
+  ответ, сухой прогон с пустым полем, капча, вход). Сухие прогоны на hh 28.10.2026 (робот 6.3.0, `REMIND_LIVE=0`):
+  138757813 — `dry_run` (поле найдено и пустое), 138530778 — `closed`, 138799176 — `invited`, 138755984 — `already`.
+
+**6.3c — n8n (W9 вторая полоса, W7 панель и карточка, W3, W6).**
+```
+🔔 в карточке /v<id> (nr:<id>) → W3 → W9 {op: remind} → Remind row → Remind plan (кандидат? иначе тост «почему нет»)
+  → Remind enqueue (id + applied + remind_state пуст → queued) → Remind done (тост, tick) → Tick? → Queue
+«🔔 Напомнить всем» (nr:all) → W9 remindall → Remind rows (applied) → Remind all (remindCandidates) → Remind enqueue (each)
+⏹ (nr:stop) и робот выключен (dequeue) → Remind queued → Remind unqueue (queued → '', stopped — снова кандидат)
+тик: Queue → Remind queue (remind_state ≠ '') → Work? → Today → Remind today (remind_at за 2 дня) → Health → Gate:
+  … Next? (отклик) · Remind heal? (не applied → '', sending > 6 мин → queued)
+  · Remind? — только когда отклик не выбран и робот свободен: disabled | paused | down | blocked | busy | limit
+    (remind.daily_limit) | pace (health.pace.nextAt) | hour (remindHour ≥ remindHourCap); тихих часов нет
+  → Remind claim (queued → sending) → POST /remind {vacancyId, text: remind.text, requestId, pace} → Remind result
+  → Save remind (remind_*, hh_chat_id) · Remind sync → W7 sync (панель 🔔 или открытая карточка) · Remind more? →
+    Remind wait (пауза робота, ≤ 60 с) → Next tick
+```
+- Колонки `vacancies` (`n8n/schema.mjs`, `migrate`): `remind_state` ('' | queued | sending), `remind_result`, `remind_at`
+  (когда робот закончил попытку: журнал, лимит дня, сводка), `remind_note`; `hh_chat_id` (6.2) пишет робот напоминаний.
+  Итог (больше не напоминать): sent, already, viewed, invited, rejected, wrote, closed, archived, no_topic; снова
+  кандидат: error, dry_run, stopped, too_early (через сутки). Новых статусов и таблиц нет.
+- Кандидат (`n8n/shared/remind.js` → `remindable`): `applied`, не на сайте работодателя, 3+ дня с `applied_at`, не в
+  очереди, итога нет; свежие первыми. Настройки: `remind.daily_limit` (20; ⚙️ → 🚀 Робот), `remind.text`.
+- Telegram: только тосты на нажатия, панель и строка в карточке («🔔 Можно напомнить», «можно с …», «в очереди»,
+  «Напомнил 28.10 14:05», «👀 … не напоминал», «🔒 писать нельзя: …»), строка утренней сводки «🔔 Напоминания: …».
+  Блок робота во время напоминания — прежняя тревога W9 («hh не принял напоминание» при `source: remind`).
+- Разовая сортировка: `node scripts/n8n-api.mjs remind-triage <topics.json> [--dry]` — перепись «Откликов»
+  (`recon --negotiations`) пишет итогом просмотренные, приглашения, отказы, закрытые и с отключённой перепиской (без
+  `remind_at`), у всех — `hh_chat_id`; на переписи 28.10.2026 из 178: viewed 44, invited 13, archived 13, rejected 44,
+  closed 4, кандидатов 60. `remind-reset [--all | --ids …]` — стереть итоги после проверки на фейковом роботе.
+- Проверка: `node --test scripts/test-remind.mjs` (кандидаты, строки, журнал, route, Job, Gate, план, «всем», итог,
+  разбор ответа, панель, карточка, вкладка, ⚙️, W6, сборка, сортировка).
 
 ## Риски
 
