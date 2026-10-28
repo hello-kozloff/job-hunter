@@ -249,6 +249,22 @@
               "type": "string"
             },
             {
+              "name": "remind_state",
+              "type": "string"
+            },
+            {
+              "name": "remind_result",
+              "type": "string"
+            },
+            {
+              "name": "remind_at",
+              "type": "string"
+            },
+            {
+              "name": "remind_note",
+              "type": "string"
+            },
+            {
               "name": "resume_id",
               "type": "string"
             },

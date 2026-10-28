@@ -62,7 +62,7 @@ test('🚀: другое резюме без привязки к hh — отка
 // Очередь робота (Gate): кого отправлять и каким резюме
 const gate = (queue, settings = setup(), state = {}) =>
   runNode('n8n/w9-robot/gate.js', {
-    nodes: { Job: { op: 'tick', fromUser: false }, Settings: settings, Queue: queue, Today: [{}], Health: { ok: true, busy: false } },
+    nodes: { Job: { op: 'tick', fromUser: false }, Settings: settings, Queue: queue, Today: [{}], 'Remind queue': [{}], 'Remind today': [{}], Health: { ok: true, busy: false } },
     state,
   }).then(([out]) => out);
 

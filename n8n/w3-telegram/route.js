@@ -10,12 +10,13 @@
 //      cancel — «↩️ Отменить отклик» (14.10.2026): вакансия снова ждёт решения.
 //   { action: 'robot', op, id, queryId, chatId, messageId, text, promptId, userMessageId } — робот-отклик (этап 6) →
 //      W9 Robot: l:<id>:robot — 🚀 (op enqueue), l:<id>:stop — ⛔ (op stop), rb:go и команда /go — ▶️ после блока
-//      (op resume), ответ на фото капчи (подпись начинается с ROBOT_PROMPTS.captcha) — op captcha, text — ответ.
+//      (op resume), ответ на фото капчи (подпись начинается с ROBOT_PROMPTS.captcha) — op captcha, text — ответ;
+//      напоминания (6.3): nr:<id> — op remind, nr:all — op remindall, nr:stop — op remindstop.
 //   { action: 'reply', replyTo, messageId, chatId, text } — ответ (reply) на вопрос «почему?», карточку или письмо.
 //   { action: 'panel', view, tab, page, id, chatId, queryId, messageId, userMessageId } — меню бота → W7 Bot menu:
 //      кнопки под полем ввода («📋 Вакансии», «📊 Статистика», «🤖 Автоотклик», «⚙️ Настройки»), команды /start, /menu,
 //      /vacancies, /stats, /auto, /settings, /v<id> и кнопки панели (callback_data p:…, s:…, sc:…, sn, au:…).
-//      view = list | stats | start | open | noop | sync | settings | auto;
+//      view = list | stats | start | open | noop | sync | settings | auto | remind (6.3, nr:p);
 //      auto (6.1c): панель автоотклика; change = { name: 'apply.auto', set } — ▶️ Запустить / ⏹ Остановить (au:on|off);
 //      settings: section — раздел, change = { name, toggle? } — следующее значение настройки или правило фильтра,
 //      collectNow — собрать сейчас, ask — вопрос со списком, input = { name, text } — ответ на него (promptId — вопрос),
@@ -83,6 +84,14 @@ if (cb) {
   const auto = data.match(/^au:(on|off|r)$/);
   if (auto) {
     return panel({ ...pressed, view: 'auto', ...(auto[1] !== 'r' && { change: { name: 'apply.auto', set: auto[1] === 'on' } }) });
+  }
+  // 🔔 Напоминания (6.3): nr:p — панель (и 🔄), nr:<id> — напомнить одному (карточка /v<id>), nr:all — всем
+  // кандидатам, nr:stop — снять очередь напоминаний → W9 Robot
+  if (data === 'nr:p') return panel({ ...pressed, view: 'remind' });
+  const remind = data.match(/^nr:(\d+|all|stop)$/);
+  if (remind) {
+    const op = { all: 'remindall', stop: 'remindstop' }[remind[1]] ?? 'remind';
+    return [{ json: { action: 'robot', op, id: Number(remind[1]) || 0, ...pressed } }];
   }
 
   // ⚙️ Настройки (W7): раздел, следующее значение настройки, «🔄 Собрать сейчас»

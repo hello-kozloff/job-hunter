@@ -147,6 +147,15 @@ const robotLineText =
   robotOn || robotRows.length || robotQueue
     ? `🚀 Робот: ${robotRows.length}${robotRows.length ? ` (${robotAuto ? `🤖 авто ${robotAuto} · ` : ''}✉️ ${count(robotRows, (r) => r.apply_letter === 'attached')} · 💬 ${count(robotRows, (r) => r.apply_letter === 'chat')})` : ''}${robotManual ? ` · 🧩 вручную ${robotManual}` : ''}${robotErrors ? ` · ⚠️ ${robotErrors}` : ''}${robotStopped ? ` · ⛔ убрал ${robotStopped}` : ''}${robotNoLetter ? ` · ✉️ письмо не вышло ${robotNoLetter}` : ''}${robotQueue ? ` · в очереди ${robotQueue}` : ''}${settings['apply.paused'] ? ' · ⏸ пауза' : ''}${settings['apply.enabled'] && settings['apply.auto'] ? ' · 🤖 автоотклик вкл' : ''}`
     : '';
+// Напоминания (6.3): попытки робота за сутки по remind_at — отправлено, пропуски по итогам hh, сбои; очередь
+const reminded = rows.filter((r) => at(r.remind_at) >= since);
+const remindQueue = count(rows, (r) => r.remind_state);
+const remindBy = (...keys) => count(reminded, (r) => keys.includes(r.remind_result));
+const remindPart = (icon, n) => (n ? ` · ${icon} ${n}` : '');
+const remindLineText =
+  reminded.length || remindQueue
+    ? `🔔 Напоминания: ${remindBy('sent')}${remindPart('👀', remindBy('viewed'))}${remindPart('🎉', remindBy('invited'))}${remindPart('❌', remindBy('rejected'))}${remindPart('💬', remindBy('wrote', 'already'))}${remindPart('🔒', remindBy('closed', 'archived', 'no_topic'))}${remindPart('🧪', remindBy('dry_run'))}${remindPart('⚠️', remindBy('error'))}${remindQueue ? ` · в очереди ${remindQueue}` : ''}`
+    : '';
 if (robotOn) {
   const h = $('Robot health').first()?.json ?? {};
   if (!h.ok || h.error) problems.push('робот-отклик не отвечает');
@@ -162,6 +171,7 @@ const lines = [
   `🤖 Оценено: ${scored.length}${scored.length ? ` — 🟢 ${count(scored, (r) => r.decision === 'apply')} · 🟡 ${count(scored, (r) => r.decision === 'maybe')} · 🔴 ${count(scored, (r) => r.decision === 'skip')}` : ''}${count(scored, (r) => r.decision === 'error') ? ` · ⚠️ ${count(scored, (r) => r.decision === 'error')}` : ''}`,
   `👤 Твои решения: ✅ ${count(mine, (r) => r.my_decision === 'apply')} · 🤔 ${count(mine, (r) => r.my_decision === 'maybe')} · ❌ ${count(mine, (r) => r.my_decision === 'skip')} · 📨 отправлено ${sent}${count(mine, (r) => r.my_decision === 'earlier') ? ` · 📨 раньше ${count(mine, (r) => r.my_decision === 'earlier')}` : ''}`,
   robotLineText,
+  remindLineText,
   `⏳ Хвосты: без решения ${tailsWaiting} · ✅ без отклика ${tailsApproved}`,
   expired.size || archived.size ? `⌛ Устарели: ${expired.size} · 🔒 закрылись на hh: ${archived.size}` : '',
   shadow.pairs >= SHADOW_GOAL ? `${shadowLine(shadow)} — пора разбирать, напиши Claude` : shadowLine(shadow),

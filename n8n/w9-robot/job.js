@@ -4,12 +4,14 @@
 // Выход: { op, id, queryId, chatId, messageId, text, promptId, userMessageId, fromUser, auto }
 //   op: enqueue — 🚀 под письмом (W3); stop — ⛔ (W3); tick — обработать очередь (расписание, сам W9, W7, W10);
 //       resume — ▶️ или /go после блока (W3); captcha — ответ на фото капчи (W3); dequeue — робот выключен в ⚙️ (W7);
-//       autostop — автоотклик выключили (W7, 6.1c): его очередь — назад в ✅
+//       autostop — автоотклик выключили (W7, 6.1c): его очередь — назад в ✅;
+//       remind — 🔔 в карточке /v<id> (W3, 6.3): напоминание в очередь; remindall — «🔔 Напомнить всем» на панели;
+//       remindstop — ⏹ на панели: очередь напоминаний снять
 //   fromUser — запуск по нажатию: его письмо W9 сразу перерисует, если робот ждёт (капча, вход, лимит)
 //   auto — enqueue от автоотклика (W5 после письма, сам W9 «Feed»): не нажатие, в очередь с apply_mode = auto
 
 const j = $input.first()?.json ?? {};
-const OPS = ['enqueue', 'stop', 'tick', 'resume', 'captcha', 'dequeue', 'autostop'];
+const OPS = ['enqueue', 'stop', 'tick', 'resume', 'captcha', 'dequeue', 'autostop', 'remind', 'remindall', 'remindstop'];
 const op = OPS.includes(j.op) ? j.op : 'tick';
 const auto = op === 'enqueue' && Boolean(j.auto);
 return [
@@ -23,7 +25,8 @@ return [
       text: String(j.text ?? '').trim().slice(0, 40),
       promptId: Number(j.promptId) || 0,
       userMessageId: Number(j.userMessageId) || 0,
-      fromUser: j.fromUser !== undefined ? Boolean(j.fromUser) : !auto && ['enqueue', 'stop', 'resume', 'captcha'].includes(op),
+      fromUser:
+        j.fromUser !== undefined ? Boolean(j.fromUser) : !auto && ['enqueue', 'stop', 'resume', 'captcha', 'remind', 'remindall', 'remindstop'].includes(op),
       auto,
     },
   },

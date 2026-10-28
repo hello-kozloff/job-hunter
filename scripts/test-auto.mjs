@@ -128,7 +128,7 @@ test('Feed: хвост выключен — только карточки пос
 
 const gate = (queue, { s = settings(), health = {}, job = { op: 'tick', fromUser: false } } = {}) =>
   runNode('n8n/w9-robot/gate.js', {
-    nodes: { Job: job, Settings: s, Queue: queue, Today: [{}], Health: { ok: true, busy: false, loggedIn: true, ...health } },
+    nodes: { Job: job, Settings: s, Queue: queue, Today: [{}], 'Remind queue': [{}], 'Remind today': [{}], Health: { ok: true, busy: false, loggedIn: true, ...health } },
   }).then(([out]) => out);
 const queued = (extra = {}) => letterRow({ apply_state: 'queued', updatedAt: iso(Date.now()), ...extra });
 
@@ -441,7 +441,7 @@ test('сборка: кнопка «🤖 Автоотклик» под полем
     .match(/const LAYOUTS = \[([\s\S]*?)\];/)[1]
     .match(/'[a-z_]+'/g);
   assert.equal(menu.nodes.find((n) => n.name === 'Layout').parameters.numberOutputs, layouts.length * 2 + 2);
-  assert.equal(layouts.at(-1), "'auto'");
+  assert.ok(layouts.includes("'auto'"));
   const robot = built('w9-robot');
   const names = robot.nodes.map((n) => n.name);
   for (const n of ['Auto on?', 'Auto rows', 'Feed', 'Auto claim', 'Write letter', 'Auto enqueue', 'Auto unclaim', 'Pace wait', 'Auto queued']) {
@@ -450,7 +450,10 @@ test('сборка: кнопка «🤖 Автоотклик» под полем
   assert.equal(robot.nodes.find((n) => n.name === 'Auto enqueue').parameters.mode, 'each');
   // Пустая очередь не обрывает тик: при автоотклике «Gate» и «Feed» работают и без очереди
   assert.equal(robot.nodes.find((n) => n.name === 'Queue').alwaysOutputData, true);
-  assert.deepEqual(robot.connections.Queue.main[0].map((c) => c.node), ['Work?']);
+  // Между ними — очередь напоминаний (6.3): тоже пустой item, если пусто
+  assert.deepEqual(robot.connections.Queue.main[0].map((c) => c.node), ['Remind queue']);
+  assert.equal(robot.nodes.find((n) => n.name === 'Remind queue').alwaysOutputData, true);
+  assert.deepEqual(robot.connections['Remind queue'].main[0].map((c) => c.node), ['Work?']);
   assert.deepEqual(robot.connections['Work?'].main[0].map((c) => c.node), ['Today']);
   assert.match(robot.nodes.find((n) => n.name === 'Apply').parameters.jsonBody ?? JSON.stringify(robot.nodes.find((n) => n.name === 'Apply').parameters), /pace/);
   // «Auto on?» выше «Next?»: письма к следующим пишутся до отклика (execution order v1 — сверху вниз)
@@ -493,7 +496,7 @@ test('тихо: лимит дня при автоотклике — на пан�
   const today = Array.from({ length: 10 }, (_, i) => ({ id: 900 + i, apply_by: 'robot', applied_at: iso(Date.now() - MIN) }));
   const run = (s) =>
     runNode('n8n/w9-robot/gate.js', {
-      nodes: { Job: { op: 'tick', fromUser: false }, Settings: s, Queue: q, Today: today, Health: { ok: true, loggedIn: true } },
+      nodes: { Job: { op: 'tick', fromUser: false }, Settings: s, Queue: q, Today: today, 'Remind queue': [{}], 'Remind today': [{}], Health: { ok: true, loggedIn: true } },
     }).then(([o]) => o);
   let out = await run(settings({ 'apply.daily_limit': 10 }));
   assert.equal(out.wait, 'limit');

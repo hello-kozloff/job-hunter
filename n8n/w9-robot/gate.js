@@ -1,6 +1,7 @@
 // W9 · Gate — очередь робота: починка, можно ли сейчас отправлять, кого следующим, о чём сообщить.
 // Нода: Code, режим «Run Once for All Items». Вход: «Queue» — строки в очереди (apply_state ≠ ''), «Today» — живые
-// отклики робота за двое суток («день» с 09:00 по местному считает robotToday), «Health» — GET /health робота (ошибка — не отвечает), «Job», «Settings».
+// отклики робота за двое суток («день» с 09:00 по местному считает robotToday), «Health» — GET /health робота (ошибка — не отвечает), «Job», «Settings»;
+// напоминания (6.3): «Remind queue» — строки в их очереди (remind_state ≠ ''), «Remind today» — попытки за двое суток.
 // Static data (global): alertedSince — блок, о котором уже сообщили (одна тревога на блок, по since);
 //   alertMessageId — та тревога (снят блок → «✅ снова в работе»); downDay, limitDay — сообщения «не отвечает» и
 //   «лимит» — раз в «день» робота.
@@ -16,7 +17,11 @@
 //   notice — сообщение: { kind: captcha | alert | info, key, text, shot, silent, button }; key — для POST /notice
 //            робота: параллельные запуски W9 видят один блок, а отправит тревогу только первый;
 //   resolved — блок снят: { messageId, text, promptId } — поправить прошлую тревогу и удалить фото капчи;
-//   views — письма, которые перерисовать (нажали 🚀, а робот ждёт: «⏸ Робот ждёт: …»).
+//   views — письма, которые перерисовать (нажали 🚀, а робот ждёт: «⏸ Робот ждёт: …»);
+//   remindHeal, remind, remindWait — вторая полоса, напоминания (6.3): та же починка; remind — кому напомнить (+ text),
+//          только когда отклик в этот тик не выбран и робот свободен (отклики первыми, решение пользователя);
+//          remindWait = disabled | paused | down | blocked | busy | limit (remind.daily_limit) | pace | hour (лимит часа
+//          робота); тихих часов у напоминаний нет (решение пользователя: «когда угодно»).
 
 // @include n8n/shared/time.js
 
@@ -26,6 +31,7 @@
 // @include n8n/shared/robot.js
 // @include n8n/shared/letter.js
 // @include n8n/shared/menu.js
+// @include n8n/shared/remind.js
 
 const job = $('Job').first().json;
 const s = loadSettings($('Settings').all());
@@ -62,6 +68,9 @@ const out = {
   limit,
   // Автоотклик включён — ветка «Feed» (6.1c)
   auto: Boolean(s['apply.enabled'] && s['apply.auto']),
+  remindHeal: [],
+  remind: null,
+  remindWait: '',
 };
 
 // 1. Починка
@@ -109,7 +118,7 @@ if (out.wait === 'blocked') {
       smart: `🧩 <b>hh просит капчу</b> — очередь ждёт.\nРешите её в окне робота: ${vnc}, затем ▶️.`,
       errors: `⚠️ <b>Робот трижды подряд не смог откликнуться</b> — пауза. Посмотрите скриншоты; продолжить — ▶️.`,
       limit: `⏸ <b>hh: лимит 200 откликов за сутки</b> — робот ждёт${b.until ? ` до ${localDate(b.until)} ${localTime(b.until)}` : ''}, дальше сам.`,
-      blocked: `⛔ <b>hh не принял отклик</b>${b.note ? `: «${esc(b.note)}»` : ''} — робот на паузе. Проверьте аккаунт; продолжить — ▶️.`,
+      blocked: `⛔ <b>hh не принял ${b.source === 'remind' ? 'напоминание' : 'отклик'}</b>${b.note ? `: «${esc(b.note)}»` : ''} — робот на паузе. Проверьте аккаунт; продолжить — ▶️.`,
     };
     out.notice =
       b.kind === 'captcha' && b.shot
@@ -189,4 +198,40 @@ if (job.fromUser && job.op === 'enqueue' && WAIT[out.wait]) {
 
 // 5. Кого отправлять
 if (!out.wait && sendable.length) out.next = { ...sendable[0], resume: robotResume(s, sendable[0]).resume };
+
+// 6. Напоминания (6.3): своя очередь. Починка: отклик отменили (статус не applied) — снять; sending дольше 6 мин (n8n
+// или робот упали посреди) — снова в очередь: перед отправкой робот проверит, нет ли напоминания в чате
+const reminders = $('Remind queue')
+  .all()
+  .map((i) => i.json)
+  .filter((r) => r.id && r.remind_state);
+for (const r of reminders) {
+  if (r.status !== 'applied') out.remindHeal.push({ id: r.id, to: '' });
+  else if (r.remind_state === 'sending' && now - Date.parse(r.updatedAt) > 6 * 60 * 1000) out.remindHeal.push({ id: r.id, to: 'queued' });
+}
+const remindHealed = new Map(out.remindHeal.map((x) => [x.id, x.to]));
+const remindQueued = reminders
+  .filter((r) => r.status === 'applied' && (remindHealed.get(r.id) ?? r.remind_state) === 'queued')
+  .sort((a, b) => (Date.parse(b.applied_at) || 0) - (Date.parse(a.applied_at) || 0));
+const reminding = reminders.some((r) => r.status === 'applied' && r.remind_state === 'sending' && !remindHealed.has(r.id));
+const remindLimit = s['remind.daily_limit'];
+const remindHourCap = Number(robotPaceNow.remindHourCap) || Infinity;
+if (remindQueued.length) {
+  const day = remindDay(
+    $('Remind today')
+      .all()
+      .map((i) => i.json)
+      .filter((r) => r.id),
+    now,
+  );
+  if (!s['apply.enabled']) out.remindWait = 'disabled';
+  else if (s['apply.paused']) out.remindWait = 'paused';
+  else if (!health) out.remindWait = 'down';
+  else if (health.blocked) out.remindWait = 'blocked';
+  else if (out.next || applying || reminding || health.busy) out.remindWait = 'busy';
+  else if (day >= remindLimit) out.remindWait = 'limit';
+  else if (nextAt > now) out.remindWait = 'pace';
+  else if ((Number(robotPaceNow.remindHour) || 0) >= remindHourCap) out.remindWait = 'hour';
+  if (!out.remindWait) out.remind = { ...remindQueued[0], text: s['remind.text'] };
+}
 return [{ json: out }];

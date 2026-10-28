@@ -1,6 +1,6 @@
 // W7 · Render — панель меню бота: список вакансий, карточка, статистика или приветствие с кнопками меню.
 // Нода: Code, режим «Run Once for All Items».
-// Вход: «Job» — что показать (view = list | open | stats | start | settings | auto); «Rows» — вся таблица vacancies;
+// Вход: «Job» — что показать (view = list | open | stats | start | settings | auto | remind); «Rows» — вся таблица vacancies;
 //       $input — «Runs»: последние записи журнала сборов runs (для статистики).
 // Выход: { route, view, layout, edit, chatId, messageId, text, b, deleteIds, tab, page }
 //   route — выход «Layout» (Switch): раскладка × отправить новое сообщение (чётный) / править панель (нечётный),
@@ -25,6 +25,7 @@
 // @include n8n/shared/schedule.js
 // @include n8n/shared/robot.js
 // @include n8n/shared/auto.js
+// @include n8n/shared/remind.js
 
 const job = $('Job').first().json;
 const rows = $('Rows')
@@ -63,6 +64,11 @@ const LAYOUTS = [
   'set_rules_generic',
   'set_llm_cli',
   'auto',
+  // 🔔 Напоминания (6.3): вкладка «Отправлено» с кнопкой панели, карточка с 🔔, панель напоминаний
+  'list_sent',
+  'open_remind',
+  'open_decided_remind',
+  'remind',
 ];
 // Выходы «Layout» после раскладок: приветствие, вопрос ⚙️ со списком (ForceReply)
 const ROUTE_START = LAYOUTS.length * 2;
@@ -71,7 +77,9 @@ const chatId = String(job.chatId || $env.TG_CHAT_ID);
 // sync — после «📨 Отправил» / «↩️ Отменить» под письмом (W3 «Sync job») и после каждого отклика робота (W9): перерисовать
 // панель, только если на ней открыта эта вакансия или автоотклик (журнал, 6.1c) — иначе на ней нечего обновлять
 const syncAuto = job.view === 'sync' && panel.view === 'auto';
-if (job.view === 'sync' && !(panel.messageId && (syncAuto || (panel.view === 'open' && Number(panel.id) === Number(job.id))))) {
+// Панель 🔔 (6.3) — после каждого напоминания робота и нажатий на ней
+const syncRemind = job.view === 'sync' && panel.view === 'remind';
+if (job.view === 'sync' && !(panel.messageId && (syncAuto || syncRemind || (panel.view === 'open' && Number(panel.id) === Number(job.id))))) {
   return [];
 }
 // Кнопка в панели, перерисовка после решения, sync — правим панель; кнопка меню, /v…, «📋 К вакансиям» — новая.
@@ -120,7 +128,7 @@ function itemLines(r, n) {
     esc(r.company),
     r.status === 'rejected' ? `🚫 ${esc(String(r.reasons ?? '').split(', ')[0].replace(/:.*$/, ''))}` : salary(r),
     r.status === 'applied' && r.applied_at
-      ? `${r.apply_by === 'robot' ? '🚀' : '📨'} ${localDate(r.applied_at)}`
+      ? `${r.apply_by === 'robot' ? '🚀' : '📨'} ${localDate(r.applied_at)}${['sent', 'already'].includes(r.remind_result) ? ' 🔔' : ''}`
       : r.my_decision === 'earlier'
         ? '📨 раньше'
       : age < DAY
@@ -148,7 +156,8 @@ function listView(tabKey, pageNo, note = '') {
     (quiet ? `\n<i>Без 🟡 и 🔴 (${quiet}) — теневой режим выключен, они во «📋 Все»</i>` : '');
   const off = { text: '·', cb: 'p:x' };
   return {
-    layout: 'list',
+    // «📨 Отправлено» — с кнопкой панели напоминаний (6.3)
+    layout: tab === 'sent' ? 'list_sent' : 'list',
     tab,
     page,
     text: `${[note, head].filter(Boolean).join('\n')}\n\n${lines.length ? lines.join('\n') : 'Здесь пока пусто.'}`,
@@ -161,6 +170,7 @@ function listView(tabKey, pageNo, note = '') {
       // Номер страницы — обновить её (новые вакансии, решения)
       mid: { text: `${page}/${pages}`, cb: `p:l:${tab}:${page}` },
       next: page < pages ? { text: '▶️', cb: `p:l:${tab}:${page + 1}` } : off,
+      remind: { text: `🔔 Напоминания · можно ${remindCandidates(rows, now).length}`, cb: 'nr:p' },
     },
   };
 }
@@ -181,6 +191,8 @@ function openView(id) {
     r.letter && r.status === 'approved' && !r.apply_state && '✉️ Письмо готово — в ленте под карточкой',
     // Робот-отклик (этап 6): очередь, пометка об исходе
     robotLine(r),
+    // Напоминание (6.3): очередь, итог или когда можно
+    remindLine(r, now),
   ].filter(Boolean);
   // Строка «🤖 …» пустая, если нейросеть вакансию не оценивала (отсеяна фильтром, бэкфилл)
   const card = cardText(r)
@@ -200,6 +212,11 @@ function openView(id) {
   ) {
     layout = 'open_decided';
   }
+  // 🔔 Напомнить (6.3): отправленный отклик старше 3 дней без итога напоминания, робот включён
+  if (settings['apply.enabled'] && remindable(r, now)) {
+    if (layout === 'open_plain') layout = 'open_remind';
+    else if (layout === 'open_decided') layout = 'open_decided_remind';
+  }
 
   const choice = (c) => `pv:${r.id}:${c}:${tab}:${page}`;
   return {
@@ -217,6 +234,7 @@ function openView(id) {
       score: choice('score'),
       url: r.url,
       back: `p:l:${tab}:${page}`,
+      remind: `nr:${r.id}`,
     },
   };
 }
@@ -308,6 +326,7 @@ function statsView() {
 // @include n8n/w7-menu/settings-view.js
 
 // @include n8n/w7-menu/auto-view.js
+// @include n8n/w7-menu/remind-view.js
 
 // ---------- Приветствие ----------
 
@@ -374,6 +393,8 @@ if (job.view === 'settings' && SETTING_PROMPTS[job.ask]) {
 
 const view = job.view === 'auto' || syncAuto
   ? autoView()
+  : job.view === 'remind' || syncRemind
+  ? remindView()
   : ['open', 'sync'].includes(job.view)
   ? openView(Number(job.id))
   : job.view === 'settings'
