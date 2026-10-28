@@ -223,9 +223,133 @@ export function negotiationTopics(json) {
           name: String(v.name ?? ''),
           companyId: v.company?.id != null ? String(v.company.id) : '',
           company: String(v.company?.visibleName ?? v.company?.name ?? ''),
+          ...topicState(t),
+          // Можно ли соискателю писать в чат по настройке вакансии: ENABLED_AFTER_INVITATION | DISABLED | …
+          chatWrite: String(v.chatWritePossibility ?? ''),
+          closed: v.closedForApplicants === true,
         };
       }),
   };
+}
+
+// Состояние отклика (топика переписки hh) для напоминаний (6.3): что с ним у работодателя — lastState (RESPONSE — ждёт
+// ответа, DISCARD — отказ, INTERVIEW и другие — приглашение; INTERVIEW бывает и при viewedByOpponent = false), открыл ли
+// его работодатель, чат и счётчики сообщений. Тексты и имена не берём
+function topicState(t) {
+  return {
+    chatId: String(t?.chatId ?? t?.communicationContext?.chatData?.id ?? ''),
+    lastState: String(t?.lastState ?? ''),
+    viewed: t?.viewedByOpponent === true,
+    declined: t?.declinedByApplicant === true,
+    archived: t?.archived === true,
+    chatArchived: t?.chatIsArchived === true,
+    hasNewMessages: t?.hasNewMessages === true,
+    messages: Number(t?.conversationMessagesCount) || 0,
+    unreadByEmployer: Number(t?.conversationUnreadByEmployerCount) || 0,
+    // AVAILABLE | WITHOUT_INVITATION | DISABLED_BY_EMPLOYER
+    inbox: String(t?.inboxAvailabilityState ?? ''),
+    // Встроенное «напомнить» hh: включается у непросмотренных откликов старше ~3 дней (разведка 10–19.10.2026)
+    reminderAllowed: t?.responseReminderState?.allowed === true,
+  };
+}
+
+// Отклик на странице вакансии (6.3): applicantVacancyResponseStatuses[id].negotiations.topicList — тот же топик, что
+// в «Откликах»; chatId есть и в vacancyChatInfo[id]. Отклика нет — null
+export function vacancyTopic(state, id) {
+  const vid = String(id);
+  const list = state?.applicantVacancyResponseStatuses?.[vid]?.negotiations?.topicList;
+  const t = Array.isArray(list) ? (list.find((x) => String(x?.vacancyId) === vid) ?? list[0]) : null;
+  if (!t) return null;
+  const s = topicState(t);
+  return {
+    topicId: String(t.id ?? ''),
+    creationTime: t.creationTime ?? null,
+    ...s,
+    chatId: s.chatId || String(state?.vacancyChatInfo?.[vid]?.data?.chatId ?? ''),
+  };
+}
+
+// Перепись откликов (6.3a): сколько каких — по статусу у работодателя, а кандидатов в напоминание (ждёт ответа, не
+// просмотрен, старше 3 дней) — по возрасту и тому, можно ли писать в чат. Отклики без статуса (из разметки) — «—»
+const CENSUS_AGE = [
+  [7, '3–6 дн.'],
+  [14, '7–13 дн.'],
+  [30, '14–29 дн.'],
+  [Infinity, '30+ дн.'],
+];
+export function negotiationCensus(topics, now = Date.now()) {
+  const inc = (o, k) => {
+    o[k || '—'] = (o[k || '—'] ?? 0) + 1;
+  };
+  const out = { total: 0, state: {}, candidates: { total: 0, age: {}, chat: {}, reminderAllowed: 0, chatArchived: 0, closed: 0 } };
+  for (const t of topics ?? []) {
+    out.total++;
+    inc(out.state, t.lastState === 'RESPONSE' ? `RESPONSE ${t.viewed ? 'просмотрен' : 'не просмотрен'}` : t.lastState);
+    const age = (now - Date.parse(t.creationTime)) / 86400000;
+    if (t.lastState !== 'RESPONSE' || t.viewed || !(age >= 3)) continue;
+    const c = out.candidates;
+    c.total++;
+    inc(c.age, CENSUS_AGE.find(([days]) => age < days)[1]);
+    // Настройка вакансии × что hh говорит о переписке в топике
+    inc(c.chat, `${t.chatWrite || '—'} · ${t.inbox || '—'}`);
+    if (t.reminderAllowed) c.reminderAllowed++;
+    if (t.chatArchived) c.chatArchived++;
+    if (t.closed) c.closed++;
+  }
+  return out;
+}
+
+// Ответ chatik/api/chat_data (чат отклика, 6.3) без текстов и имён: можно ли писать и почему нет, встроенное
+// «напомнить», кто и когда писал (mine — соискатель, bot — автоответ работодателя), прочитал ли работодатель
+export function chatFacts(body) {
+  const chat = body?.chat ?? {};
+  const states = body?.chatStates ?? {};
+  const me = String(chat.currentParticipantId ?? '');
+  const items = Array.isArray(chat.messages?.items) ? chat.messages.items : [];
+  return {
+    found: Boolean(chat.id),
+    chatId: String(chat.id ?? ''),
+    type: String(chat.type ?? ''),
+    write: {
+      allowed: states.writeMessageState?.allowed ?? null,
+      reasons: states.writeMessageState?.reasons ?? [],
+      possibility: String(chat.writePossibility?.name ?? ''),
+      disabledReasons: chat.writePossibility?.writeDisabledReasons ?? [],
+    },
+    reminderAllowed: states.responseReminderState?.allowed ?? null,
+    sendFile: states.sendFileState?.allowed ?? null,
+    states: Object.keys(states),
+    operations: chat.operations?.allowed ?? [],
+    unread: Number(chat.unreadCount) || 0,
+    blocked: Boolean(chat.blockInfo),
+    lastViewedByOpponent: String(chat.lastViewedByOpponentMessageId ?? ''),
+    messages: items.map((m) => ({
+      id: String(m.id ?? ''),
+      at: m.creationTime ?? null,
+      type: String(m.type ?? ''),
+      mine: me !== '' && String(m.participantId ?? '') === me,
+      bot: m.participantDisplay?.isBot === true,
+      state: m.workflowTransition?.applicantState ?? null,
+      length: String(m.text ?? '').length,
+      canEdit: m.canEdit === true,
+    })),
+    hasMore: chat.messages?.hasMore === true,
+    keys: Object.keys(body ?? {}),
+  };
+}
+
+// Переводы интерфейса чата (chatik.*) из HTML кадра чата: подписи поля, предупреждения «писать нельзя», ошибки отправки
+export function chatTranslations(html) {
+  const text = decodeEntities(String(html ?? ''));
+  const out = {};
+  for (const m of text.matchAll(/"(chatik\.[A-Za-z0-9._-]+)":"((?:[^"\\]|\\.)*)"/g)) {
+    try {
+      out[m[1]] = JSON.parse(`"${m[2]}"`);
+    } catch {
+      out[m[1]] = m[2];
+    }
+  }
+  return out;
 }
 
 // Группа исхода отклика — по ней n8n (W9) решает, что делать со строкой, не зная тонкостей hh

@@ -20,13 +20,14 @@ import { config } from '../config.mjs';
 import { ensure, guardAllow, guardReset, setGuard, shot, shotOf } from '../browser.mjs';
 import { log } from '../log.mjs';
 import { store } from '../store.mjs';
-import { CHAT_FRAME, HH_PAGE, SEL, TEXT, resumeOptionSel, vacancyUrl } from '../hh/selectors.mjs';
+import { HH_PAGE, SEL, TEXT, resumeOptionSel, vacancyUrl } from '../hh/selectors.mjs';
 import { GROUP, initialState, isCaptchaPage, isForbiddenVacancy, isLoginUrl, resumeChoice, vacancyFacts, vacancyResumes } from '../hh/state.mjs';
 import { chatResult, letterResult, respondResult, sameText, screenText } from '../hh/xhr.mjs';
 import { pause, sleep } from '../util.mjs';
 import {
   bodyText,
   captchaKind,
+  chatFrame,
   closeDialogs,
   humanRead,
   predictResponse,
@@ -639,17 +640,3 @@ async function chatLetter(page, letter, net, step) {
   return { ok: r.ok, note: r.code };
 }
 
-// Кадр чата отклика: iframe виджета чатов на странице или отдельная вкладка (ждём ≤ ms)
-async function chatFrame(page, ms) {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    const frame = page
-      .context()
-      .pages()
-      .flatMap((p) => p.frames())
-      .find((f) => CHAT_FRAME.test(f.url()));
-    if (frame) return frame;
-    await sleep(300);
-  }
-  return null;
-}

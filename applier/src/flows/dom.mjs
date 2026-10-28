@@ -1,8 +1,8 @@
 // Общие действия со страницей для сценариев: проверка капчи, «чтение как человек», снимок видимых data-qa,
 // прогноз отклика по данным, которые интерфейс hh запрашивает сам.
-import { SEL } from '../hh/selectors.mjs';
+import { CHAT_FRAME, SEL } from '../hh/selectors.mjs';
 import { popupPrediction } from '../hh/state.mjs';
-import { pause, rand } from '../util.mjs';
+import { pause, rand, sleep } from '../util.mjs';
 
 // Видно ли (Playwright: ненулевой размер и не visibility:hidden — свёрнутое max-height:0 предупреждение не видно)
 export const visible = (locator) => locator.first().isVisible().catch(() => false);
@@ -103,6 +103,48 @@ export function formFields(frame) {
       visible: e.getClientRects().length > 0,
     })),
   );
+}
+
+// Кадр чата отклика: iframe виджета чатов на странице или отдельная вкладка (ждём ≤ ms)
+export async function chatFrame(page, ms) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    const frame = page
+      .context()
+      .pages()
+      .flatMap((p) => p.frames())
+      .find((f) => CHAT_FRAME.test(f.url()));
+    if (frame) return frame;
+    await sleep(300);
+  }
+  return null;
+}
+
+// Область ввода чата (разведка 6.3a): поля, кнопки и предупреждения кадра — есть ли поле, активно ли, что hh пишет
+// вместо него. Без текстов сообщений: у кнопок и предупреждений — подпись до 200 знаков
+export function chatInputArea(frame) {
+  return frame.evaluate(() => {
+    const shown = (e) => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
+    const pick = (e) => ({
+      tag: e.tagName.toLowerCase(),
+      dataQa: e.getAttribute('data-qa') ?? e.closest('[data-qa]')?.getAttribute('data-qa') ?? '',
+      visible: shown(e),
+      disabled: e.disabled === true || e.getAttribute('aria-disabled') === 'true',
+      readOnly: e.readOnly === true,
+      editable: e.isContentEditable === true,
+      placeholder: e.getAttribute('placeholder') ?? '',
+      label: (e.getAttribute('aria-label') ?? e.innerText ?? '').trim().replace(/\s+/g, ' ').slice(0, 200),
+    });
+    const all = (sel) => [...document.querySelectorAll(sel)];
+    return {
+      inputs: all('textarea, input[type="text"], [contenteditable="true"], [data-qa*="input"]').slice(0, 20).map(pick),
+      buttons: all('button, [role="button"]').filter(shown).slice(0, 40).map(pick),
+      warnings: all('[data-qa*="warning"], [data-qa*="disabled"], [data-qa*="notice"], [data-qa*="banner"], [role="alert"]')
+        .filter(shown)
+        .slice(0, 20)
+        .map(pick),
+    };
+  });
 }
 
 // Ссылки страницы из живой разметки (часть страниц hh дорисовывает скрипт) — как атрибуты href="…" для разбора
