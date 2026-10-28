@@ -12,6 +12,9 @@ export const CHATIK = 'https://chatik.hh.ru';
 
 // Опция списка резюме в окне отклика — по хешу резюме
 export const resumeOptionSel = (hash) => `[data-qa="magritte-select-option-${hash}"]`;
+// Сообщение в чате отклика — по id сообщения hh (запись 28.10.2026: пузырь chatik-chat-message-<id>, его текст —
+// chatik-chat-message-<id>-text; data-qa с несколькими значениями через пробел)
+export const chatMessageSel = (id) => `[data-qa~="chatik-chat-message-${id}"]`;
 
 export const SEL = {
   // Страница вакансии
@@ -46,8 +49,11 @@ export const SEL = {
   // Чат отклика (iframe chatik.hh.ru/chat/<id>, запись 10.10.2026): у сообщения отклика «⊕ Добавить
   // сопроводительное» → поле письма → «Отправить» → POST chatik/api/save — письмо встаёт в само сообщение отклика
   chatAddLetter: '[data-qa="chatik-chat-message-applicant-action"]',
+  // Поле сообщения (и письма в 6.1b): textarea text-input внутри chatik-message-input; «Отправить» появляется после
+  // набора (запись 28.10.2026, напоминание 6.3); тексты сообщений — chatik-chat-message-<id>-text
   chatText: 'textarea[data-qa="text-input"], [data-qa="text-input"] textarea, [data-qa="chatik-message-input"] textarea',
   chatSend: '[data-qa="chatik-do-send-message"]',
+  chatMessageText: '[data-qa*="chatik-chat-message-"][data-qa$="-text"]',
   // Вход и капча — только по структуре: слово «captcha» есть и на обычных страницах (CLAUDE.md §8.1)
   loginForm: '[data-qa="account-login-form"]',
   captcha: 'form[action*="/account/captcha"], input[name="captchaText"], iframe[src*="smartcaptcha"]',
@@ -88,7 +94,8 @@ export const TEXT = {
   // hidden.resumes.formatted (в EN не переведён), changeResumeVisibilityDenied.error
   hidden: /поменяйте видимость резюме|с текущей видимостью резюме|current resume visibility settings/i,
   // resourcePolicyViolation, spamDetected, inappropriateLanguage — дальше не отправляем, зовём человека
-  stop: /нарушает правила сервиса|Недопустимое сообщение|уберите нецензурные слова|violation of the service rules|Invalid message|remove the obscene words/i,
+  // (в чате — chatik.sendMessage.errors.*: EN spamDetected — «Inappropriate message», 28.10.2026)
+  stop: /нарушает правила сервиса|Недопустимое сообщение|уберите нецензурные слова|violation of the service rules|Invalid message|Inappropriate message|remove the obscene words/i,
   // unknown.error, testServiceDown.error, tooLongLetter, letter.tooLong
   failed:
     /Произошла ошибка|сайт перегружен|Отклик не был доставлен|Превышен лимит символов|не может превышать \d+ символов|An error occurred|site is overloaded|Character limit exceeded|must not be longer than \d+ characters/i,
@@ -106,6 +113,10 @@ export const TEXT = {
   // Чат отклика: действие у сообщения отклика без письма (запись 10.10.2026; переводы чата — в самом чате, EN — по
   // образцу letter.button.add «Add cover letter»)
   addLetter: /Добавить сопроводительное|Add (?:a )?cover(?:ing)? letter/i,
+  // Писать в чат нельзя (chatik.warning.*, 28.10.2026): работодатель отключил переписку, только после приглашения,
+  // «не можете писать», 5 сообщений подряд без ответа, лимит сообщений, вакансия в архиве или недоступна
+  chatClosed:
+    /Работодатель отключил переписку|employer has turned off the chat|Переписка будет доступна после приглашения|Chat will be available after the employer|Вы не можете писать в чат|You cannot send messages to the chat|Вы отправили 5 сообщений подряд|sent 5 messages in a row|ограничение по общему количеству сообщений|limit on the total number of messages|была перенесена в архив|has been archived|Вакансия недоступна|Vacancy not available/i,
 };
 
 // Что разведка и запись проверяют на каждой странице: есть ли, видно ли, первые слова текста
@@ -148,6 +159,8 @@ export const FORCE_QUICK_URL = /^https:\/\/(?:[a-z0-9-]+\.)*hh\.ru\/vacancy\/\d+
 //   respond   POST /applicant/vacancy_response/popup — сам отклик (окно «Откликнуться» и отклик в один клик)
 //   letter    POST /applicant/vacancy_response/edit_ajax — «Приложить сопроводительное письмо» после отклика
 //   chat      POST chatik/api/save — письмо в сообщение отклика в чате; notify_chat_opened — чат открыт
+//   remind    POST chatik/api/send — новое сообщение в чат отклика (напоминание 6.3, запись 28.10.2026: {chatId,
+//             idempotencyKey, text} → само сообщение); notify_chat_opened; participant_action — «печатает…» при наборе
 //   resume    POST /applicant/resume/edit?resume=<hash> — сохранение формы резюме: должность, навыки, «О себе» (E0)
 //   profile   POST resume-profile-front…/profile/shards/profile/update — сохранение опыта работы (профиль, E0)
 // quick — не адрес, а разрешение перехода на /vacancy/<id>?forceQuickResponse=true (FORCE_QUICK выше)
@@ -156,6 +169,8 @@ export const ACTION_URL = {
   letter: /^https:\/\/(?:[a-z0-9-]+\.)*hh\.ru\/applicant\/vacancy_response\/edit_ajax(?:[?#]|$)/,
   chat: /^https:\/\/chatik\.hh\.ru\/chatik\/api\/save(?:[?#]|$)/,
   chatOpened: /^https:\/\/chatik\.hh\.ru\/chatik\/api\/notify_chat_opened(?:[?#]|$)/,
+  chatSend: /^https:\/\/chatik\.hh\.ru\/chatik\/api\/send(?:[?#]|$)/,
+  chatTyping: /^https:\/\/chatik\.hh\.ru\/chatik\/api\/participant_action(?:[?#]|$)/,
   resume: /^https:\/\/(?:[a-z0-9-]+\.)*hh\.ru\/applicant\/resume\/edit(?:[?#]|$)/,
   profile: /^https:\/\/resume-profile-front\.hh\.ru\/profile\/shards\/profile\/update(?:[?#]|$)/,
 };
@@ -163,10 +178,13 @@ export const GUARD_ALLOW = {
   respond: [ACTION_URL.respond],
   letter: [ACTION_URL.letter],
   chat: [ACTION_URL.chat, ACTION_URL.chatOpened],
+  remind: [ACTION_URL.chatSend, ACTION_URL.chatOpened, ACTION_URL.chatTyping],
   resume: [ACTION_URL.resume],
   profile: [ACTION_URL.profile],
 };
 // Кадр чата отклика (iframe виджета чатов на странице вакансии или отдельная вкладка)
 export const CHAT_FRAME = /^https:\/\/chatik\.hh\.ru\/chat\/\d+/;
+// Данные чата, которые грузит сам кадр (GET): можно ли писать, сообщения
+export const CHAT_DATA_URL = /^https:\/\/chatik\.hh\.ru\/chatik\/api\/chat_data(?:[?#]|$)/;
 // Страница hh (а не сайт работодателя): клик «Откликнуться» увёл с hh → отклик на внешнем сайте
 export const HH_PAGE = /^https:\/\/(?:[a-z0-9-]+\.)*hh\.ru(?:[/:?#]|$)/;

@@ -99,11 +99,16 @@ services:
       APPLY_LIVE: ${APPLY_LIVE:-0}
       # Предохранитель резюме: без RESUME_LIVE=1 робот резюме на hh не сохраняет (сухой прогон: формы и снимки)
       RESUME_LIVE: ${RESUME_LIVE:-0}
+      # Предохранитель напоминаний (6.3): без REMIND_LIVE=1 робот в чат отклика не пишет (сухой прогон до поля)
+      REMIND_LIVE: ${REMIND_LIVE:-0}
       APPLIER_FAKE: ${APPLIER_FAKE:-0}
       # Потолки робота сверх настроек бота: живых откликов в «день», в час, пауза между попытками не меньше (с)
       APPLIER_DAILY_CAP: ${APPLIER_DAILY_CAP:-100}
       APPLIER_HOURLY_CAP: ${APPLIER_HOURLY_CAP:-40}
       APPLIER_MIN_GAP: ${APPLIER_MIN_GAP:-15}
+      # Потолки живых напоминаний (6.3): в «день» и в час
+      APPLIER_REMIND_DAILY_CAP: ${APPLIER_REMIND_DAILY_CAP:-30}
+      APPLIER_REMIND_HOURLY_CAP: ${APPLIER_REMIND_HOURLY_CAP:-10}
       HH_RESUME_TITLE: ${HH_RESUME_TITLE:-}
       VNC_PASSWORD: ${VNC_PASSWORD:-}
       # Часовой пояс компьютера: браузер робота, «день» робота (с 09:00), тихие часы обслуживания

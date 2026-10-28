@@ -1,6 +1,6 @@
 // Настройки робота из environment контейнера (docker-compose.yml ← .env).
 export const config = {
-  version: '6.2.0',
+  version: '6.3.0',
   port: Number(process.env.PORT ?? 3000),
   // Без токена сервер не стартует: API робота — это доступ к аккаунту hh (server.mjs)
   token: String(process.env.APPLIER_TOKEN ?? ''),
@@ -9,6 +9,11 @@ export const config = {
   // Предохранитель резюме (часть D): без RESUME_LIVE=1 робот резюме на hh не сохраняет — только сухой прогон
   // (заполнить формы, снимки, уйти без сохранения)
   resumeLive: process.env.RESUME_LIVE === '1',
+  // Предохранитель напоминаний (6.3): без REMIND_LIVE=1 робот в чат отклика не пишет — сухой прогон до поля, текст не
+  // вводится. Потолки живых напоминаний за «день» и за час — сверх лимита из настроек бота (защита от ошибки в n8n)
+  remindLive: process.env.REMIND_LIVE === '1',
+  remindDailyCap: Number(process.env.APPLIER_REMIND_DAILY_CAP ?? 30) || 30,
+  remindHourlyCap: Number(process.env.APPLIER_REMIND_HOURLY_CAP ?? 10) || 10,
   // Фейковый режим (этап 6.1a): браузер не запускается, исходы — по команде, для проверки n8n без hh
   fake: process.env.APPLIER_FAKE === '1',
   // Жёсткий потолок живых откликов в «день» робота — сверх лимита из настроек бота (защита от ошибки в n8n)

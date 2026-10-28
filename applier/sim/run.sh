@@ -4,13 +4,15 @@
 # job-hunter-applier (scripts/deploy.sh --applier).
 #   sim/run.sh [часть имени]         живой отклик (sim/live.mjs), например sim/run.sh quick
 #   sim/run.sh resume                разведка, чтение и запись резюме, подборка по резюме (sim/resume.mjs)
+#   sim/run.sh remind [часть имени]  напоминание в чат отклика (sim/remind.mjs, этап 6.3)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 SIM=live
 if [ "${1:-}" = resume ]; then SIM=resume; shift; fi
+if [ "${1:-}" = remind ]; then SIM=remind; shift; fi
 exec docker run --rm --init --network none --shm-size=1g \
   -v "$PWD/src:/app/src:ro" -v "$PWD/sim:/app/sim:ro" \
-  -e DATA_DIR=/tmp/sim -e APPLY_LIVE=1 -e RESUME_LIVE=1 -e APPLIER_FAKE=0 -e SIM="$SIM" \
+  -e DATA_DIR=/tmp/sim -e APPLY_LIVE=1 -e RESUME_LIVE=1 -e REMIND_LIVE=1 -e APPLIER_FAKE=0 -e SIM="$SIM" \
   --entrypoint bash job-hunter-applier -c '
     Xvfb :99 -screen 0 1600x1000x24 -nolisten tcp >/dev/null 2>&1 &
     for _ in $(seq 50); do [ -e /tmp/.X11-unix/X99 ] && break; sleep 0.1; done

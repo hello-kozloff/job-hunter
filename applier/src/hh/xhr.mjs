@@ -6,6 +6,8 @@
 //   POST /applicant/vacancy_response/edit_ajax {topicId, text} → в записи 403 {"error":"notEditable"}: к отклику
 //     «в один клик» письмо так не приложилось → запасной путь — чат отклика;
 //   POST chatik.hh.ru/chatik/api/save {text, messageId} → 200: письмо встало в сообщение отклика в чате.
+// Запись 28.10.2026 (record-20261028-112135, напоминание 6.3):
+//   POST chatik.hh.ru/chatik/api/send {chatId, idempotencyKey, text} → 200: новое сообщение в чате.
 import { TEXT } from './selectors.mjs';
 
 // Код ошибки hh → исход (группы — state.mjs GROUP). Нет в списке — error со скриншотом
@@ -69,6 +71,16 @@ export function letterResult(status, body) {
 
 // Письмо в чат отклика (chatik save): ответ — общие настройки чата, успех — только по коду
 export const chatResult = (status) => ({ ok: ok2xx(status), code: ok2xx(status) ? '' : `HTTP ${status || 'нет ответа'}` });
+
+// Новое сообщение в чат отклика (chatik send, напоминание 6.3, запись 28.10.2026): 200 → само сообщение { id, chatId,
+// text, creationTime, participantId }. Ошибки отправки в записи не было — код ищем терпимо, как у отклика: спам и
+// нарушение правил → blocked (дальше не пишем, зовём человека), остальное → error
+export function chatSendResult(status, body) {
+  const messageId = body?.id != null ? String(body.id) : '';
+  const ok = ok2xx(status) && Boolean(messageId);
+  const code = ok ? '' : errorCode(body) || (ok2xx(status) ? 'в ответе hh нет сообщения' : `HTTP ${status || 'нет ответа'}`);
+  return { ok, code, outcome: ok ? 'sent' : ERROR_OUTCOME[code] === 'blocked' ? 'blocked' : 'error', messageId, text: String(body?.text ?? '') };
+}
 
 // Тексты hh на экране после клика → исход. Сравнение с текстом до клика: описание вакансии может случайно
 // содержать те же слова — считается только то, чего до клика не было

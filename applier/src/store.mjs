@@ -30,11 +30,12 @@ function save() {
   }
 }
 
-// Счётчики текущего «дня» робота (с 09:00 по местному): живые отклики, сбои, сбои подряд
+// Счётчики текущего «дня» робота (с 09:00 по местному): живые отклики и напоминания (6.3), сбои, сбои подряд
 function day() {
   const s = load();
   const start = robotDayStart().toISOString();
-  if (s.day?.start !== start) s.day = { start, applied: 0, errors: 0, streak: 0 };
+  if (s.day?.start !== start) s.day = { start, applied: 0, reminded: 0, errors: 0, streak: 0 };
+  s.day.reminded ??= 0;
   return s.day;
 }
 
@@ -84,6 +85,13 @@ export const store = {
     state.lastApplyAt = new Date().toISOString();
     save();
   },
+  countReminded() {
+    const d = day();
+    d.reminded++;
+    d.streak = 0;
+    state.lastRemindAt = new Date().toISOString();
+    save();
+  },
   countError() {
     const d = day();
     d.errors++;
@@ -111,10 +119,11 @@ export const store = {
     save();
     return true;
   },
-  // Темп: живая попытка отклика закончилась (applied — отклик ушёл) → пауза до следующей и счёт часа
-  markAttempt({ applied, limits }) {
+  // Темп: живая попытка отклика или напоминания закончилась (applied — отклик ушёл, reminded — напоминание ушло) →
+  // пауза до следующей и счёт часа
+  markAttempt({ applied, reminded = false, limits }) {
     const s = load();
-    s.pace = paceAfter(s.pace, { applied, limits });
+    s.pace = paceAfter(s.pace, { applied, reminded, limits });
     save();
     return paceView(s.pace);
   },
@@ -127,6 +136,9 @@ export const store = {
   },
   get lastApplyAt() {
     return load().lastApplyAt;
+  },
+  get lastRemindAt() {
+    return load().lastRemindAt ?? null;
   },
   get lastInboxAt() {
     return load().lastInboxAt;
